@@ -6,9 +6,41 @@ Claude Code configuration expands the control surface the agent gets once the
 repository is trusted: new hooks, new MCP servers, whole-tool allows, additional
 directories, mode changes.
 
-Status: skeleton and parsing (CS-A). `snapshot` discovers and parses the supported
-files; `diff` and `check` resolve both sides and report the scan as incomplete until
-entry extraction (CS-B) and the diff (CS-C) land.
+Status: parsing (CS-A) and snapshot entries (CS-B). `snapshot` discovers, parses and
+extracts every control-surface entry with a stable key; `diff` and `check` resolve both
+sides, take both snapshots, and report the scan as incomplete until the keyed diff (CS-C)
+lands.
+
+## Entry keys
+
+Every entry in a snapshot carries `kind`, `key`, `value`, `file`, `line`, `json_pointer`
+and `source_sha` (the commit SHA the file was read at; `null` for a worktree read).
+`breadth`, `direction` and `tier` are `unknown` / `unknown` / `unresolved` until the
+interpretations (CS-C) classify them.
+
+| kind | key | value |
+| --- | --- | --- |
+| `perm` | `perm:<allow\|ask\|deny>:<canonical rule>` | `{raw, rule, tool, spec, wildcard}` |
+| `mode` | `mode:defaultMode`, `mode:disableBypassPermissionsMode` | `{raw}` |
+| `hook` | `hook:<event>:<matcher>:<sha256(command)>` | `{event, matcher, type, command, prompt, timeout}`; one per hook command, recorded and hashed, never executed |
+| `mcp` | `mcp:<server-name>` | `{transport, type_raw, command, args, url, env_keys, header_keys, extra}`; env and header values are never carried |
+| `dir` | `dir:<path>` (from `permissions.additionalDirectories`) | `{raw, path}` |
+| `sandbox` | `sandbox:<key>` | the value as written |
+| `env_key` | `env_key:<NAME>` (from top-level `env`) | always `"<redacted>"` |
+| `helper` | `helper:<apiKeyHelper\|awsAuthRefresh\|awsCredentialExport\|otelHeadersHelper>` | `{command}` |
+| `plugin_flag` | `plugin_flag:<enabledPlugins\|enableAllProjectMcpServers\|disableAllHooks\|enabledMcpjsonServers\|disabledMcpjsonServers>` | as written; the two server lists carry `{raw, names}` |
+| `unknown` | `unknown:<json_pointer>` | the value as written (redacted); any key the extractor does not model, never dropped |
+| `credential` | `credential:<json_pointer>` | `"credential-like value present"`; the literal is replaced by `<redacted>` everywhere |
+
+Rule strings are canonicalized so that a reformat never looks like a change
+(`Bash(npm run:*)` and `Bash(npm run *)` share one key; `Bash(npm run)` is a different,
+exact key); the decisions are in `docs/normalization.md`. The snapshot shape is documented
+in `docs/snapshot.schema.json` (JSON Schema 2020-12). A saved snapshot is accepted
+wherever a ref is; a file written by another `schema_version` is refused with exit 3.
+
+Credential-like literals (`sk-…`, `AKIA…`, GitHub and Slack tokens, `Bearer …`, PEM
+private keys, long opaque values under keys named like token/secret/key/password) are
+detected by `src/redact.ts`, which every renderer reuses.
 
 ## What it answers
 

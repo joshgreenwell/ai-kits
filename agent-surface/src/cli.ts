@@ -13,10 +13,11 @@
  * 3 scan incomplete (unparseable, duplicate keys, missing ref). Usage errors
  * exit 64 so they never collide with a verdict.
  *
- * In this version `diff` and `check` resolve both sides and run discovery
- * and parsing, then report the scan as incomplete (exit 3) because entry
- * extraction (CS-B) and the diff (CS-C) are not implemented yet. They never
- * print a "clean" verdict they cannot back.
+ * In this version `diff` and `check` resolve both sides, run discovery,
+ * parsing and entry extraction, then report the scan as incomplete (exit 3)
+ * because the diff itself (CS-C) is not implemented yet. They never print a
+ * "clean" verdict they cannot back. Any `incomplete[]` carried by a side
+ * (including a saved snapshot) is propagated into the output.
  *
  * Never executes hooks, helpers or MCP servers; never touches the network;
  * never expands environment variables; never reads outside the repository.
@@ -175,7 +176,15 @@ function renderSnapshotText(snapshot: Snapshot): string {
       .join("; ");
     out.push(`  ${source.path.padEnd(30)} ${detail}`);
   }
-  out.push(`entries: ${snapshot.entries.length}`);
+  if (snapshot.entries.length === 0) {
+    out.push("entries: none");
+  } else {
+    out.push(`entries (${snapshot.entries.length}):`);
+    for (const entry of snapshot.entries) {
+      const where = entry.line === null ? entry.file : `${entry.file}:${entry.line}`;
+      out.push(`  ${entry.kind.padEnd(11)} ${entry.key}  ${where}`);
+    }
+  }
   if (snapshot.incomplete.length === 0) {
     out.push("incomplete: none");
   } else {
@@ -228,7 +237,7 @@ function commandSnapshot(args: ParsedArgs, io: CliIo, deps: CliDeps): number {
 
 const NOT_IMPLEMENTED: Incomplete = {
   path: "<agent-surface>",
-  reason: "diff not implemented in this version: entry extraction (CS-B) and diff (CS-C) are pending",
+  reason: "diff not implemented in this version: the keyed diff (CS-C) is pending",
   lines: null,
 };
 

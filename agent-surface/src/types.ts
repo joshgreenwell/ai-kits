@@ -23,7 +23,14 @@ export const SCHEMA_VERSION = 1;
 /** Date of the Claude Code documentation the interpretations derive from (§3.6). */
 export const SEMANTICS_DOC_DATE = "2026-09-07";
 
-/** What kind of control-surface entry a value represents. */
+/**
+ * What kind of control-surface entry a value represents.
+ *
+ * `unknown` is a top-level key (or nested shape) the extractor does not
+ * model; it is surfaced, never dropped. `credential` marks a credential-like
+ * literal that was redacted (its value is always "credential-like value
+ * present").
+ */
 export type EntryKind =
   | "perm"
   | "mode"
@@ -33,7 +40,24 @@ export type EntryKind =
   | "sandbox"
   | "env_key"
   | "helper"
-  | "plugin_flag";
+  | "plugin_flag"
+  | "unknown"
+  | "credential";
+
+/** Every entry kind, in the order the text renderer groups them. */
+export const ENTRY_KINDS: readonly EntryKind[] = [
+  "perm",
+  "mode",
+  "hook",
+  "mcp",
+  "dir",
+  "sandbox",
+  "env_key",
+  "helper",
+  "plugin_flag",
+  "unknown",
+  "credential",
+];
 
 /** Breadth of a permission rule (perm entries only). */
 export type Breadth = "exact" | "prefix" | "whole_tool" | "glob" | "unknown";
@@ -54,7 +78,11 @@ export type Tier = "proven" | "projected" | "unresolved";
 export interface Entry {
   kind: EntryKind;
   key: string;
-  /** Normalized value; original text is preserved here, never rewritten. */
+  /**
+   * Normalized value; original text is preserved inside it (`raw`), never
+   * rewritten. Credential-like literals and every `env` value are replaced
+   * by `<redacted>` before they reach this field.
+   */
   value: JsonValue;
   /** Only meaningful for `perm` entries; `null` for every other kind. */
   breadth: Breadth | null;
@@ -125,7 +153,7 @@ export interface Snapshot {
   /** Assumptions header (§3.7), printed once and stored verbatim. */
   assumptions: string[];
   sources: Source[];
-  /** Sorted by `key`. Empty until CS-B lands. */
+  /** Sorted by `key`, then `file`, then `json_pointer` (see `sortEntries`). */
   entries: Entry[];
   incomplete: Incomplete[];
 }

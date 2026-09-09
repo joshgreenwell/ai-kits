@@ -1,12 +1,18 @@
 /**
- * Snapshot construction (plan §3.4 / §3.7).
+ * Snapshot construction (plan §3.4 / §3.7, JG-152).
  *
- * Runs discovery for one side and wraps the result in a `Snapshot` with the
- * assumptions header. Entry extraction is CS-B: `entries` is empty here and
- * `documents` carries the parsed files for that step.
+ * Runs discovery for one side, extracts entries from the parsed documents
+ * (`entries.ts`) and wraps everything in a `Snapshot` with the assumptions
+ * header. `Snapshot.assumptions` is the fixed ordered list
+ * `BASE_ASSUMPTIONS` followed by discovery notes (tracked local file) and
+ * extraction notes (non-empty `enabledPlugins`).
+ *
+ * Serialized with `canonicalJson` the result is byte-deterministic: the
+ * same side content yields the same bytes across runs.
  */
 
 import { discover, type DiscoverDeps, type Document } from "./discover.js";
+import { extractEntries } from "./entries.js";
 import type { Side } from "./git.js";
 import { SCHEMA_VERSION, SEMANTICS_DOC_DATE, type Snapshot } from "./types.js";
 
@@ -49,15 +55,16 @@ export function takeSnapshot(side: Side, deps: DiscoverDeps = {}): SnapshotResul
     };
   }
   const discovery = discover(side, deps);
+  const extraction = extractEntries(discovery.documents, discovery.sources);
   const snapshot: Snapshot = {
     schema_version: SCHEMA_VERSION,
     semantics_doc_date: SEMANTICS_DOC_DATE,
     min_claude_version: null,
     origin: { kind: side.kind, spec: side.spec, sha: side.kind === "git" ? side.sha : null },
-    assumptions: [...BASE_ASSUMPTIONS, ...discovery.notes],
+    assumptions: [...BASE_ASSUMPTIONS, ...discovery.notes, ...extraction.notes],
     sources: discovery.sources,
-    entries: [],
-    incomplete: discovery.incomplete,
+    entries: extraction.entries,
+    incomplete: [...discovery.incomplete, ...extraction.incomplete],
   };
   return { snapshot, documents: discovery.documents };
 }

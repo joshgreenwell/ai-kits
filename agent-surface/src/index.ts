@@ -44,9 +44,38 @@ export {
   type JsoncResult,
   type Position,
 } from "./jsonc.js";
-export { BASE_ASSUMPTIONS, takeSnapshot, type SnapshotResult } from "./snapshot.js";
-export { loadSnapshotFile, validateSnapshotShape, type SnapshotLoad } from "./snapshotfile.js";
 export {
+  compareEntries,
+  EXTRACTED_ROLES,
+  extractEntries,
+  HELPER_KEYS,
+  MCP_TRANSPORTS,
+  MODE_KEYS,
+  PERMISSION_LISTS,
+  PLUGIN_FLAG_KEYS,
+  PLUGINS_ENABLED_NOTE,
+  semanticEntry,
+  sha256Hex,
+  sortEntries,
+  type Extraction,
+  type SemanticEntry,
+} from "./entries.js";
+export { normalizeRule, normalizeSpec, type ParsedRule } from "./normalize.js";
+export {
+  CREDENTIAL_PRESENT,
+  looksLikeCredential,
+  REDACTED,
+  redactString,
+  redactTree,
+  SENSITIVE_KEY,
+  type CredentialFinding,
+  type RedactedString,
+  type RedactedTree,
+} from "./redact.js";
+export { BASE_ASSUMPTIONS, takeSnapshot, type SnapshotResult } from "./snapshot.js";
+export { loadSnapshotFile, schemaVersionMismatch, validateSnapshotShape, type SnapshotLoad } from "./snapshotfile.js";
+export {
+  ENTRY_KINDS,
   SCHEMA_VERSION,
   SEMANTICS_DOC_DATE,
   type Breadth,
