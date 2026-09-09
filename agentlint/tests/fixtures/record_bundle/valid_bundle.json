@@ -1,0 +1,198 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "agentlint tests: TL-B4 record-bundle loader, valid bundle exercising every record kind",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Hand-written. Every identifier, timestamp, hash and target name is invented. The 'exampleapp' scope namespace stands in for an application's own namespace (the shape an app debug report mapper would emit: multi-target group request, denied approval, single-target retry); it is not derived from any real report. Records are written in canonical order with explicit app locators so the bundle round-trips byte-for-byte through to_record_bundle()."
+  },
+  "schema_version": "1",
+  "run_id": "run-bundle-0001",
+  "conversation_id": "conv-bundle-0001",
+  "source_refs": ["exampleapp/debug-report-0001"],
+  "started_at": 1700000000000,
+  "ended_at": 1700000060000,
+  "final_status": "failed",
+  "records": [
+    {
+      "id": "agg-01",
+      "source_locator": "exampleapp/debug-report-0001/rows/1",
+      "kind": "aggregate",
+      "status": "error",
+      "seq": 1,
+      "name": "agent.turn",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 1700000000000,
+      "end_ms": 1700000060000,
+      "tokens_in": 2600,
+      "tokens_out": 170,
+      "included_result_ids": ["mc-01", "mc-02"]
+    },
+    {
+      "id": "mc-01",
+      "source_locator": "exampleapp/debug-report-0001/rows/2",
+      "kind": "model_call",
+      "status": "ok",
+      "parent_id": "agg-01",
+      "seq": 2,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "adapter": "sdk-neutral",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 1700000001000,
+      "end_ms": 1700000003000,
+      "duration_ms": 2000,
+      "tokens_in": 1200,
+      "tokens_out": 80,
+      "cache_read_tokens": 4000,
+      "cache_write_tokens": 0,
+      "finish_reason": "tool_use"
+    },
+    {
+      "id": "tc-01",
+      "source_locator": "exampleapp/debug-report-0001/rows/3",
+      "kind": "tool_call",
+      "status": "error",
+      "parent_id": "mc-01",
+      "seq": 3,
+      "name": "exec_group",
+      "start_ms": 1700000003500,
+      "end_ms": 1700000005000,
+      "error_type": "TargetUnavailable",
+      "error_code": "E_TARGET",
+      "tool_call_id": "call-0001",
+      "native_tool_call_id": "native-0001",
+      "args_fingerprint": {
+        "hash": "3626c3989584d8ae50a79546943696d3e4e94eac50bb876ff0b3830ddbb62e4d",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "94ca1481a12bf0f1fffbbc75409dc4ec3ef052cff13ce40fabb0891feddc1935",
+        "representation": "full"
+      },
+      "result_bytes": 2048,
+      "preview_bytes": 512,
+      "scope": {
+        "exampleapp": {
+          "targets": ["target-a", "target-b"],
+          "selection": "explicit"
+        }
+      },
+      "raw": {
+        "row": 3,
+        "request_type": "exec_group",
+        "note": "synthetic original record; the application redacted it before emitting"
+      }
+    },
+    {
+      "id": "ap-01",
+      "source_locator": "exampleapp/debug-report-0001/rows/4",
+      "kind": "approval",
+      "status": "blocked",
+      "parent_id": "mc-01",
+      "seq": 4,
+      "name": "policy.approval",
+      "start_ms": 1700000005500,
+      "end_ms": 1700000006000,
+      "tool_call_id": "call-0002",
+      "scope": {
+        "exampleapp": {
+          "decision": "denied",
+          "policy": "multi-target-requires-confirmation"
+        }
+      }
+    },
+    {
+      "id": "tc-02",
+      "source_locator": "exampleapp/debug-report-0001/rows/5",
+      "kind": "tool_call",
+      "status": "blocked",
+      "parent_id": "mc-01",
+      "seq": 5,
+      "name": "exec_group",
+      "start_ms": 1700000006000,
+      "end_ms": 1700000006100,
+      "tool_call_id": "call-0002",
+      "args_fingerprint": {
+        "hash": "3626c3989584d8ae50a79546943696d3e4e94eac50bb876ff0b3830ddbb62e4d",
+        "representation": "full"
+      },
+      "scope": {
+        "exampleapp": {
+          "targets": ["target-a", "target-b"],
+          "selection": "explicit"
+        }
+      }
+    },
+    {
+      "id": "mc-02",
+      "source_locator": "exampleapp/debug-report-0001/rows/6",
+      "kind": "model_call",
+      "status": "ok",
+      "parent_id": "agg-01",
+      "seq": 6,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "adapter": "sdk-neutral",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 1700000007000,
+      "end_ms": 1700000009000,
+      "duration_ms": 2000,
+      "tokens_in": 1400,
+      "tokens_out": 90,
+      "cache_read_tokens": 4000,
+      "finish_reason": "tool_use"
+    },
+    {
+      "id": "tc-03",
+      "source_locator": "exampleapp/debug-report-0001/rows/7",
+      "kind": "tool_call",
+      "status": "ok",
+      "parent_id": "mc-02",
+      "seq": 7,
+      "name": "exec",
+      "start_ms": 1700000009500,
+      "end_ms": 1700000011000,
+      "tool_call_id": "call-0003",
+      "native_tool_call_id": "native-0003",
+      "args_fingerprint": {
+        "hash": "c2d9b13aec38fba7ffe3171a0b423ae2d42ec177695256b62eb487f08175be7d",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "26045dfd1af80fd12aef34f2f74d312c20261b6608889abb730db5a89d96943b",
+        "representation": "full"
+      },
+      "result_bytes": 300,
+      "preview_bytes": 300,
+      "scope": {
+        "exampleapp": {
+          "targets": ["target-a"],
+          "selection": "single"
+        }
+      },
+      "raw": {
+        "row": 7,
+        "request_type": "exec",
+        "note": "synthetic original record"
+      }
+    },
+    {
+      "id": "ot-01",
+      "source_locator": "exampleapp/debug-report-0001/rows/8",
+      "kind": "other",
+      "status": "ok",
+      "seq": 8,
+      "name": "note",
+      "duration_ms": 5,
+      "raw": {
+        "row": 8,
+        "type": "note"
+      }
+    }
+  ]
+}
