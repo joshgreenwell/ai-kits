@@ -1,0 +1,8 @@
+{
+  "origin": "synthetic",
+  "ref": "agentlint tests: TL-B5 claude-session-jsonl unknown top-level record type and unknown content block type",
+  "completeness": "incomplete",
+  "excerpt_or_raw": "raw",
+  "format_version_note": "Hand-written after the record shapes of session logs written by Claude Code 2.1.x; 'mystery-record' and the 'widget' block are invented shapes that no Claude Code build writes.",
+  "notes": "The loader must name 'mystery-record' and 'widget' in the run's coverage reasons and mark the run incomplete; the assistant message must still map to a model_call."
+}
