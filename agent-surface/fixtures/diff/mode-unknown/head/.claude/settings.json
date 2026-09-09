@@ -1,0 +1,15 @@
+// origin: synthetic
+// ref: JG-154 I5 negative
+// completeness: complete (unknown defaultMode value on head)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ],
+    "defaultMode": "yolo"
+  }
+}

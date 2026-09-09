@@ -1,0 +1,14 @@
+// origin: synthetic
+// ref: JG-154 I1 ask
+// completeness: complete (allow added for a string that ask already lists)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "ask": [
+      "Bash(git push)"
+    ],
+    "allow": [
+      "Bash(git push)"
+    ]
+  }
+}

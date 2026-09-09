@@ -1,0 +1,8 @@
+// origin: synthetic
+// ref: JG-155 incomplete always wins
+// completeness: incomplete on purpose (hook added in settings, duplicate key in .mcp.json)
+// excerpt_or_raw: raw
+{
+  "mcpServers": {},
+  "mcpServers": {}
+}

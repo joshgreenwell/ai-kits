@@ -1,0 +1,20 @@
+// origin: synthetic
+// ref: JG-154 I8
+// completeness: complete (every documented ignored shape in allow, one in deny)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)",
+      "Write(src/)",
+      "NotebookEdit(notebooks/a.ipynb)",
+      "Glob(src/**)",
+      "MultiEdit(src/)",
+      "mcp__docs__search(query)",
+      "Read(*.env)"
+    ],
+    "deny": [
+      "Write(secrets/)"
+    ]
+  }
+}

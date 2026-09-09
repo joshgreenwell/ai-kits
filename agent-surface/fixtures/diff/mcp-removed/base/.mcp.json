@@ -1,0 +1,15 @@
+// origin: synthetic
+// ref: JG-153 D-mcp-removed
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  "mcpServers": {
+    "docs": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "example-docs-server"
+      ]
+    }
+  }
+}

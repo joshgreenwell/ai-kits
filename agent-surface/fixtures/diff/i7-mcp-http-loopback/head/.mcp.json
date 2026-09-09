@@ -1,0 +1,20 @@
+// origin: synthetic
+// ref: JG-154 I7 loopback
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  "mcpServers": {
+    "local": {
+      "type": "http",
+      "url": "http://localhost:3000"
+    },
+    "local6": {
+      "type": "sse",
+      "url": "http://[::1]:3000/sse"
+    },
+    "local4": {
+      "type": "http",
+      "url": "http://127.0.0.1:8080/mcp"
+    }
+  }
+}

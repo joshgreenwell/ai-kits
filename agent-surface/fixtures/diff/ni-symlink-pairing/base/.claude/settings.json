@@ -1,0 +1,11 @@
+// origin: synthetic
+// ref: JG-154 not interpreted: symlink pairing
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ]
+  }
+}

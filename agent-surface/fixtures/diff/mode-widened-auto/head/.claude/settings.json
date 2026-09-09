@@ -1,0 +1,15 @@
+// origin: synthetic
+// ref: JG-154 I5 auto
+// completeness: complete (absent → auto)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ],
+    "defaultMode": "auto"
+  }
+}

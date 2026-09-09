@@ -157,3 +157,89 @@ export interface Snapshot {
   entries: Entry[];
   incomplete: Incomplete[];
 }
+
+// ---- Diff shapes (plan §3.5, JG-153 / JG-155) ------------------------------
+
+import type { Category } from "./categories.js";
+import type { Flag } from "./interpretations/types.js";
+
+/** How a key differs between base and head. `moved`: same key and value, different file. */
+export type ChangeKind = "added" | "removed" | "changed" | "moved";
+
+/**
+ * One keyed difference between base and head (§3.5).
+ *
+ * `tier` is the confidence of the `direction` claim; `breadth_tier` the
+ * confidence of the `breadth` claim (perm entries only, `null` otherwise).
+ * The `Entry` copies in `base` / `head` carry the delta's classification.
+ * `rule` names the direction rule (`D-…`) and `interpretations` the
+ * interpretation / not-interpreted IDs that contributed (`I…`, `N-…`).
+ */
+export interface Delta {
+  key: string;
+  kind: EntryKind;
+  change: ChangeKind;
+  base: Entry | null;
+  head: Entry | null;
+  direction: Direction;
+  tier: Tier;
+  breadth: Breadth | null;
+  breadth_tier: Tier | null;
+  /** Verdict category; set only when `direction` is `widens`. */
+  category: Category | null;
+  rule: string;
+  interpretations: string[];
+  flags: Flag[];
+  notes: string[];
+}
+
+/** The parts of a side's snapshot the diff carries (entries live inside the deltas). */
+export interface DiffSide {
+  /** Resolved commit SHA, or `null` for a worktree / snapshot-file side. */
+  sha: string | null;
+  origin: SnapshotOrigin;
+  sources: Source[];
+  assumptions: string[];
+  incomplete: Incomplete[];
+}
+
+export type VerdictLabel = "no-change" | "pass" | "expands" | "undecided" | "incomplete";
+
+/** Effective `--fail-on` set. */
+export interface FailOn {
+  categories: Category[];
+  /** Whether projected widenings also fail (`--fail-on projected`). */
+  projected: boolean;
+}
+
+export interface DiffSummary {
+  /** True only when a `proven` `widens` delta sits in a failing category. */
+  expands: boolean;
+  /** Sorted unique categories of every widening delta, any tier. */
+  categories: Category[];
+  verdict: VerdictLabel;
+  exit_code: number;
+  fail_on: FailOn;
+  strict: boolean;
+  reasons: string[];
+}
+
+/**
+ * Result of `diffSnapshots` (§3.5). Each delta appears in exactly one of
+ * `added`, `removed`, `changed` (which also holds `moved`) or `unresolved`
+ * (a delta the tool could not decide: tier not `proven`, or breadth
+ * unresolved). Lists are sorted by key. `incomplete` is both sides'
+ * `incomplete[]`, base first.
+ */
+export interface Diff {
+  schema_version: number;
+  semantics_doc_date: string;
+  base: DiffSide;
+  head: DiffSide;
+  added: Delta[];
+  removed: Delta[];
+  changed: Delta[];
+  unresolved: Delta[];
+  incomplete: Incomplete[];
+  summary: DiffSummary;
+}

@@ -1,0 +1,11 @@
+// origin: synthetic
+// ref: JG-154 not interpreted: wrapper stripping
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ]
+  }
+}

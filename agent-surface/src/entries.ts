@@ -5,7 +5,7 @@
  * and `.mcp.json` into `Entry[]` with stable keys:
  *
  *   perm:<allow|ask|deny>:<canonical rule>      value {raw, rule, tool, spec, wildcard}
- *   mode:defaultMode | mode:disableBypassPermissionsMode   value {raw}
+ *   mode:defaultMode | mode:disableBypassPermissionsMode   value {raw, mode} (mode duplicates raw so a mode change survives the raw-free semantic comparison)
  *   hook:<event>:<matcher>:<sha256(command)>    value {event, matcher, type, command, prompt, timeout}
  *   mcp:<server-name>                           value {transport, type_raw, command, args, url, env_keys, header_keys, extra}
  *   dir:<path>                                  value {raw, path}
@@ -213,7 +213,7 @@ class DocumentExtractor {
         if (typeof child !== "string") {
           this.fail(childPointer, `${key} is ${describe(child)}, expected a string`);
         } else {
-          this.add("mode", `mode:${key}`, { raw: child }, childPointer);
+          this.add("mode", `mode:${key}`, { raw: child, mode: child }, childPointer);
         }
       } else {
         this.add("unknown", `unknown:${childPointer}`, child, childPointer);
