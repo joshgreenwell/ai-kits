@@ -1,0 +1,131 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "agentlint tests: TL-B4 record-bundle loader, records violating the schema",
+    "completeness": "incomplete",
+    "excerpt_or_raw": "raw",
+    "notes": "Hand-written. The top level is valid; records 0 and 9 are valid and must load; every other record breaks exactly one schema rule (named in its 'violates' comment inside 'raw' where the record shape allows it) and must be dropped with a JSON-pointer locator."
+  },
+  "schema_version": "1",
+  "run_id": "run-bundle-0002",
+  "conversation_id": "conv-bundle-0002",
+  "records": [
+    {
+      "id": "mc-10",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 1,
+      "start_ms": 1700000100000,
+      "end_ms": 1700000101000,
+      "model": "model-a",
+      "token_basis": "input_excludes_cache_read",
+      "tokens_in": 500,
+      "tokens_out": 20
+    },
+    {
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 2,
+      "raw": {"violates": "required: id is missing"}
+    },
+    {
+      "id": "x-12",
+      "kind": "llm",
+      "status": "ok",
+      "seq": 3,
+      "raw": {"violates": "enum: kind is not one of the five kinds"}
+    },
+    {
+      "id": "mc-13",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 4,
+      "tokens_in": 12.5,
+      "raw": {"violates": "type: tokens_in is a float, counts are integers"}
+    },
+    {
+      "id": "tc-14",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 5,
+      "result_bytes": null,
+      "raw": {"violates": "type: null is never a value; omit the key instead"}
+    },
+    {
+      "id": "tc-15",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 6,
+      "result_size": 10,
+      "raw": {"violates": "additionalProperties: result_size is not a record field"}
+    },
+    {
+      "id": "tc-16",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 7,
+      "args_fingerprint": {
+        "hash": "56ac8712abe3b244736191f6d2fc794f1544d35012473a86f6314a68345bbfb8"
+      },
+      "raw": {"violates": "required: fingerprint without representation"}
+    },
+    {
+      "id": "tc-17",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 8,
+      "scope": {"exampleapp": "flat"},
+      "raw": {"violates": "type: scope values must be objects (namespaced)"}
+    },
+    {
+      "id": "tc-18",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 9,
+      "result_bytes": -1,
+      "raw": {"violates": "minimum: counts are never negative"}
+    },
+    {
+      "id": "tc-19",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 10,
+      "start_ms": 1700000102000,
+      "end_ms": 1700000102500,
+      "name": "exec",
+      "tool_call_id": "call-0019",
+      "result_bytes": 128
+    },
+    "not an object at all",
+    {
+      "id": "",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 12,
+      "raw": {"violates": "minLength: id must be non-empty"}
+    },
+    {
+      "id": "tc-22",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 13,
+      "result_fingerprint": {"hash": "ABCDEF0123456789", "representation": "full"},
+      "raw": {"violates": "pattern: hash must be lowercase hex"}
+    },
+    {
+      "id": "mc-23",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 14,
+      "tokens_out": true,
+      "raw": {"violates": "type: a boolean is not an integer"}
+    },
+    {
+      "id": "tc-24",
+      "kind": "tool_call",
+      "status": "denied",
+      "seq": 15,
+      "raw": {"violates": "enum: status must be ok, error, blocked or unknown"}
+    }
+  ]
+}
