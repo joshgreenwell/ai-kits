@@ -1,0 +1,16 @@
+// origin: synthetic
+// ref: JG-158 JSONC comments
+// completeness: complete (comment-only change between base and head)
+// excerpt_or_raw: raw
+{
+  /* build tooling: allow the test runner,
+     block outbound curl */
+  "permissions": {
+    "allow": [
+      "Bash(npm test)", // unit tests
+    ],
+    "deny": [
+      "Bash(curl *)", // no network from the shell
+    ],
+  },
+}

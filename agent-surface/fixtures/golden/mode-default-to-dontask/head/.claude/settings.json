@@ -1,0 +1,15 @@
+// origin: synthetic
+// ref: JG-158 mode default → dontAsk / JG-154 I5
+// completeness: complete (default → dontAsk)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ],
+    "defaultMode": "dontAsk"
+  }
+}

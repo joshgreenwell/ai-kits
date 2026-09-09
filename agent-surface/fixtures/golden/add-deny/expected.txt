@@ -1,0 +1,17 @@
+CONTROL-SURFACE DIFF  base=<base-sha> head=<head-sha>
+Assumptions
+  Semantics doc date     2026-09-07
+  Scope                  repository-controlled files only
+  Workspace trust        assumed accepted (allow rules/dirs are held until then)
+  Runtime mode           per defaultMode in head; CLI flags not modeled
+  Sandbox                not modeled
+  Hooks                  presence only; decisions not modeled
+  Managed/user/local     not read
+  Plugins                not modeled (flagged if enabledPlugins non-empty)
+NARROWED
+  permissions
+    added   perm        perm:deny:Bash(rm -rf /)  narrows proven exact  .claude/settings.json:12
+              I2: Bash(rm -rf /) is scoped to its spec, not the whole tool
+              I3: no wildcard; matches exactly "rm -rf /" (exact, proven)
+verdict: pass (exit 0); expands=false; categories=none
+  - narrowing or neutral changes only

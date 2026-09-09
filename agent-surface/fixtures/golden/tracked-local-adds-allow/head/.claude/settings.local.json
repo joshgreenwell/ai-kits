@@ -1,0 +1,11 @@
+// origin: synthetic
+// ref: JG-158 tracked local
+// completeness: complete (allow added in tracked settings.local.json)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash"
+    ]
+  }
+}

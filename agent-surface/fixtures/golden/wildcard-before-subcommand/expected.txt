@@ -1,0 +1,19 @@
+CONTROL-SURFACE DIFF  base=<base-sha> head=<head-sha>
+Assumptions
+  Semantics doc date     2026-09-07
+  Scope                  repository-controlled files only
+  Workspace trust        assumed accepted (allow rules/dirs are held until then)
+  Runtime mode           per defaultMode in head; CLI flags not modeled
+  Sandbox                not modeled
+  Hooks                  presence only; decisions not modeled
+  Managed/user/local     not read
+  Plugins                not modeled (flagged if enabledPlugins non-empty)
+UNRESOLVED
+  permissions
+    added   perm        perm:allow:Bash(git * main)  widens proven glob [breadth_unresolved,broad]  .claude/settings.json:9
+              I2: Bash(git * main) is scoped to its spec, not the whole tool
+              I3: wildcard placement in "git * main" is neither trailing nor whole; breadth unresolved (glob, projected)
+              I4: wildcard before a subcommand in "git * main"; the text after "*" does not limit what it matches (broad, projected)
+no verdict derived: every change (1) is unresolved; nothing is proven either way
+verdict: undecided (exit 2); expands=false; categories=scoped-allow
+  - undecided: perm:allow:Bash(git * main) added (proven widens, breadth glob) [breadth_unresolved, broad]

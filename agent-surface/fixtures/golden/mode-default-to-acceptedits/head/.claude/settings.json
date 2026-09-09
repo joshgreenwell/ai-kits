@@ -1,0 +1,15 @@
+// origin: synthetic
+// ref: JG-153 D-mode-neutral / JG-154 I5
+// completeness: complete (default → acceptEdits)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ],
+    "defaultMode": "acceptEdits"
+  }
+}

@@ -1,0 +1,171 @@
+{
+  "added": [
+    {
+      "base": null,
+      "breadth": "whole_tool",
+      "breadth_tier": "proven",
+      "category": "whole-tool-allow",
+      "change": "added",
+      "direction": "widens",
+      "flags": [
+        "tracked_local"
+      ],
+      "head": {
+        "breadth": "whole_tool",
+        "direction": "widens",
+        "file": ".claude/settings.local.json",
+        "json_pointer": "/permissions/allow/0",
+        "key": "perm:allow:Bash",
+        "kind": "perm",
+        "line": 8,
+        "source_sha": "<head-sha>",
+        "tier": "proven",
+        "value": {
+          "raw": "Bash",
+          "rule": "Bash",
+          "spec": null,
+          "tool": "Bash",
+          "wildcard": null
+        }
+      },
+      "interpretations": [
+        "I2"
+      ],
+      "key": "perm:allow:Bash",
+      "kind": "perm",
+      "notes": [
+        "I2: Bash is a whole-tool rule (bare tool name); it matches every use of Bash"
+      ],
+      "rule": "D-allow-added",
+      "tier": "proven"
+    }
+  ],
+  "base": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<base-sha>",
+      "spec": "<base-sha>"
+    },
+    "sha": "<base-sha>",
+    "sources": [
+      {
+        "blob": "cd98f9590fc72662f5c457d6146353a91bcec68a",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<base-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "changed": [],
+  "command": "check",
+  "head": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)",
+      "local file shared via Git (trust-held by Claude Code): .claude/settings.local.json is tracked and included"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<head-sha>",
+      "spec": "<head-sha>"
+    },
+    "sha": "<head-sha>",
+    "sources": [
+      {
+        "blob": "cd98f9590fc72662f5c457d6146353a91bcec68a",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<head-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": "3baf6357a9c9442ef062ea49dbfe6dcf32ff1841",
+        "note": "local file shared via Git (trust-held by Claude Code)",
+        "parsed": true,
+        "path": ".claude/settings.local.json",
+        "sha": "<head-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "incomplete": [],
+  "removed": [],
+  "schema_version": 1,
+  "semantics_doc_date": "2026-09-07",
+  "summary": {
+    "categories": [
+      "whole-tool-allow"
+    ],
+    "exit_code": 1,
+    "expands": true,
+    "fail_on": {
+      "categories": [
+        "deny-removed",
+        "directory",
+        "hook",
+        "hooks-reenabled",
+        "mcp",
+        "mode",
+        "whole-tool-allow"
+      ],
+      "projected": false
+    },
+    "reasons": [
+      "expands (whole-tool-allow): perm:allow:Bash added (proven widens, breadth whole_tool) [tracked_local]"
+    ],
+    "strict": false,
+    "verdict": "expands"
+  },
+  "unresolved": []
+}

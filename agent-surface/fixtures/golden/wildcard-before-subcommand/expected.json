@@ -1,0 +1,175 @@
+{
+  "added": [],
+  "base": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<base-sha>",
+      "spec": "<base-sha>"
+    },
+    "sha": "<base-sha>",
+    "sources": [
+      {
+        "blob": "f930db7d979fbceadbca1782d077db0baac4d6ba",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<base-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "changed": [],
+  "command": "check",
+  "head": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<head-sha>",
+      "spec": "<head-sha>"
+    },
+    "sha": "<head-sha>",
+    "sources": [
+      {
+        "blob": "d0bef1e7f28e4302d9c5abbc7a47a1f10a8d950b",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<head-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "incomplete": [],
+  "removed": [],
+  "schema_version": 1,
+  "semantics_doc_date": "2026-09-07",
+  "summary": {
+    "categories": [
+      "scoped-allow"
+    ],
+    "exit_code": 2,
+    "expands": false,
+    "fail_on": {
+      "categories": [
+        "deny-removed",
+        "directory",
+        "hook",
+        "hooks-reenabled",
+        "mcp",
+        "mode",
+        "whole-tool-allow"
+      ],
+      "projected": false
+    },
+    "reasons": [
+      "undecided: perm:allow:Bash(git * main) added (proven widens, breadth glob) [breadth_unresolved, broad]"
+    ],
+    "strict": false,
+    "verdict": "undecided"
+  },
+  "unresolved": [
+    {
+      "base": null,
+      "breadth": "glob",
+      "breadth_tier": "projected",
+      "category": "scoped-allow",
+      "change": "added",
+      "direction": "widens",
+      "flags": [
+        "breadth_unresolved",
+        "broad"
+      ],
+      "head": {
+        "breadth": "glob",
+        "direction": "widens",
+        "file": ".claude/settings.json",
+        "json_pointer": "/permissions/allow/1",
+        "key": "perm:allow:Bash(git * main)",
+        "kind": "perm",
+        "line": 9,
+        "source_sha": "<head-sha>",
+        "tier": "proven",
+        "value": {
+          "raw": "Bash(git * main)",
+          "rule": "Bash(git * main)",
+          "spec": "git * main",
+          "tool": "Bash",
+          "wildcard": "none"
+        }
+      },
+      "interpretations": [
+        "I2",
+        "I3",
+        "I4"
+      ],
+      "key": "perm:allow:Bash(git * main)",
+      "kind": "perm",
+      "notes": [
+        "I2: Bash(git * main) is scoped to its spec, not the whole tool",
+        "I3: wildcard placement in \"git * main\" is neither trailing nor whole; breadth unresolved (glob, projected)",
+        "I4: wildcard before a subcommand in \"git * main\"; the text after \"*\" does not limit what it matches (broad, projected)"
+      ],
+      "rule": "D-allow-added",
+      "tier": "proven"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+CONTROL-SURFACE DIFF  base=<base-sha> head=<head-sha>
+Assumptions
+  Semantics doc date     2026-09-07
+  Scope                  repository-controlled files only
+  Workspace trust        assumed accepted (allow rules/dirs are held until then)
+  Runtime mode           per defaultMode in head; CLI flags not modeled
+  Sandbox                not modeled
+  Hooks                  presence only; decisions not modeled
+  Managed/user/local     not read
+  Plugins                not modeled (flagged if enabledPlugins non-empty)
+  Flagged (head)         local file shared via Git (trust-held by Claude Code): .claude/settings.local.json is tracked and included
+EXPANDED
+  permissions
+    added   perm        perm:allow:Bash  widens proven whole_tool [tracked_local]  .claude/settings.local.json:8
+              I2: Bash is a whole-tool rule (bare tool name); it matches every use of Bash
+verdict: expands (exit 1); expands=true; categories=whole-tool-allow
+  - expands (whole-tool-allow): perm:allow:Bash added (proven widens, breadth whole_tool) [tracked_local]

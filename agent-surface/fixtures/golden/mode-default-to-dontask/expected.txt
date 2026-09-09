@@ -1,0 +1,19 @@
+CONTROL-SURFACE DIFF  base=<base-sha> head=<head-sha>
+Assumptions
+  Semantics doc date     2026-09-07
+  Scope                  repository-controlled files only
+  Workspace trust        assumed accepted (allow rules/dirs are held until then)
+  Runtime mode           per defaultMode in head; CLI flags not modeled
+  Sandbox                not modeled
+  Hooks                  presence only; decisions not modeled
+  Managed/user/local     not read
+  Plugins                not modeled (flagged if enabledPlugins non-empty)
+EXPANDED
+  mode
+    changed mode        mode:defaultMode  widens proven  .claude/settings.json:13
+              changed fields: mode
+              defaultMode default → dontAsk
+              I5: defaultMode "dontAsk" is a widening mode
+              I5: dontAsk is not allow-everything; it auto-denies whatever would have asked, and only allow rules grant
+verdict: expands (exit 1); expands=true; categories=mode
+  - expands (mode): mode:defaultMode changed (proven widens)

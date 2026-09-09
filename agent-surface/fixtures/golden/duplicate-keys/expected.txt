@@ -1,0 +1,15 @@
+CONTROL-SURFACE DIFF  base=<base-sha> head=<head-sha>
+Assumptions
+  Semantics doc date     2026-09-07
+  Scope                  repository-controlled files only
+  Workspace trust        assumed accepted (allow rules/dirs are held until then)
+  Runtime mode           per defaultMode in head; CLI flags not modeled
+  Sandbox                not modeled
+  Hooks                  presence only; decisions not modeled
+  Managed/user/local     not read
+  Plugins                not modeled (flagged if enabledPlugins non-empty)
+INCOMPLETE
+  .mcp.json: duplicate key "mcpServers" at /mcpServers (lines 6, 7)
+no deltas derived; the scan is incomplete and this is not a clean result
+verdict: incomplete (exit 3); expands=false; categories=none
+  - incomplete: .mcp.json: duplicate key "mcpServers" at /mcpServers (lines 6, 7)

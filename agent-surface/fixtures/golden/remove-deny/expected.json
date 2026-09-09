@@ -1,0 +1,170 @@
+{
+  "added": [],
+  "base": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<base-sha>",
+      "spec": "<base-sha>"
+    },
+    "sha": "<base-sha>",
+    "sources": [
+      {
+        "blob": "c7c895ebd817391738d928c13b84694c2333659e",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<base-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "changed": [],
+  "command": "check",
+  "head": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<head-sha>",
+      "spec": "<head-sha>"
+    },
+    "sha": "<head-sha>",
+    "sources": [
+      {
+        "blob": "de1c705c9138bf56297e1715014b9da9f1d3528a",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<head-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "incomplete": [],
+  "removed": [
+    {
+      "base": {
+        "breadth": "prefix",
+        "direction": "widens",
+        "file": ".claude/settings.json",
+        "json_pointer": "/permissions/deny/0",
+        "key": "perm:deny:Bash(curl *)",
+        "kind": "perm",
+        "line": 11,
+        "source_sha": "<base-sha>",
+        "tier": "proven",
+        "value": {
+          "raw": "Bash(curl *)",
+          "rule": "Bash(curl *)",
+          "spec": "curl *",
+          "tool": "Bash",
+          "wildcard": "trailing"
+        }
+      },
+      "breadth": "prefix",
+      "breadth_tier": "projected",
+      "category": "deny-removed",
+      "change": "removed",
+      "direction": "widens",
+      "flags": [],
+      "head": null,
+      "interpretations": [
+        "I2",
+        "I3"
+      ],
+      "key": "perm:deny:Bash(curl *)",
+      "kind": "perm",
+      "notes": [
+        "I2: Bash(curl *) is scoped to its spec, not the whole tool",
+        "I3: trailing wildcard; matches commands starting with \"curl\" (prefix, projected)"
+      ],
+      "rule": "D-deny-removed",
+      "tier": "proven"
+    }
+  ],
+  "schema_version": 1,
+  "semantics_doc_date": "2026-09-07",
+  "summary": {
+    "categories": [
+      "deny-removed"
+    ],
+    "exit_code": 1,
+    "expands": true,
+    "fail_on": {
+      "categories": [
+        "deny-removed",
+        "directory",
+        "hook",
+        "hooks-reenabled",
+        "mcp",
+        "mode",
+        "whole-tool-allow"
+      ],
+      "projected": false
+    },
+    "reasons": [
+      "expands (deny-removed): perm:deny:Bash(curl *) removed (proven widens, breadth prefix)"
+    ],
+    "strict": false,
+    "verdict": "expands"
+  },
+  "unresolved": []
+}
