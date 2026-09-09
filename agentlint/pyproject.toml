@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentlint"
+version = "0.0.1"
+description = "Agent Trace Linter: local, offline, deterministic linting of agent run traces."
+readme = "README.md"
+license = { text = "BSD-2-Clause" }
+requires-python = ">=3.11"
+dependencies = []
+keywords = ["agents", "traces", "otlp", "linter"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: BSD License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+agentlint = "agentlint.cli:main"
+
+# Third-party rule packs register here (see TL-C). Empty on purpose for now.
+[project.entry-points."agentlint.rules"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentlint"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/agentlint", "tests", "README.md", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["RUF012"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agentlint"]
