@@ -1,0 +1,9 @@
+// origin: synthetic
+// ref: JG-147
+// completeness: incomplete (malformed on purpose)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": ["Read"
+  }
+}

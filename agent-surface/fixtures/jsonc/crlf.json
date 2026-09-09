@@ -1,0 +1,10 @@
+// origin: synthetic
+// ref: JG-147
+// completeness: complete (CRLF line endings on purpose)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": ["Read"]
+  },
+  "defaultMode": "plan"
+}
