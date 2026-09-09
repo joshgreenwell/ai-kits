@@ -1,0 +1,36 @@
+name: agent-surface
+
+on:
+  push:
+    paths:
+      - "agent-surface/**"
+      - ".github/workflows/agent-surface.yml"
+  pull_request:
+    paths:
+      - "agent-surface/**"
+      - ".github/workflows/agent-surface.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22"]
+    defaults:
+      run:
+        working-directory: agent-surface
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: agent-surface/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test

@@ -1,0 +1,7 @@
+﻿// origin: synthetic
+// ref: JG-147
+// completeness: complete (leading BOM on purpose)
+// excerpt_or_raw: raw
+{
+  "defaultMode": "plan"
+}

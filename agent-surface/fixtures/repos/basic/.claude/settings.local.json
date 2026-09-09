@@ -1,0 +1,9 @@
+// origin: synthetic
+// ref: JG-149
+// completeness: complete (tracked local file on purpose)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": ["Bash(ls *)"]
+  }
+}
