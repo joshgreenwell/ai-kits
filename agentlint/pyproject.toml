@@ -35,7 +35,7 @@ agentlint = "agentlint.cli:main"
 packages = ["src/agentlint"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/agentlint", "tests", "README.md", "pyproject.toml"]
+include = ["src/agentlint", "tests", "examples", "docs", "scripts", "README.md", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
