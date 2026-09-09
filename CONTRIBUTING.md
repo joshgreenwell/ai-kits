@@ -18,3 +18,11 @@ The kits never import from each other. Fixtures, docs, and CI live inside each k
 
 * Fixtures are synthetic or sanitized. Full traces, credentials, and internal identifiers from private systems never enter this repository.
 * Every fixture declares origin, ref, completeness, and whether it is a documentary excerpt or a raw export.
+* `agentlint/scripts/check_fixture_hygiene.py` enforces this in CI for Kit 1.
+
+## Releasing `agentlint`
+
+1. Bump `version` in `agentlint/pyproject.toml`, date the `CHANGELOG.md` entry, merge to `main`.
+2. Tag the merge commit `agentlint-v<version>` (for example `agentlint-v0.0.1`) and push the tag. The `agentlint` workflow builds the sdist and wheel on every push; on a matching tag its `publish` job uploads them to PyPI through trusted publishing (`pypa/gh-action-pypi-publish`, `id-token: write`, GitHub environment `pypi`), so no API token is stored anywhere.
+3. One-time setup by the maintainer: register the trusted publisher on PyPI (project `agentlint`, owner `joshgreenwell`, repository `ai-kits`, workflow `agentlint.yml`, environment `pypi`) and create the `pypi` environment in the repository settings.
+4. Verify from a fresh directory: `uvx agentlint --version` and `uvx agentlint analyze <fixture>`.

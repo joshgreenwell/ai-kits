@@ -1,0 +1,81 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: record-bundle with one schema-violating record (tokens_in is not an integer)",
+    "completeness": "incomplete",
+    "excerpt_or_raw": "raw",
+    "notes": "mc-02 carries tokens_in 12.5; the loader drops that record, names it by JSON pointer and marks the run incomplete. The other three records still load."
+  },
+  "schema_version": "1",
+  "run_id": "run-e2e-malformed",
+  "conversation_id": "conv-run-e2e-malformed",
+  "source_refs": [
+    "exampleapp/e2e/run-e2e-malformed"
+  ],
+  "records": [
+    {
+      "id": "mc-01",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 1,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 0,
+      "end_ms": 900,
+      "tokens_in": 1500,
+      "tokens_out": 60,
+      "finish_reason": "tool_use"
+    },
+    {
+      "id": "mc-02",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 2,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 1000,
+      "end_ms": 1900,
+      "tokens_in": 12.5,
+      "tokens_out": 60,
+      "finish_reason": "tool_use"
+    },
+    {
+      "id": "tc-01",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 3,
+      "name": "search",
+      "start_ms": 2000,
+      "end_ms": 2400,
+      "tool_call_id": "call-0001",
+      "args_fingerprint": {
+        "hash": "b8a910d2419a2bd3ce57af4798e9cdefe1c3338e611d62fae6fa46e42f9a1401",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "24cb448fbab1be3d041b1e56562f09c157dad53e6ea8d04b5dc96421271b7fbe",
+        "representation": "full"
+      },
+      "result_bytes": 200
+    },
+    {
+      "id": "mc-03",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 4,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 2500,
+      "end_ms": 3400,
+      "tokens_in": 1900,
+      "tokens_out": 60,
+      "finish_reason": "stop"
+    }
+  ]
+}

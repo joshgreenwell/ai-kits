@@ -1,0 +1,12 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: record-bundle whose top level is invalid (records is not an array)",
+    "completeness": "incomplete",
+    "excerpt_or_raw": "raw",
+    "notes": "A top-level violation is a load error: no run is produced and the CLI exits 3."
+  },
+  "schema_version": "1",
+  "run_id": "run-e2e-unparseable",
+  "records": "not-an-array"
+}

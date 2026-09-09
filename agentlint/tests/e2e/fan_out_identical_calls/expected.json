@@ -1,0 +1,17 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: fan-out of identical calls -> no finding",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Concurrency is not sequence: three overlapping identical calls are one fan-out, not a cycle."
+  },
+  "checks": {
+    "events_total": 5,
+    "events_dropped_dedup": 0
+  },
+  "exit_code": 0,
+  "findings": [],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "complete"
+}

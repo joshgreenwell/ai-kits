@@ -1,0 +1,19 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: unparseable input -> no run, exit 3",
+    "completeness": "incomplete",
+    "excerpt_or_raw": "raw",
+    "notes": "No run means no coverage to report; coverage_completeness is null and the input is listed under incomplete."
+  },
+  "checks": {
+    "runs": [],
+    "incomplete_reason_contains": [
+      "records"
+    ]
+  },
+  "exit_code": 3,
+  "findings": [],
+  "incomplete_for_rules": [],
+  "coverage_completeness": null
+}

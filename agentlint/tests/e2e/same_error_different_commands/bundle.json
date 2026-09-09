@@ -1,0 +1,110 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: three failures with the same error but different commands",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Same tool, same error_type and error_code, but every args_fingerprint differs; IDENTICAL_RETRY_AFTER_FAILURE groups by args fingerprint and never fires."
+  },
+  "schema_version": "1",
+  "run_id": "run-e2e-different-commands",
+  "conversation_id": "conv-run-e2e-different-commands",
+  "source_refs": [
+    "exampleapp/e2e/run-e2e-different-commands"
+  ],
+  "records": [
+    {
+      "id": "mc-01",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 1,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 0,
+      "end_ms": 900,
+      "tokens_in": 1500,
+      "tokens_out": 60,
+      "finish_reason": "tool_use"
+    },
+    {
+      "id": "tc-01",
+      "kind": "tool_call",
+      "status": "error",
+      "seq": 2,
+      "name": "exec",
+      "start_ms": 1500,
+      "end_ms": 1900,
+      "tool_call_id": "call-0001",
+      "args_fingerprint": {
+        "hash": "1106f69fdf18ffbc2ab089f6091ab681c4705790c9f79b36c049fea441a47f94",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "6ea80663d6307e533292f92372c534b381e12c74491510fa54e529ee33cb26a3",
+        "representation": "full"
+      },
+      "result_bytes": 250,
+      "error_type": "CommandFailed",
+      "error_code": "E_EXIT_1"
+    },
+    {
+      "id": "tc-02",
+      "kind": "tool_call",
+      "status": "error",
+      "seq": 3,
+      "name": "exec",
+      "start_ms": 2000,
+      "end_ms": 2400,
+      "tool_call_id": "call-0002",
+      "args_fingerprint": {
+        "hash": "3e9ada757ad978d67d95895fbfdce750190e677d7e5fc79fd6d9ef02d9104323",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "8308410e107b486064df3522c53043280169b261251fa7c2b78612b16f7325f6",
+        "representation": "full"
+      },
+      "result_bytes": 250,
+      "error_type": "CommandFailed",
+      "error_code": "E_EXIT_1"
+    },
+    {
+      "id": "tc-03",
+      "kind": "tool_call",
+      "status": "error",
+      "seq": 4,
+      "name": "exec",
+      "start_ms": 2500,
+      "end_ms": 2900,
+      "tool_call_id": "call-0003",
+      "args_fingerprint": {
+        "hash": "0bb46f5d7dcaaa19177d35b113a4fa05cfa0f1ea7d550f5316bd1a0f40c0fdce",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "20bc6ee8fd12bdfaeeafaac2168cb082a6928edff95b1cd34c7da9ccd48792ba",
+        "representation": "full"
+      },
+      "result_bytes": 250,
+      "error_type": "CommandFailed",
+      "error_code": "E_EXIT_1"
+    },
+    {
+      "id": "mc-02",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 5,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 3200,
+      "end_ms": 4000,
+      "tokens_in": 2000,
+      "tokens_out": 60,
+      "finish_reason": "stop"
+    }
+  ]
+}

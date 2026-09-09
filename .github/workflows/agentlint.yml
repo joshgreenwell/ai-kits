@@ -2,6 +2,8 @@ name: agentlint
 
 on:
   push:
+    branches: ["**"]
+    tags: ["agentlint-v*"]
     paths:
       - "agentlint/**"
       - ".github/workflows/agentlint.yml"
@@ -10,6 +12,9 @@ on:
       - "agentlint/**"
       - ".github/workflows/agentlint.yml"
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: test (python ${{ matrix.python-version }})
@@ -17,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
     defaults:
       run:
         working-directory: agentlint
@@ -30,5 +35,60 @@ jobs:
         run: uv sync --extra dev
       - name: Lint
         run: uv run ruff check .
-      - name: Test
+      - name: Rule docs match metadata
+        run: uv run python scripts/render_rule_docs.py --check
+      - name: Fixture hygiene
+        run: uv run python scripts/check_fixture_hygiene.py
+      - name: Test (unit, negative controls, zero-network, packaging smoke)
         run: uv run pytest -q
+
+  build:
+    name: build (sdist + wheel)
+    runs-on: ubuntu-latest
+    needs: test
+    defaults:
+      run:
+        working-directory: agentlint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: uv build --out-dir dist
+      - name: Tag matches pyproject version
+        if: startsWith(github.ref, 'refs/tags/agentlint-v')
+        run: |
+          version="$(uv run --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "agentlint-v${version}" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} does not match version ${version}"; exit 1; }
+      - name: Smoke-test the wheel from a fresh directory
+        run: |
+          cd "$(mktemp -d)"
+          uvx --from "${GITHUB_WORKSPACE}"/agentlint/dist/agentlint-*.whl agentlint --version
+          uvx --from "${GITHUB_WORKSPACE}"/agentlint/dist/agentlint-*.whl agentlint analyze "${GITHUB_WORKSPACE}"/agentlint/tests/e2e/healthy_run/bundle.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentlint-dist
+          path: agentlint/dist/
+          if-no-files-found: error
+
+  publish:
+    name: publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [test, build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/agentlint-v')
+    environment:
+      name: pypi
+      url: https://pypi.org/project/agentlint/
+    permissions:
+      id-token: write   # trusted publishing; no API token is stored
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentlint-dist
+          path: dist/
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

@@ -1,0 +1,104 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: fan-out of three identical calls issued concurrently",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Three tool calls with identical arguments and identical results whose intervals overlap (a parallel fan-out). Distinct tool_call_ids, so dedup keeps all three; overlapping intervals are never 'after' one another, so NO_PROGRESS_CYCLE has no chain."
+  },
+  "schema_version": "1",
+  "run_id": "run-e2e-fanout",
+  "conversation_id": "conv-run-e2e-fanout",
+  "source_refs": [
+    "exampleapp/e2e/run-e2e-fanout"
+  ],
+  "records": [
+    {
+      "id": "mc-01",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 1,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 0,
+      "end_ms": 900,
+      "tokens_in": 1500,
+      "tokens_out": 60,
+      "finish_reason": "tool_use"
+    },
+    {
+      "id": "tc-01",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 2,
+      "name": "fetch",
+      "start_ms": 1100,
+      "end_ms": 1900,
+      "tool_call_id": "call-0001",
+      "args_fingerprint": {
+        "hash": "eb0718d38caa2627f03d73ec3e88ebcd9aa9dbc096e7fbb10a5c62ac9681cfe8",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "3c516147b4aa2831da231fe58182109b5290c31199c33ac678fad0f7acdf48bb",
+        "representation": "full"
+      },
+      "result_bytes": 300
+    },
+    {
+      "id": "tc-02",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 3,
+      "name": "fetch",
+      "start_ms": 1120,
+      "end_ms": 1950,
+      "tool_call_id": "call-0002",
+      "args_fingerprint": {
+        "hash": "eb0718d38caa2627f03d73ec3e88ebcd9aa9dbc096e7fbb10a5c62ac9681cfe8",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "3c516147b4aa2831da231fe58182109b5290c31199c33ac678fad0f7acdf48bb",
+        "representation": "full"
+      },
+      "result_bytes": 300
+    },
+    {
+      "id": "tc-03",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 4,
+      "name": "fetch",
+      "start_ms": 1140,
+      "end_ms": 1980,
+      "tool_call_id": "call-0003",
+      "args_fingerprint": {
+        "hash": "eb0718d38caa2627f03d73ec3e88ebcd9aa9dbc096e7fbb10a5c62ac9681cfe8",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "3c516147b4aa2831da231fe58182109b5290c31199c33ac678fad0f7acdf48bb",
+        "representation": "full"
+      },
+      "result_bytes": 300
+    },
+    {
+      "id": "mc-02",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 5,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 2100,
+      "end_ms": 3000,
+      "tokens_in": 2000,
+      "tokens_out": 60,
+      "finish_reason": "stop"
+    }
+  ]
+}

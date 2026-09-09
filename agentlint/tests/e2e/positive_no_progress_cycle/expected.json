@@ -1,0 +1,20 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: NO_PROGRESS_CYCLE positive -> exactly one finding, exit 0",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Findings never change the exit code."
+  },
+  "checks": {
+    "finding_evidence_counts": {
+      "NO_PROGRESS_CYCLE": 3
+    }
+  },
+  "exit_code": 0,
+  "findings": [
+    "NO_PROGRESS_CYCLE"
+  ],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "complete"
+}

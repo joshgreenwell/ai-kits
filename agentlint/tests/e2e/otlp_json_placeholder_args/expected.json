@@ -1,0 +1,48 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: placeholder args {} / \"\" -> coverage abstention, no equality claim",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Placeholders are shorter than the 16-byte hash floor, so the loader records no fingerprint; every rule that would compare arguments or results abstains with the field named instead of calling three identical placeholders a cycle."
+  },
+  "args": [
+    "--config",
+    "{dir}/agentlint.toml"
+  ],
+  "checks": {
+    "abstention_fields": {
+      "NO_PROGRESS_CYCLE": [
+        "args_fingerprint(full)"
+      ],
+      "IDENTICAL_RETRY_AFTER_FAILURE": [
+        "args_fingerprint(full)"
+      ],
+      "REPEATED_TOOL_RESULT": [
+        "result_fingerprint(full)"
+      ]
+    },
+    "event_fields": {
+      "000000000000e603": {
+        "args_fingerprint": null,
+        "result_fingerprint": null
+      },
+      "000000000000e604": {
+        "args_fingerprint": null,
+        "result_fingerprint": null
+      },
+      "000000000000e605": {
+        "args_fingerprint": null,
+        "result_fingerprint": null
+      }
+    }
+  },
+  "exit_code": 2,
+  "findings": [],
+  "incomplete_for_rules": [
+    "IDENTICAL_RETRY_AFTER_FAILURE",
+    "NO_PROGRESS_CYCLE",
+    "REPEATED_TOOL_RESULT"
+  ],
+  "coverage_completeness": "complete"
+}

@@ -1,0 +1,25 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: aggregate usage only -> no growth finding, abstention note",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "The run is complete (nothing was lost by the loader) but the rule cannot run: exit 2 with the missing field named."
+  },
+  "checks": {
+    "abstention_fields": {
+      "CONTEXT_GROWTH": [
+        "tokens_in(model_call)"
+      ]
+    },
+    "output_contains": [
+      "incomplete for rules: [CONTEXT_GROWTH]"
+    ]
+  },
+  "exit_code": 2,
+  "findings": [],
+  "incomplete_for_rules": [
+    "CONTEXT_GROWTH"
+  ],
+  "coverage_completeness": "complete"
+}
