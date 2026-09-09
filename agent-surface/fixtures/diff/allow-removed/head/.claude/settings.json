@@ -1,0 +1,11 @@
+// origin: synthetic
+// ref: JG-153 D-allow-removed
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "deny": [
+      "Bash(curl *)"
+    ]
+  }
+}

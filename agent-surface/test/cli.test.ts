@@ -51,10 +51,10 @@ describe("CLI: help and usage (JG-147)", () => {
     assert.equal(pkg.bin["agent-surface"], "./dist/src/cli.js");
   });
 
-  it("explain reports unknown IDs while no interpretations are registered", () => {
+  it("explain reports unknown IDs with the list of valid ones", () => {
     const run = runCli(["explain", "INT-1"], process.cwd());
     assert.equal(run.status, EXIT_USAGE);
-    assert.match(run.stderr, /unknown interpretation ID 'INT-1'/);
+    assert.match(run.stderr, /unknown ID 'INT-1'\nvalid IDs: I1, I2/);
   });
 });
 
@@ -203,34 +203,37 @@ describe("CLI: diff and check resolve refs and report missing ones (JG-148)", ()
     assert.ok(!fs.existsSync(path.join(repo.dir, "pwned-marker")));
   });
 
-  it("valid refs, a directory and a snapshot.json all resolve; the diff itself is reported as not implemented", () => {
+  it("valid refs, a directory and a snapshot.json all resolve and diff against main as no change", () => {
     git(repo.dir, "branch", "feature");
     fs.writeFileSync(path.join(repo.dir, "snap.json"), runCli(["snapshot", "HEAD", "--json"], repo.dir).stdout);
     for (const head of ["feature", ".", "snap.json", repo.sha]) {
       const run = runCli(["diff", "--base", "main", "--head", head, "--json"], repo.dir);
-      assert.equal(run.status, EXIT_INCOMPLETE, `head ${head}: ${run.stderr}`);
+      assert.equal(run.status, EXIT_OK, `head ${head}: ${run.stderr}`);
+      assert.equal(run.stderr, "");
       const output = JSON.parse(run.stdout) as {
-        base: { origin: { kind: string; sha: string } };
-        head: { origin: { kind: string } };
-        changes: null;
-        summary: null;
-        incomplete: Array<{ path: string; reason: string }>;
+        base: { origin: { kind: string; sha: string }; sha: string };
+        head: { origin: { kind: string }; sha: string | null };
+        added: unknown[];
+        removed: unknown[];
+        changed: unknown[];
+        unresolved: unknown[];
+        summary: { verdict: string; exit_code: number };
+        incomplete: unknown[];
       };
       assert.deepEqual(output.base.origin, { kind: "git", spec: "main", sha: repo.sha });
+      assert.equal(output.base.sha, repo.sha);
       assert.equal(output.head.origin.kind, head === "." ? "worktree" : head === "snap.json" ? "snapshot" : "git");
-      assert.equal(output.changes, null);
-      assert.equal(output.summary, null);
-      assert.deepEqual(output.incomplete.map((item) => item.path), ["<agent-surface>"]);
-      assert.match(output.incomplete[0]?.reason ?? "", /not implemented/);
-      assert.match(run.stderr, /^incomplete: <agent-surface>: diff not implemented/);
+      assert.equal(output.head.sha, head === "." ? null : repo.sha);
+      assert.deepEqual([output.added, output.removed, output.changed, output.unresolved, output.incomplete], [[], [], [], [], []]);
+      assert.deepEqual(output.summary.verdict, "no-change");
+      assert.equal(output.summary.exit_code, 0);
     }
   });
 
-  it("check accepts --fail-on and --strict and still never claims a verdict", () => {
+  it("check accepts --fail-on and --strict and prints the diff header with the verdict", () => {
     const run = runCli(["check", "--base", "main", "--head", "HEAD", "--fail-on", "projected,scoped-allow", "--strict"], repo.dir);
-    assert.equal(run.status, EXIT_INCOMPLETE);
-    assert.match(run.stdout, /^base:\nagent-surface snapshot: git main/);
-    assert.match(run.stdout, /head:\nagent-surface snapshot: git HEAD/);
+    assert.equal(run.status, EXIT_OK, run.stderr);
+    assert.match(run.stdout, new RegExp(`^CONTROL-SURFACE DIFF {2}base=${repo.sha} head=${repo.sha}\nno changes\nverdict: no-change \\(exit 0\\)`));
   });
 });
 

@@ -1,0 +1,19 @@
+// origin: synthetic
+// ref: JG-153 D-mcp-attrs-changed
+// completeness: complete (only env key names changed)
+// excerpt_or_raw: raw
+{
+  "mcpServers": {
+    "docs": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "example-docs-server"
+      ],
+      "env": {
+        "DOCS_ROOT": "./docs",
+        "DOCS_LANG": "en"
+      }
+    }
+  }
+}

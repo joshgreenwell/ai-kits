@@ -237,24 +237,31 @@ describe("discovery: .claude/ absent on one side (negative case)", () => {
     }
   });
 
-  it("the diff pipeline still runs with an empty side (only the not-implemented marker remains)", () => {
+  it("the diff pipeline still runs with an empty side: every head entry is added, nothing is incomplete", () => {
     fs.cpSync(path.join(full.dir, ".claude"), path.join(empty.dir, ".claude"), { recursive: true });
     fs.copyFileSync(path.join(full.dir, ".mcp.json"), path.join(empty.dir, ".mcp.json"));
     const headSha = commitAll(empty.dir, "add config");
     const run = runCli(["diff", "--base", empty.sha, "--head", headSha, "--json"], empty.dir);
-    assert.equal(run.status, 3);
+    assert.equal(run.status, 1, run.stderr);
     const output = JSON.parse(run.stdout) as {
       base: { sources: Array<{ status: string }>; incomplete: unknown[] };
       head: { sources: Array<{ status: string }>; incomplete: unknown[] };
-      changes: null;
-      incomplete: Array<{ path: string }>;
+      added: Array<{ key: string; change: string }>;
+      removed: unknown[];
+      unresolved: unknown[];
+      incomplete: unknown[];
+      summary: { expands: boolean; categories: string[] };
     };
     assert.deepEqual(output.base.sources.map((source) => source.status), ["absent", "absent", "absent"]);
     assert.deepEqual(output.head.sources.map((source) => source.status), ["read", "read", "read"]);
     assert.deepEqual(output.base.incomplete, []);
     assert.deepEqual(output.head.incomplete, []);
-    assert.equal(output.changes, null);
-    assert.deepEqual(output.incomplete.map((item) => item.path), ["<agent-surface>"]);
+    assert.deepEqual(output.incomplete, []);
+    assert.deepEqual(output.removed, []);
+    assert.ok(output.added.every((delta) => delta.change === "added"));
+    assert.ok(output.added.some((delta) => delta.key === "mcp:example-docs"));
+    assert.equal(output.summary.expands, true);
+    assert.deepEqual(output.summary.categories, ["hook", "mcp", "scoped-allow", "whole-tool-allow"]);
   });
 });
 

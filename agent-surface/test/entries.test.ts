@@ -76,8 +76,8 @@ describe("entries: every entry carries file, line, json_pointer, source_sha (JG-
     assert.equal(byKey(entries, "perm:deny:Bash(curl *)").line, 10);
     assert.equal(byKey(entries, "perm:deny:Bash(curl *)").json_pointer, "/permissions/deny/0");
     assert.equal(byKey(entries, "mode:defaultMode").line, 12);
-    assert.deepEqual(byKey(entries, "mode:defaultMode").value, { raw: "acceptEdits" });
-    assert.deepEqual(byKey(entries, "mode:disableBypassPermissionsMode").value, { raw: "disable" });
+    assert.deepEqual(byKey(entries, "mode:defaultMode").value, { raw: "acceptEdits", mode: "acceptEdits" });
+    assert.deepEqual(byKey(entries, "mode:disableBypassPermissionsMode").value, { raw: "disable", mode: "disable" });
   });
 
   it("keeps same-key entries from settings.json and the tracked settings.local.json, sorted by file", () => {

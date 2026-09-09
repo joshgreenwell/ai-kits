@@ -1,0 +1,14 @@
+// origin: synthetic
+// ref: JG-153 D-mcp-added / JG-154 I7 stdio
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ]
+  }
+}

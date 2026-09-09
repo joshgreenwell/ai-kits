@@ -73,14 +73,55 @@ export {
   type RedactedTree,
 } from "./redact.js";
 export { BASE_ASSUMPTIONS, takeSnapshot, type SnapshotResult } from "./snapshot.js";
+export { CATEGORIES, CATEGORY_META, DEFAULT_FAILING_CATEGORIES, PROJECTED_PSEUDO_CATEGORY, type Category, type CategoryMeta } from "./categories.js";
+export { allDeltas, categorize, diffSnapshots } from "./diff.js";
+export { changedFields, classifyDirection, DIRECTION_RULES, findDirectionRule, type DirectionResult, type DirectionRule } from "./direction.js";
+export { explain, explainEntries, explainIds, renderExplain, renderInterpretationsDoc, type ExplainEntry, type ExplainKind } from "./explain.js";
+export {
+  applyInterpretations,
+  detectNotInterpreted,
+  findInterpretation,
+  findNotInterpreted,
+  FLAG_META,
+  FLAGS,
+  INTERPRETATIONS,
+  INTERPRETATIONS_DATE,
+  NOT_INTERPRETED,
+  OUTSIDE_LIST_NOTE,
+  TIER_ORDER,
+  weakerTier,
+  type Classification,
+  type Flag,
+  type Interpretation,
+  type InterpretationMeta,
+  type NotInterpreted,
+} from "./interpretations/index.js";
+export {
+  computeVerdict,
+  DEFAULT_VERDICT_OPTIONS,
+  FAIL_ON_NAMES,
+  isProjectedWidening,
+  isUndecided,
+  parseFailOnList,
+  resolveFailOn,
+  type Verdict,
+  type VerdictOptions,
+} from "./verdict.js";
 export { loadSnapshotFile, schemaVersionMismatch, validateSnapshotShape, type SnapshotLoad } from "./snapshotfile.js";
 export {
   ENTRY_KINDS,
   SCHEMA_VERSION,
   SEMANTICS_DOC_DATE,
   type Breadth,
+  type ChangeKind,
+  type Delta,
+  type Diff,
+  type DiffSide,
+  type DiffSummary,
   type Direction,
   type Entry,
+  type FailOn,
+  type VerdictLabel,
   type EntryKind,
   type Incomplete,
   type JsonObject,

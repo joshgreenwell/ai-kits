@@ -1,0 +1,27 @@
+// origin: synthetic
+// ref: JG-155 incomplete always wins
+// completeness: incomplete on purpose (hook added in settings, duplicate key in .mcp.json)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo pre-bash"
+          }
+        ]
+      }
+    ]
+  }
+}

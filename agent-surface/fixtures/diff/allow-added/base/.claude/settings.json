@@ -1,0 +1,14 @@
+// origin: synthetic
+// ref: JG-153 D-allow-added
+// completeness: complete (exact scoped allow added)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ]
+  }
+}

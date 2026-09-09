@@ -1,0 +1,12 @@
+// origin: synthetic
+// ref: JG-153 D-mcp-changed
+// completeness: complete (same server name, url changed)
+// excerpt_or_raw: raw
+{
+  "mcpServers": {
+    "build": {
+      "type": "http",
+      "url": "https://other.example.invalid/mcp"
+    }
+  }
+}

@@ -13,11 +13,12 @@
  * 3 scan incomplete (unparseable, duplicate keys, missing ref). Usage errors
  * exit 64 so they never collide with a verdict.
  *
- * In this version `diff` and `check` resolve both sides, run discovery,
- * parsing and entry extraction, then report the scan as incomplete (exit 3)
- * because the diff itself (CS-C) is not implemented yet. They never print a
- * "clean" verdict they cannot back. Any `incomplete[]` carried by a side
- * (including a saved snapshot) is propagated into the output.
+ * `diff` and `check` resolve both sides, take both snapshots, run the keyed
+ * diff (`diff.ts`) and print either the full `Diff` as canonical JSON or a
+ * provisional text listing (one line per delta; the grouped sections and
+ * the assumptions header are CS-D). Both exit with the verdict's code. Any
+ * `incomplete[]` carried by a side (including a saved snapshot) is
+ * propagated into the output and never rendered as "no changes".
  *
  * Never executes hooks, helpers or MCP servers; never touches the network;
  * never expands environment variables; never reads outside the repository.
@@ -26,15 +27,16 @@
 import { pathToFileURL } from "node:url";
 
 import { canonicalJson } from "./canonical.js";
+import { CATEGORIES, DEFAULT_FAILING_CATEGORIES } from "./categories.js";
+import { allDeltas, diffSnapshots } from "./diff.js";
+import { explain, explainIds, renderExplain } from "./explain.js";
 import { defaultFs, defaultSpawner, resolveSide, type FsAdapter, type Side, type Spawner } from "./git.js";
 import { takeSnapshot } from "./snapshot.js";
-import { SCHEMA_VERSION, type Incomplete, type Snapshot } from "./types.js";
+import { SCHEMA_VERSION, type Delta, type Diff, type DiffSide, type Incomplete, type Snapshot } from "./types.js";
+import { EXIT_ANNOTATE, EXIT_EXPANDS, EXIT_INCOMPLETE, EXIT_OK, parseFailOnList, resolveFailOn, type VerdictOptions } from "./verdict.js";
 import { VERSION } from "./version.js";
 
-export const EXIT_OK = 0;
-export const EXIT_EXPANDS = 1;
-export const EXIT_ANNOTATE = 2;
-export const EXIT_INCOMPLETE = 3;
+export { EXIT_ANNOTATE, EXIT_EXPANDS, EXIT_INCOMPLETE, EXIT_OK };
 export const EXIT_USAGE = 64;
 
 /** Subcommand signatures as listed by `--help` (§3.8). */
@@ -71,8 +73,14 @@ export const USAGE = [
   "",
   "Options:",
   "  --json          machine-readable output with sorted keys",
+  "  --fail-on <c,…> categories that exit 1 (replaces the default set); add 'projected'",
+  "                  to fail on projected widenings too",
+  "  --strict        turn exit 2 (undecided) into exit 1",
   "  --help, -h      show this help",
   "  --version       print the version",
+  "",
+  `Categories: ${CATEGORIES.join(", ")}, projected`,
+  `Default failing categories: ${DEFAULT_FAILING_CATEGORIES.join(", ")}`,
   "",
   "Exit codes:",
   "  0  no change, or narrowing only",
@@ -235,11 +243,62 @@ function commandSnapshot(args: ParsedArgs, io: CliIo, deps: CliDeps): number {
   return EXIT_OK;
 }
 
-const NOT_IMPLEMENTED: Incomplete = {
-  path: "<agent-surface>",
-  reason: "diff not implemented in this version: the keyed diff (CS-C) is pending",
-  lines: null,
-};
+function sideLabel(side: DiffSide): string {
+  return side.sha ?? `${side.origin.kind}:${side.origin.spec}`;
+}
+
+function renderDeltaLine(delta: Delta): string {
+  const entry = delta.head ?? delta.base;
+  const where = entry === null ? "" : entry.line === null ? entry.file : `${entry.file}:${entry.line}`;
+  const flags = delta.flags.length === 0 ? "" : ` [${delta.flags.join(",")}]`;
+  return `  ${delta.change.padEnd(7)} ${delta.kind.padEnd(11)} ${delta.key}  ${delta.direction} ${delta.tier} ${delta.breadth ?? "-"}${flags}  ${where}`;
+}
+
+/**
+ * Provisional text output (CS-D polishes the sections and header): one line
+ * per delta as `change kind key direction tier breadth file:line`, then the
+ * verdict. Never prints "no changes" while `incomplete[]` is non-empty.
+ */
+function renderDiffText(diff: Diff): string {
+  const out: string[] = [`CONTROL-SURFACE DIFF  base=${sideLabel(diff.base)} head=${sideLabel(diff.head)}`];
+  if (diff.incomplete.length > 0) {
+    out.push("incomplete:");
+    for (const item of diff.incomplete) {
+      const lines = item.lines === null ? "" : ` (line${item.lines.length > 1 ? "s" : ""} ${item.lines.join(", ")})`;
+      out.push(`  - ${item.path}: ${item.reason}${lines}`);
+    }
+  }
+  const deltas = allDeltas(diff);
+  if (deltas.length === 0) {
+    out.push(diff.incomplete.length === 0 ? "no changes" : "no deltas derived; the scan is incomplete and this is not a clean result");
+  } else {
+    out.push(`changes (${deltas.length}):`);
+    for (const delta of deltas) {
+      out.push(renderDeltaLine(delta));
+      for (const note of delta.notes) {
+        out.push(`            ${note}`);
+      }
+    }
+  }
+  const summary = diff.summary;
+  out.push(
+    `verdict: ${summary.verdict} (exit ${summary.exit_code}); expands=${summary.expands}; categories=${summary.categories.length === 0 ? "none" : summary.categories.join(",")}`,
+  );
+  for (const reason of summary.reasons) {
+    out.push(`  - ${reason}`);
+  }
+  return `${out.join("\n")}\n`;
+}
+
+function verdictOptions(args: ParsedArgs): VerdictOptions | { error: string } {
+  const failOnRaw = args.flags.get("fail-on");
+  const failOn = typeof failOnRaw === "string" ? parseFailOnList(failOnRaw) : [];
+  const resolved = resolveFailOn(failOn);
+  if (!resolved.ok) {
+    return { error: resolved.error };
+  }
+  return { failOn, strict: args.flags.get("strict") === true };
+}
 
 function commandTwoSided(name: "diff" | "check", args: ParsedArgs, io: CliIo, deps: CliDeps): number {
   const base = args.flags.get("base");
@@ -250,6 +309,11 @@ function commandTwoSided(name: "diff" | "check", args: ParsedArgs, io: CliIo, de
   }
   if (args.positionals.length > 0) {
     io.stderr(`${name}: unexpected argument '${args.positionals[0] ?? ""}'\n${USAGE}`);
+    return EXIT_USAGE;
+  }
+  const options = verdictOptions(args);
+  if ("error" in options) {
+    io.stderr(`${name}: ${options.error}\n${USAGE}`);
     return EXIT_USAGE;
   }
   const json = args.flags.get("json") === true;
@@ -272,34 +336,31 @@ function commandTwoSided(name: "diff" | "check", args: ParsedArgs, io: CliIo, de
   }
   const baseSnapshot = takeSnapshot(resolutions.base.side, snapshotDeps(deps)).snapshot;
   const headSnapshot = takeSnapshot(resolutions.head.side, snapshotDeps(deps)).snapshot;
-  const incomplete = [...baseSnapshot.incomplete, ...headSnapshot.incomplete, NOT_IMPLEMENTED];
+  const diff = diffSnapshots(baseSnapshot, headSnapshot, options);
   if (json) {
-    io.stdout(
-      canonicalJson({
-        schema_version: SCHEMA_VERSION,
-        command: name,
-        base: baseSnapshot,
-        head: headSnapshot,
-        changes: null,
-        summary: null,
-        incomplete,
-      }),
-    );
+    io.stdout(canonicalJson({ command: name, ...diff }));
   } else {
-    io.stdout(`base:\n${renderSnapshotText(baseSnapshot)}head:\n${renderSnapshotText(headSnapshot)}`);
+    io.stdout(renderDiffText(diff));
   }
-  io.stderr(renderIncomplete(incomplete));
-  return EXIT_INCOMPLETE;
+  if (diff.incomplete.length > 0) {
+    io.stderr(renderIncomplete(diff.incomplete));
+  }
+  return diff.summary.exit_code;
 }
 
 function commandExplain(args: ParsedArgs, io: CliIo): number {
   const id = args.positionals[0];
   if (id === undefined || args.positionals.length !== 1) {
-    io.stderr(`explain: expected exactly one interpretation ID\n${USAGE}`);
+    io.stderr(`explain: expected exactly one ID\nvalid IDs: ${explainIds().join(", ")}\n`);
     return EXIT_USAGE;
   }
-  io.stderr(`explain: unknown interpretation ID '${id}' (no interpretations are registered in this version)\n`);
-  return EXIT_USAGE;
+  const entry = explain(id);
+  if (entry === null) {
+    io.stderr(`explain: unknown ID '${id}'\nvalid IDs: ${explainIds().join(", ")}\n`);
+    return EXIT_USAGE;
+  }
+  io.stdout(renderExplain(entry));
+  return EXIT_OK;
 }
 
 /**

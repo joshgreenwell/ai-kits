@@ -1,0 +1,15 @@
+// origin: synthetic
+// ref: JG-153 D-unknown
+// completeness: complete (unmodeled top-level key changed)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ]
+  },
+  "model": "example-model-a"
+}
