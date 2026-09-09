@@ -1,0 +1,89 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-121 TL-B1: no gen_ai.conversation.id and no app attribute -> run id is the trace id",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Also has no usage attributes at all, so usage coverage is absent."
+  },
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "synthetic-agent"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "synthetic.instrumentation",
+            "version": "0.0.0"
+          },
+          "spans": [
+            {
+              "traceId": "0000000000000000000000000000a003",
+              "spanId": "000000000000c001",
+              "name": "chat model-b",
+              "kind": 3,
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000001000000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "model-b"
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "0000000000000000000000000000a003",
+              "spanId": "000000000000c002",
+              "name": "execute_tool lookup",
+              "kind": 3,
+              "startTimeUnixNano": "1700000002000000000",
+              "endTimeUnixNano": "1700000003000000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "lookup"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.id",
+                  "value": {
+                    "stringValue": "call-0002"
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

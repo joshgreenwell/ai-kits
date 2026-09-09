@@ -1,0 +1,7 @@
+{
+  "origin": "synthetic",
+  "ref": "JG-122 TL-B2: line 2 is not JSON; lines 1 and 3 must still load",
+  "completeness": "incomplete",
+  "excerpt_or_raw": "raw",
+  "notes": "Line 4 is blank on purpose."
+}

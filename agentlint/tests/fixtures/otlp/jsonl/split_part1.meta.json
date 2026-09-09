@@ -1,0 +1,7 @@
+{
+  "origin": "synthetic",
+  "ref": "JG-122 TL-B2: part 1 of a run split across two collector file-exporter files",
+  "completeness": "complete",
+  "excerpt_or_raw": "excerpt",
+  "notes": "Span 000000000000f003 also appears in split_part2.jsonl (rotation overlap). Blank line and trailing newline on purpose."
+}
