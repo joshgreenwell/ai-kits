@@ -1,0 +1,8 @@
+{
+  "origin": "synthetic",
+  "ref": "agentlint tests: TL-B5 claude-session-jsonl healthy session (user -> assistant tool_use -> user tool_result -> assistant with usage)",
+  "completeness": "complete",
+  "excerpt_or_raw": "raw",
+  "format_version_note": "Hand-written after the record shapes of session logs written by Claude Code 2.1.x; the 'version' value 2.1.0 is a placeholder, not an observed build.",
+  "notes": "Every identifier, timestamp, path, prompt and tool result is invented. The streamed assistant message msg_synthetic_0001 spans two lines (apiBlockIndex 0 and 1) whose usage differs; the loader must keep the last line's usage. The file-history-snapshot line has no sessionId and is a recognised, ignored type."
+}
