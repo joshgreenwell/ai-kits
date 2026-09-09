@@ -1,0 +1,35 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: hex ID and large-integer preservation through the CLI JSON output",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "The span ID keeps its leading zeros, the token count survives as an exact integer (never through a float), and the millisecond timestamps are truncated from the nanosecond values."
+  },
+  "args": [
+    "--config",
+    "{dir}/agentlint.toml"
+  ],
+  "checks": {
+    "event_fields": {
+      "00000000000000ab": {
+        "id": "00000000000000ab",
+        "tokens_in": 9007199254740993,
+        "start_ms": 1700000000123,
+        "end_ms": 1700000000987
+      },
+      "0000000000000001": {
+        "id": "0000000000000001",
+        "parent_id": "00000000000000ab"
+      }
+    },
+    "output_contains": [
+      "9007199254740993",
+      "\"00000000000000ab\""
+    ]
+  },
+  "exit_code": 0,
+  "findings": [],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "complete"
+}

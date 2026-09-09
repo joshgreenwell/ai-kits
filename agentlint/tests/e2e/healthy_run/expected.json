@@ -1,0 +1,23 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: healthy run -> zero findings, complete coverage, exit 0",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "The honest negative: nothing is missing, nothing is found, exit 0."
+  },
+  "checks": {
+    "runs": [
+      "run-e2e-healthy"
+    ],
+    "events_total": 6,
+    "events_dropped_dedup": 0,
+    "output_contains": [
+      "\"exit_meaning\": \"analysis complete\""
+    ]
+  },
+  "exit_code": 0,
+  "findings": [],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "complete"
+}

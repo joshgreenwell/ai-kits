@@ -1,0 +1,34 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: dual gen_ai attribute names -> identical runs through the CLI",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Two OTLP/JSON files, same spans under both naming generations, different conversation IDs. Apart from the run identity and the file locators, the two runs must be identical in every field. The config file states the token basis the instrumentation used so CONTEXT_GROWTH can run."
+  },
+  "inputs": [
+    "current.json",
+    "legacy.json"
+  ],
+  "args": [
+    "--config",
+    "{dir}/agentlint.toml"
+  ],
+  "checks": {
+    "runs": [
+      "conv-e2e-current",
+      "conv-e2e-legacy"
+    ],
+    "identical_runs_ignoring": [
+      "id",
+      "conversation_id",
+      "source_refs",
+      "source_locator",
+      "trace_id"
+    ]
+  },
+  "exit_code": 0,
+  "findings": [],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "complete"
+}

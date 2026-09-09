@@ -1,0 +1,122 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: healthy run, honest negative",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Every generic rule's requirements are met on every applicable event, so all five rules run fully and report nothing. Token growth is +600 / x1.4 (below both CONTEXT_GROWTH bounds); results are small and distinct."
+  },
+  "schema_version": "1",
+  "run_id": "run-e2e-healthy",
+  "conversation_id": "conv-run-e2e-healthy",
+  "source_refs": [
+    "exampleapp/e2e/run-e2e-healthy"
+  ],
+  "started_at": 0,
+  "ended_at": 4300,
+  "final_status": "completed",
+  "records": [
+    {
+      "id": "agg-01",
+      "kind": "aggregate",
+      "status": "ok",
+      "seq": 1,
+      "name": "agent.turn",
+      "start_ms": 0,
+      "end_ms": 4300,
+      "included_result_ids": [
+        "mc-01",
+        "mc-02",
+        "mc-03"
+      ]
+    },
+    {
+      "id": "mc-01",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 2,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 100,
+      "end_ms": 1000,
+      "tokens_in": 1500,
+      "tokens_out": 60,
+      "finish_reason": "tool_use",
+      "parent_id": "agg-01"
+    },
+    {
+      "id": "tc-01",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 3,
+      "name": "read_file",
+      "start_ms": 1100,
+      "end_ms": 1500,
+      "tool_call_id": "call-0001",
+      "args_fingerprint": {
+        "hash": "965778ff795f0ee36166b1ce739245f39a5b66a5240effa543094655fbbb9d30",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "e250120ea8b289af557a9c7dd12ab7280ad54bf962e78a8c3a8f3eadacfac188",
+        "representation": "full"
+      },
+      "result_bytes": 1800,
+      "parent_id": "agg-01"
+    },
+    {
+      "id": "mc-02",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 4,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 1600,
+      "end_ms": 2600,
+      "tokens_in": 2100,
+      "tokens_out": 60,
+      "finish_reason": "tool_use",
+      "parent_id": "agg-01"
+    },
+    {
+      "id": "tc-02",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 5,
+      "name": "search",
+      "start_ms": 2700,
+      "end_ms": 3200,
+      "tool_call_id": "call-0002",
+      "args_fingerprint": {
+        "hash": "b8a910d2419a2bd3ce57af4798e9cdefe1c3338e611d62fae6fa46e42f9a1401",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "91d3440a298d43898ab765c55602f7d2867337f211c4b3020286f9af7b0c22cf",
+        "representation": "full"
+      },
+      "result_bytes": 400,
+      "parent_id": "agg-01"
+    },
+    {
+      "id": "mc-03",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 6,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 3300,
+      "end_ms": 4200,
+      "tokens_in": 2500,
+      "tokens_out": 120,
+      "finish_reason": "stop",
+      "parent_id": "agg-01"
+    }
+  ]
+}

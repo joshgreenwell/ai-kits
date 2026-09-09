@@ -1,0 +1,25 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: experimental Claude session loader enabled",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "session.jsonl is a copy of tests/fixtures/claude_session/healthy.jsonl (hand-written after the record shapes of Claude Code 2.1.x logs; every identifier, path, prompt and result is invented). With the flag the experimental loader maps the session; every event is fully covered and the run exits 0."
+  },
+  "inputs": [
+    "session.jsonl"
+  ],
+  "args": [
+    "--experimental-claude-session"
+  ],
+  "checks": {
+    "runs": [
+      "11111111-1111-4111-8111-111111111111"
+    ],
+    "events_total": 3
+  },
+  "exit_code": 0,
+  "findings": [],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "complete"
+}

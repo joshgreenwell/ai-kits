@@ -1,0 +1,2 @@
+[loaders]
+otlp_token_basis = "input_excludes_cache_read"

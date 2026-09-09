@@ -1,0 +1,104 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: three 10240-byte results with identical bytes from different arguments",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Positive control for REPEATED_TOOL_RESULT (min_results=3, min_result_bytes=8192). Arguments differ, so NO_PROGRESS_CYCLE stays silent."
+  },
+  "schema_version": "1",
+  "run_id": "run-e2e-rtr",
+  "conversation_id": "conv-run-e2e-rtr",
+  "source_refs": [
+    "exampleapp/e2e/run-e2e-rtr"
+  ],
+  "records": [
+    {
+      "id": "mc-01",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 1,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 0,
+      "end_ms": 900,
+      "tokens_in": 1500,
+      "tokens_out": 60,
+      "finish_reason": "tool_use"
+    },
+    {
+      "id": "tc-01",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 2,
+      "name": "read_file",
+      "start_ms": 1500,
+      "end_ms": 1900,
+      "tool_call_id": "call-0001",
+      "args_fingerprint": {
+        "hash": "0c2228624d0b026d206a8acde89abc5ef8d1a45d7140b5f49e7e1ed2cccbe258",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "e6cb957d6f0a18482eb8b2f8a590fbda127c6d41902e7af4a787beedca4f9823",
+        "representation": "full"
+      },
+      "result_bytes": 10240
+    },
+    {
+      "id": "tc-02",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 3,
+      "name": "read_file",
+      "start_ms": 2000,
+      "end_ms": 2400,
+      "tool_call_id": "call-0002",
+      "args_fingerprint": {
+        "hash": "9e64dd809fde488291aa074077ccea45568c966445173afe5d53c4ebc97a1d29",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "e6cb957d6f0a18482eb8b2f8a590fbda127c6d41902e7af4a787beedca4f9823",
+        "representation": "full"
+      },
+      "result_bytes": 10240
+    },
+    {
+      "id": "tc-03",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 4,
+      "name": "read_file",
+      "start_ms": 2500,
+      "end_ms": 2900,
+      "tool_call_id": "call-0003",
+      "args_fingerprint": {
+        "hash": "c02dda16ece64eb150814104163b99da4f6f3eb15f8f0a0f03ab6101b8179f36",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "e6cb957d6f0a18482eb8b2f8a590fbda127c6d41902e7af4a787beedca4f9823",
+        "representation": "full"
+      },
+      "result_bytes": 10240
+    },
+    {
+      "id": "mc-02",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 5,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 3200,
+      "end_ms": 4000,
+      "tokens_in": 3500,
+      "tokens_out": 60,
+      "finish_reason": "stop"
+    }
+  ]
+}

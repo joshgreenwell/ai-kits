@@ -5,22 +5,37 @@ build-backend = "hatchling.build"
 [project]
 name = "agentlint"
 version = "0.0.1"
-description = "Agent Trace Linter: local, offline, deterministic linting of agent run traces."
+description = "Agent Trace Linter: local, offline, deterministic linting of agent run traces (OTLP, Langfuse, Claude Code sessions, record bundles)."
 readme = "README.md"
 license = { text = "BSD-2-Clause" }
 requires-python = ">=3.11"
+# Zero runtime dependencies on purpose: argparse only, no HTTP client, no SDK,
+# no data-science package. tests/test_cli_privacy.py audits this.
 dependencies = []
-keywords = ["agents", "traces", "otlp", "linter"]
+keywords = ["agents", "traces", "otlp", "opentelemetry", "langfuse", "linter", "observability"]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 3 - Alpha",
   "Environment :: Console",
+  "Intended Audience :: Developers",
   "License :: OSI Approved :: BSD License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Software Development :: Quality Assurance",
+  "Topic :: Software Development :: Testing",
+  "Topic :: System :: Monitoring",
 ]
+
+[project.urls]
+Homepage = "https://github.com/joshgreenwell/ai-kits"
+Source = "https://github.com/joshgreenwell/ai-kits/tree/main/agentlint"
+Documentation = "https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/README.md"
+Changelog = "https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/CHANGELOG.md"
+Privacy = "https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/PRIVACY.md"
+Issues = "https://github.com/joshgreenwell/ai-kits/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
@@ -31,15 +46,32 @@ agentlint = "agentlint.cli:main"
 # Third-party rule packs register here (see TL-C). Empty on purpose for now.
 [project.entry-points."agentlint.rules"]
 
+# The wheel is deliberately lean: the package only. Rule documentation is
+# rendered from metadata at runtime (`agentlint explain`), so docs/ need not
+# ship; the sdist carries docs, examples, scripts and tests for auditing.
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentlint"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/agentlint", "tests", "examples", "docs", "scripts", "README.md", "pyproject.toml"]
+include = [
+  "src/agentlint",
+  "tests",
+  "examples",
+  "docs",
+  "scripts",
+  "README.md",
+  "CHANGELOG.md",
+  "PRIVACY.md",
+  "LICENSE",
+  "pyproject.toml",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+  "slow: builds the wheel and installs it into a fresh virtual environment (still run in CI)",
+]
 
 [tool.ruff]
 line-length = 100

@@ -1,0 +1,22 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: IDENTICAL_RETRY_AFTER_FAILURE positive -> one weak-form finding",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw"
+  },
+  "checks": {
+    "finding_evidence_counts": {
+      "IDENTICAL_RETRY_AFTER_FAILURE": 3
+    },
+    "finding_tiers": {
+      "IDENTICAL_RETRY_AFTER_FAILURE": "proven"
+    }
+  },
+  "exit_code": 0,
+  "findings": [
+    "IDENTICAL_RETRY_AFTER_FAILURE"
+  ],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "complete"
+}

@@ -1,0 +1,82 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: Langfuse v2 observations page whose generation carries no usage",
+    "completeness": "incomplete",
+    "excerpt_or_raw": "raw",
+    "notes": "Hand-written page of the v2 Observations API. The generation has neither usageDetails nor usage, so every token field must stay null and coverage must say so."
+  },
+  "data": [
+    {
+      "id": "obs-e2e-root",
+      "traceId": "trace-e2e-0001",
+      "parentObservationId": null,
+      "type": "SPAN",
+      "name": "agent-loop",
+      "startTime": "2024-01-01T00:00:00.000Z",
+      "endTime": "2024-01-01T00:00:05.000Z",
+      "environment": "default",
+      "projectId": "proj-synthetic-e2e",
+      "sessionId": "session-e2e",
+      "input": "SYNTHETIC-INPUT-E2E plan an invented errand",
+      "output": "SYNTHETIC-OUTPUT-E2E an invented plan",
+      "level": "DEFAULT"
+    },
+    {
+      "id": "obs-e2e-gen1",
+      "traceId": "trace-e2e-0001",
+      "parentObservationId": "obs-e2e-root",
+      "type": "GENERATION",
+      "name": "chat",
+      "startTime": "2024-01-01T00:00:00.100Z",
+      "endTime": "2024-01-01T00:00:01.000Z",
+      "environment": "default",
+      "projectId": "proj-synthetic-e2e",
+      "sessionId": "session-e2e",
+      "model": "model-a",
+      "level": "DEFAULT",
+      "input": [
+        {
+          "role": "user",
+          "content": "SYNTHETIC-PROMPT-E2E what is on the invented list"
+        }
+      ],
+      "output": {
+        "role": "assistant",
+        "content": "SYNTHETIC-COMPLETION-E2E the invented list has one item"
+      }
+    },
+    {
+      "id": "obs-e2e-tool1",
+      "traceId": "trace-e2e-0001",
+      "parentObservationId": "obs-e2e-root",
+      "type": "TOOL",
+      "name": "search",
+      "startTime": "2024-01-01T00:00:01.100Z",
+      "endTime": "2024-01-01T00:00:02.000Z",
+      "environment": "default",
+      "projectId": "proj-synthetic-e2e",
+      "sessionId": "session-e2e",
+      "level": "DEFAULT",
+      "metadata": {
+        "tool_call_id": "call-e2e-0001"
+      },
+      "input": {
+        "query": "SYNTHETIC-QUERY-E2E invented search terms"
+      },
+      "output": {
+        "hits": [
+          "SYNTHETIC-HIT-E2E-1",
+          "SYNTHETIC-HIT-E2E-2"
+        ],
+        "n": 2
+      }
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 50,
+    "totalItems": 3,
+    "totalPages": 1
+  }
+}

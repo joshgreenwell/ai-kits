@@ -1,0 +1,104 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: three sequential calls with identical results but changing arguments",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Identical result fingerprints, different args fingerprints: NO_PROGRESS_CYCLE requires both to be equal. Results are 300 bytes, below REPEATED_TOOL_RESULT's size floor, so that rule is silent too."
+  },
+  "schema_version": "1",
+  "run_id": "run-e2e-changed-args",
+  "conversation_id": "conv-run-e2e-changed-args",
+  "source_refs": [
+    "exampleapp/e2e/run-e2e-changed-args"
+  ],
+  "records": [
+    {
+      "id": "mc-01",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 1,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 0,
+      "end_ms": 900,
+      "tokens_in": 1500,
+      "tokens_out": 60,
+      "finish_reason": "tool_use"
+    },
+    {
+      "id": "tc-01",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 2,
+      "name": "list_dir",
+      "start_ms": 1500,
+      "end_ms": 1900,
+      "tool_call_id": "call-0001",
+      "args_fingerprint": {
+        "hash": "9eb5c58674626271acbb514de05df1e371861fe9e3d5f88b43254ec434d7a2fe",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "bea5f402d93b249a00ffcb3af230279550cc5db9ca34faef30fa80c3b196debc",
+        "representation": "full"
+      },
+      "result_bytes": 300
+    },
+    {
+      "id": "tc-02",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 3,
+      "name": "list_dir",
+      "start_ms": 2000,
+      "end_ms": 2400,
+      "tool_call_id": "call-0002",
+      "args_fingerprint": {
+        "hash": "8efaa26c3557d8310455b2decd5443c376b43358f946156f72df3d560ef4f8ce",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "bea5f402d93b249a00ffcb3af230279550cc5db9ca34faef30fa80c3b196debc",
+        "representation": "full"
+      },
+      "result_bytes": 300
+    },
+    {
+      "id": "tc-03",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 4,
+      "name": "list_dir",
+      "start_ms": 2500,
+      "end_ms": 2900,
+      "tool_call_id": "call-0003",
+      "args_fingerprint": {
+        "hash": "b3634a2f44fe8e9a1e00f875d39e0ec381b512ca98b75a7502b71d89e0b22e7c",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "bea5f402d93b249a00ffcb3af230279550cc5db9ca34faef30fa80c3b196debc",
+        "representation": "full"
+      },
+      "result_bytes": 300
+    },
+    {
+      "id": "mc-02",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 5,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 3200,
+      "end_ms": 4000,
+      "tokens_in": 2000,
+      "tokens_out": 60,
+      "finish_reason": "stop"
+    }
+  ]
+}

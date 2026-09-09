@@ -1,0 +1,66 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: tokens_in 4000 -> 20000 with one 30000-byte tool result between",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Positive control for CONTEXT_GROWTH (+16000, x5). The result is below OVERSIZED_TOOL_RESULT's 65536-byte floor."
+  },
+  "schema_version": "1",
+  "run_id": "run-e2e-cg",
+  "conversation_id": "conv-run-e2e-cg",
+  "source_refs": [
+    "exampleapp/e2e/run-e2e-cg"
+  ],
+  "records": [
+    {
+      "id": "mc-01",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 1,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 0,
+      "end_ms": 900,
+      "tokens_in": 4000,
+      "tokens_out": 60,
+      "finish_reason": "tool_use"
+    },
+    {
+      "id": "tc-01",
+      "kind": "tool_call",
+      "status": "ok",
+      "seq": 2,
+      "name": "read_file",
+      "start_ms": 1000,
+      "end_ms": 1500,
+      "tool_call_id": "call-0001",
+      "args_fingerprint": {
+        "hash": "2103a645c5a84eafe96a741908efa675a63b16608b217e51b5758b1bb6244559",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "406b00eb7e5685b5bc6e31fdff895d5c0d1bb94f6c5f14c0ea212a820a6afea6",
+        "representation": "full"
+      },
+      "result_bytes": 30000
+    },
+    {
+      "id": "mc-02",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 3,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 1600,
+      "end_ms": 2600,
+      "tokens_in": 20000,
+      "tokens_out": 60,
+      "finish_reason": "stop"
+    }
+  ]
+}
