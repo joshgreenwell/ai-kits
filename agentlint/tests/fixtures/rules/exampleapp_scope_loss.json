@@ -1,0 +1,192 @@
+{
+  "_fixture": {
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Hand-built by a generator; IDs, timestamps and values are invented. Record-bundle-like shape; tests convert rows to events.",
+    "origin": "synthetic",
+    "ref": "JG-131 TL-C6 / JG-105 abstraction: two group failures each re-issued as a single request"
+  },
+  "bundle": {
+    "records": [
+      {
+        "exampleapp": {
+          "scope_change": false
+        },
+        "kind": "other",
+        "locator": "synthetic/exampleapp_scope_loss.json#records[0]",
+        "name": "user_message",
+        "row_id": "row-0001",
+        "seq": 1,
+        "status": "ok"
+      },
+      {
+        "kind": "model_call",
+        "locator": "synthetic/exampleapp_scope_loss.json#records[1]",
+        "model": "model-a",
+        "name": "chat",
+        "row_id": "row-0002",
+        "seq": 2,
+        "status": "ok",
+        "token_basis": "input_includes_cache_read",
+        "tokens_in": 2000,
+        "tokens_out": 40
+      },
+      {
+        "args_fingerprint": {
+          "hash": "b2e68c2ac4744085fe30c5fad9a2d37bcbb1282f98e547daf6ceebd68c39efac",
+          "representation": "full"
+        },
+        "error_code": "partial",
+        "error_type": "GroupFailure",
+        "exampleapp": {
+          "request_kind": "group",
+          "selection_explicit": true,
+          "targets": [
+            "target-a",
+            "target-b",
+            "target-c"
+          ]
+        },
+        "kind": "tool_call",
+        "locator": "synthetic/exampleapp_scope_loss.json#records[2]",
+        "name": "group_request",
+        "result_bytes": 64,
+        "result_fingerprint": {
+          "hash": "ccc2b5f600dde9cad95df4907b438c6e58d27305e43dbad3be4453dc0b101f44",
+          "representation": "full"
+        },
+        "row_id": "row-0003",
+        "seq": 3,
+        "status": "error"
+      },
+      {
+        "kind": "model_call",
+        "locator": "synthetic/exampleapp_scope_loss.json#records[3]",
+        "model": "model-a",
+        "name": "chat",
+        "row_id": "row-0004",
+        "seq": 4,
+        "status": "ok",
+        "token_basis": "input_includes_cache_read",
+        "tokens_in": 2600,
+        "tokens_out": 40
+      },
+      {
+        "args_fingerprint": {
+          "hash": "b2e68c2ac4744085fe30c5fad9a2d37bcbb1282f98e547daf6ceebd68c39efac",
+          "representation": "full"
+        },
+        "exampleapp": {
+          "request_kind": "single",
+          "selection_explicit": false,
+          "targets": [
+            "target-a"
+          ]
+        },
+        "kind": "tool_call",
+        "locator": "synthetic/exampleapp_scope_loss.json#records[4]",
+        "name": "single_request",
+        "result_bytes": 48,
+        "result_fingerprint": {
+          "hash": "1380270f6bc3fd0bcc1f589ddf8314b19b06649cb1f2fcbdf133928e97a98dee",
+          "representation": "full"
+        },
+        "row_id": "row-0005",
+        "seq": 5,
+        "status": "ok"
+      },
+      {
+        "kind": "model_call",
+        "locator": "synthetic/exampleapp_scope_loss.json#records[5]",
+        "model": "model-a",
+        "name": "chat",
+        "row_id": "row-0006",
+        "seq": 6,
+        "status": "ok",
+        "token_basis": "input_includes_cache_read",
+        "tokens_in": 3100,
+        "tokens_out": 40
+      },
+      {
+        "args_fingerprint": {
+          "hash": "c7a9f335696c1bc8517c585230d75c8d1562e8441159402acb2efd79de55d2a7",
+          "representation": "full"
+        },
+        "error_code": "partial",
+        "error_type": "GroupFailure",
+        "exampleapp": {
+          "request_kind": "group",
+          "selection_explicit": true,
+          "targets": [
+            "target-a",
+            "target-b",
+            "target-c"
+          ]
+        },
+        "kind": "tool_call",
+        "locator": "synthetic/exampleapp_scope_loss.json#records[6]",
+        "name": "group_request",
+        "result_bytes": 64,
+        "result_fingerprint": {
+          "hash": "5757b0f63244157cb31a26c31794f0ddceaa3dc3ad6be547ce41570fe8fb0587",
+          "representation": "full"
+        },
+        "row_id": "row-0007",
+        "seq": 7,
+        "status": "error"
+      },
+      {
+        "kind": "model_call",
+        "locator": "synthetic/exampleapp_scope_loss.json#records[7]",
+        "model": "model-a",
+        "name": "chat",
+        "row_id": "row-0008",
+        "seq": 8,
+        "status": "ok",
+        "token_basis": "input_includes_cache_read",
+        "tokens_in": 3600,
+        "tokens_out": 40
+      },
+      {
+        "args_fingerprint": {
+          "hash": "c7a9f335696c1bc8517c585230d75c8d1562e8441159402acb2efd79de55d2a7",
+          "representation": "full"
+        },
+        "exampleapp": {
+          "request_kind": "single",
+          "selection_explicit": false,
+          "targets": [
+            "target-b"
+          ]
+        },
+        "kind": "tool_call",
+        "locator": "synthetic/exampleapp_scope_loss.json#records[8]",
+        "name": "single_request",
+        "result_bytes": 48,
+        "result_fingerprint": {
+          "hash": "dc3c98ee5ea84602fbecc87d49cd1317045174b7c93e756cb71b4abecfe700f9",
+          "representation": "full"
+        },
+        "row_id": "row-0009",
+        "seq": 9,
+        "status": "ok"
+      },
+      {
+        "exampleapp": {
+          "run_status": "failed"
+        },
+        "kind": "other",
+        "locator": "synthetic/exampleapp_scope_loss.json#records[9]",
+        "name": "run_end",
+        "row_id": "row-0010",
+        "seq": 10,
+        "status": "ok"
+      }
+    ],
+    "run": {
+      "id": "run-exampleapp-0001",
+      "source_format": "record-bundle",
+      "status": "failed"
+    }
+  }
+}

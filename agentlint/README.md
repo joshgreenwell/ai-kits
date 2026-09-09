@@ -42,9 +42,16 @@ A scan whose inputs are incomplete is reported as `incomplete`, never as
 
 Version `0.0.1` contains the core in-memory model and normalization helpers
 (`agentlint.model`, `agentlint.dedup`, `agentlint.fingerprint`,
-`agentlint.tokens`). Loaders, rules and the command-line interface arrive in
-later stories; `agentlint` on the command line currently exits with status 1
-and a "not implemented yet" message.
+`agentlint.tokens`) and the rules package (`agentlint.rules`): five generic
+rules documented from metadata under `docs/rules/`, an engine that abstains
+with a coverage note when a rule's prerequisites are missing, provisional
+thresholds overridable from `agentlint.toml` (`[rules.<RULE_ID>]`), and
+app-rule loading from a module path or the `agentlint.rules` entry point
+group (see `examples/rules/grouped_request_scope_loss.py`). Generic rules
+never read `Event.scope`; app rules read only their own namespace. Loaders
+and the command-line interface arrive in later stories; `agentlint` on the
+command line currently exits with status 1 and a "not implemented yet"
+message.
 
 ## Development
 
