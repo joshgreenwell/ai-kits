@@ -14,9 +14,9 @@
  * exit 64 so they never collide with a verdict.
  *
  * `diff` and `check` resolve both sides, take both snapshots, run the keyed
- * diff (`diff.ts`) and print either the full `Diff` as canonical JSON or a
- * provisional text listing (one line per delta; the grouped sections and
- * the assumptions header are CS-D). Both exit with the verdict's code. Any
+ * diff (`diff.ts`) and print either the full `Diff` as canonical JSON
+ * (`render/json.ts`) or the grouped text report with the §3.7 assumptions
+ * header (`render/text.ts`). Both exit with the verdict's code. Any
  * `incomplete[]` carried by a side (including a saved snapshot) is
  * propagated into the output and never rendered as "no changes".
  *
@@ -24,15 +24,18 @@
  * never expands environment variables; never reads outside the repository.
  */
 
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-import { canonicalJson } from "./canonical.js";
 import { CATEGORIES, DEFAULT_FAILING_CATEGORIES } from "./categories.js";
-import { allDeltas, diffSnapshots } from "./diff.js";
+import { diffSnapshots } from "./diff.js";
 import { explain, explainIds, renderExplain } from "./explain.js";
 import { defaultFs, defaultSpawner, resolveSide, type FsAdapter, type Side, type Spawner } from "./git.js";
+import { renderDiffJson, renderIncompleteJson, renderSnapshotJson } from "./render/json.js";
+import { describeIncomplete } from "./render/shared.js";
+import { renderDiffText, renderSnapshotText } from "./render/text.js";
 import { takeSnapshot } from "./snapshot.js";
-import { SCHEMA_VERSION, type Delta, type Diff, type DiffSide, type Incomplete, type Snapshot } from "./types.js";
+import type { Incomplete } from "./types.js";
 import { EXIT_ANNOTATE, EXIT_EXPANDS, EXIT_INCOMPLETE, EXIT_OK, parseFailOnList, resolveFailOn, type VerdictOptions } from "./verdict.js";
 import { VERSION } from "./version.js";
 
@@ -160,49 +163,9 @@ function parseArgs(argv: readonly string[]): ParsedArgs | { error: string } {
   return { command, positionals, flags };
 }
 
+/** stderr lines for incomplete records: `incomplete: <path>: <reason> (line N)`. */
 function renderIncomplete(items: readonly Incomplete[]): string {
-  return items
-    .map((item) => {
-      const lines = item.lines === null ? "" : ` (line${item.lines.length > 1 ? "s" : ""} ${item.lines.join(", ")})`;
-      return `incomplete: ${item.path}: ${item.reason}${lines}\n`;
-    })
-    .join("");
-}
-
-function renderSnapshotText(snapshot: Snapshot): string {
-  const out: string[] = [];
-  const sha = snapshot.origin.sha === null ? "" : ` ${snapshot.origin.sha}`;
-  out.push(`agent-surface snapshot: ${snapshot.origin.kind} ${snapshot.origin.spec}${sha}`);
-  out.push("assumptions:");
-  for (const line of snapshot.assumptions) {
-    out.push(`  - ${line}`);
-  }
-  out.push("sources:");
-  for (const source of snapshot.sources) {
-    const detail = [source.status, source.blob === null ? null : `blob ${source.blob.slice(0, 12)}`, source.note]
-      .filter((item): item is string => item !== null)
-      .join("; ");
-    out.push(`  ${source.path.padEnd(30)} ${detail}`);
-  }
-  if (snapshot.entries.length === 0) {
-    out.push("entries: none");
-  } else {
-    out.push(`entries (${snapshot.entries.length}):`);
-    for (const entry of snapshot.entries) {
-      const where = entry.line === null ? entry.file : `${entry.file}:${entry.line}`;
-      out.push(`  ${entry.kind.padEnd(11)} ${entry.key}  ${where}`);
-    }
-  }
-  if (snapshot.incomplete.length === 0) {
-    out.push("incomplete: none");
-  } else {
-    out.push("incomplete:");
-    for (const item of snapshot.incomplete) {
-      const lines = item.lines === null ? "" : ` (line${item.lines.length > 1 ? "s" : ""} ${item.lines.join(", ")})`;
-      out.push(`  - ${item.path}: ${item.reason}${lines}`);
-    }
-  }
-  return `${out.join("\n")}\n`;
+  return items.map((item) => `incomplete: ${describeIncomplete(item)}\n`).join("");
 }
 
 function resolveOrReport(spec: string, deps: CliDeps): { side: Side } | { incomplete: Incomplete } {
@@ -226,68 +189,17 @@ function commandSnapshot(args: ParsedArgs, io: CliIo, deps: CliDeps): number {
     const incomplete = [resolved.incomplete];
     io.stderr(renderIncomplete(incomplete));
     if (json) {
-      io.stdout(canonicalJson({ schema_version: SCHEMA_VERSION, incomplete }));
+      io.stdout(renderIncompleteJson(incomplete));
     }
     return EXIT_INCOMPLETE;
   }
   const { snapshot } = takeSnapshot(resolved.side, snapshotDeps(deps));
-  if (json) {
-    io.stdout(canonicalJson(snapshot));
-  } else {
-    io.stdout(renderSnapshotText(snapshot));
-  }
+  io.stdout(json ? renderSnapshotJson(snapshot) : renderSnapshotText(snapshot));
   if (snapshot.incomplete.length > 0) {
     io.stderr(renderIncomplete(snapshot.incomplete));
     return EXIT_INCOMPLETE;
   }
   return EXIT_OK;
-}
-
-function sideLabel(side: DiffSide): string {
-  return side.sha ?? `${side.origin.kind}:${side.origin.spec}`;
-}
-
-function renderDeltaLine(delta: Delta): string {
-  const entry = delta.head ?? delta.base;
-  const where = entry === null ? "" : entry.line === null ? entry.file : `${entry.file}:${entry.line}`;
-  const flags = delta.flags.length === 0 ? "" : ` [${delta.flags.join(",")}]`;
-  return `  ${delta.change.padEnd(7)} ${delta.kind.padEnd(11)} ${delta.key}  ${delta.direction} ${delta.tier} ${delta.breadth ?? "-"}${flags}  ${where}`;
-}
-
-/**
- * Provisional text output (CS-D polishes the sections and header): one line
- * per delta as `change kind key direction tier breadth file:line`, then the
- * verdict. Never prints "no changes" while `incomplete[]` is non-empty.
- */
-function renderDiffText(diff: Diff): string {
-  const out: string[] = [`CONTROL-SURFACE DIFF  base=${sideLabel(diff.base)} head=${sideLabel(diff.head)}`];
-  if (diff.incomplete.length > 0) {
-    out.push("incomplete:");
-    for (const item of diff.incomplete) {
-      const lines = item.lines === null ? "" : ` (line${item.lines.length > 1 ? "s" : ""} ${item.lines.join(", ")})`;
-      out.push(`  - ${item.path}: ${item.reason}${lines}`);
-    }
-  }
-  const deltas = allDeltas(diff);
-  if (deltas.length === 0) {
-    out.push(diff.incomplete.length === 0 ? "no changes" : "no deltas derived; the scan is incomplete and this is not a clean result");
-  } else {
-    out.push(`changes (${deltas.length}):`);
-    for (const delta of deltas) {
-      out.push(renderDeltaLine(delta));
-      for (const note of delta.notes) {
-        out.push(`            ${note}`);
-      }
-    }
-  }
-  const summary = diff.summary;
-  out.push(
-    `verdict: ${summary.verdict} (exit ${summary.exit_code}); expands=${summary.expands}; categories=${summary.categories.length === 0 ? "none" : summary.categories.join(",")}`,
-  );
-  for (const reason of summary.reasons) {
-    out.push(`  - ${reason}`);
-  }
-  return `${out.join("\n")}\n`;
 }
 
 function verdictOptions(args: ParsedArgs): VerdictOptions | { error: string } {
@@ -327,7 +239,7 @@ function commandTwoSided(name: "diff" | "check", args: ParsedArgs, io: CliIo, de
   if (resolutionIncomplete.length > 0) {
     io.stderr(renderIncomplete(resolutionIncomplete));
     if (json) {
-      io.stdout(canonicalJson({ schema_version: SCHEMA_VERSION, incomplete: resolutionIncomplete }));
+      io.stdout(renderIncompleteJson(resolutionIncomplete));
     }
     return EXIT_INCOMPLETE;
   }
@@ -337,11 +249,7 @@ function commandTwoSided(name: "diff" | "check", args: ParsedArgs, io: CliIo, de
   const baseSnapshot = takeSnapshot(resolutions.base.side, snapshotDeps(deps)).snapshot;
   const headSnapshot = takeSnapshot(resolutions.head.side, snapshotDeps(deps)).snapshot;
   const diff = diffSnapshots(baseSnapshot, headSnapshot, options);
-  if (json) {
-    io.stdout(canonicalJson({ command: name, ...diff }));
-  } else {
-    io.stdout(renderDiffText(diff));
-  }
+  io.stdout(json ? renderDiffJson(name, diff) : renderDiffText(diff));
   if (diff.incomplete.length > 0) {
     io.stderr(renderIncomplete(diff.incomplete));
   }
@@ -400,9 +308,24 @@ export function run(argv: readonly string[], io: CliIo, deps: CliDeps): number {
   }
 }
 
+/**
+ * True when this file is the process entry point. The entry path is
+ * compared by real path: a package manager (`npx`, `npm exec`) runs the
+ * bin through a symlink in `node_modules/.bin`, so `process.argv[1]` names
+ * the link while `import.meta.url` names the target.
+ */
 function isMainModule(): boolean {
   const entry = process.argv[1];
-  return entry !== undefined && import.meta.url === pathToFileURL(entry).href;
+  if (entry === undefined) {
+    return false;
+  }
+  let real = entry;
+  try {
+    real = realpathSync(entry);
+  } catch {
+    real = entry;
+  }
+  return import.meta.url === pathToFileURL(real).href || import.meta.url === pathToFileURL(entry).href;
 }
 
 if (isMainModule()) {

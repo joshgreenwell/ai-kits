@@ -32,7 +32,7 @@ describe("CLI check: real pipeline exit codes (JG-155)", () => {
     assert.equal(run.status, EXIT_EXPANDS, run.stderr);
     assert.equal(run.stderr, "");
     assert.match(run.stdout, new RegExp(`^CONTROL-SURFACE DIFF {2}base=${repo.baseSha} head=${repo.headSha}\n`));
-    assert.match(run.stdout, /\n {2}added {3}hook {8}hook:PreToolUse:Bash:[0-9a-f]{64} {2}widens proven - {2}\.claude\/settings\.json:\d+\n/);
+    assert.match(run.stdout, /\nEXPANDED\n {2}hooks\n {4}added {3}hook {8}hook:PreToolUse:Bash:[0-9a-f]{64} {2}widens proven {2}\.claude\/settings\.json:\d+\n/);
     assert.match(run.stdout, /\nverdict: expands \(exit 1\); expands=true; categories=hook\n/);
     assert.ok(!/no changes/i.test(run.stdout));
   });
@@ -54,7 +54,7 @@ describe("CLI check: real pipeline exit codes (JG-155)", () => {
     assert.equal(check(unknown).status, EXIT_ANNOTATE);
     assert.equal(check(unknown, "--strict").status, EXIT_EXPANDS);
     assert.equal(check(unknown, "--fail-on", "projected").status, EXIT_ANNOTATE);
-    assert.match(check(unknown).stdout, /\n {2}changed unknown {5}unknown:\/model {2}unknown unresolved -/);
+    assert.match(check(unknown).stdout, /\nUNRESOLVED\n {2}other\n {4}changed unknown {5}unknown:\/model {2}unknown unresolved {2}/);
   });
 
   it("incomplete exits 3 and never prints 'no changes'; an expansion alongside is printed too", () => {
@@ -62,12 +62,12 @@ describe("CLI check: real pipeline exit codes (JG-155)", () => {
     const run = check(repo);
     assert.equal(run.status, EXIT_INCOMPLETE);
     assert.match(run.stderr, /^incomplete: \.mcp\.json: duplicate key "mcpServers" at \/mcpServers \(lines \d+, \d+\)\n$/);
-    assert.match(run.stdout, /\nincomplete:\n {2}- \.mcp\.json: duplicate key "mcpServers"/);
+    assert.match(run.stdout, /\nINCOMPLETE\n {2}\.mcp\.json: duplicate key "mcpServers"/);
     assert.ok(!/no changes/i.test(run.stdout), run.stdout);
     assert.match(run.stdout, /not a clean result/);
     const both = check(cases.repo("incomplete-with-expansion"));
     assert.equal(both.status, EXIT_INCOMPLETE);
-    assert.match(both.stdout, /\n {2}added {3}hook {8}hook:PreToolUse:Bash:/);
+    assert.match(both.stdout, /\nINCOMPLETE\n[\s\S]*\nEXPANDED\n {2}hooks\n {4}added {3}hook {8}hook:PreToolUse:Bash:/);
     assert.match(both.stdout, /\nverdict: incomplete \(exit 3\); expands=true; categories=hook\n/);
     assert.match(both.stdout, /\n {2}- incomplete: \.mcp\.json: duplicate key "mcpServers"/);
     assert.match(both.stdout, /\n {2}- expands \(hook\): hook:PreToolUse:Bash:/);
@@ -146,8 +146,8 @@ describe("CLI check/diff --json: full Diff, byte-deterministic (JG-157 groundwor
     assert.equal(runCli(["diff", "--base", repo.baseSha, "--head", repo.headSha], repo.dir).status, EXIT_OK);
     assert.equal(runCli(["diff", "--base", repo.baseSha, "--head", repo.headSha, "--fail-on", "projected"], repo.dir).status, EXIT_EXPANDS);
     const text = runCli(["diff", "--base", repo.baseSha, "--head", repo.headSha], repo.dir).stdout;
-    assert.match(text, /\n {2}added {3}perm {8}perm:allow:Bash\(npm run \*\) {2}widens proven prefix {2}\.claude\/settings\.json:\d+\n/);
-    assert.match(text, /\n {2}added {3}perm {8}perm:allow:Bash\(npm run build\) {2}widens proven exact {2}\.claude\/settings\.json:\d+\n/);
+    assert.match(text, /\n {4}added {3}perm {8}perm:allow:Bash\(npm run \*\) {2}widens proven prefix {2}\.claude\/settings\.json:\d+\n/);
+    assert.match(text, /\n {4}added {3}perm {8}perm:allow:Bash\(npm run build\) {2}widens proven exact {2}\.claude\/settings\.json:\d+\n/);
   });
 });
 
@@ -244,7 +244,7 @@ describe("CLI check against a temp repository built from the fixtures (manual ch
   it("node dist/src/cli.js check --base <sha> --head <sha>", () => {
     const run = check(repo);
     assert.equal(run.status, EXIT_EXPANDS);
-    assert.match(run.stdout, /\n {2}changed mode {8}mode:defaultMode {2}widens proven - {2}\.claude\/settings\.json:\d+\n/);
+    assert.match(run.stdout, /\nEXPANDED\n {2}mode\n {4}changed mode {8}mode:defaultMode {2}widens proven {2}\.claude\/settings\.json:\d+\n/);
     assert.match(run.stdout, /defaultMode default → bypassPermissions/);
     assert.match(run.stdout, /I5: defaultMode "bypassPermissions" is a widening mode/);
   });

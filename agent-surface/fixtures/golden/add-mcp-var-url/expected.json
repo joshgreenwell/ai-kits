@@ -1,0 +1,174 @@
+{
+  "added": [],
+  "base": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<base-sha>",
+      "spec": "<base-sha>"
+    },
+    "sha": "<base-sha>",
+    "sources": [
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": "d02ec61abd7df8a48729af0d33e33c64d049ea72",
+        "note": null,
+        "parsed": true,
+        "path": ".mcp.json",
+        "sha": "<base-sha>",
+        "status": "read",
+        "tracked": true
+      }
+    ]
+  },
+  "changed": [],
+  "command": "check",
+  "head": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<head-sha>",
+      "spec": "<head-sha>"
+    },
+    "sha": "<head-sha>",
+    "sources": [
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": "0d473f52fbaa45f280709b8b7f69e0c3a46b379f",
+        "note": null,
+        "parsed": true,
+        "path": ".mcp.json",
+        "sha": "<head-sha>",
+        "status": "read",
+        "tracked": true
+      }
+    ]
+  },
+  "incomplete": [],
+  "removed": [],
+  "schema_version": 1,
+  "semantics_doc_date": "2026-09-07",
+  "summary": {
+    "categories": [
+      "mcp"
+    ],
+    "exit_code": 2,
+    "expands": false,
+    "fail_on": {
+      "categories": [
+        "deny-removed",
+        "directory",
+        "hook",
+        "hooks-reenabled",
+        "mcp",
+        "mode",
+        "whole-tool-allow"
+      ],
+      "projected": false
+    },
+    "reasons": [
+      "undecided: mcp:events added (unresolved widens) [variable_reference]"
+    ],
+    "strict": false,
+    "verdict": "undecided"
+  },
+  "unresolved": [
+    {
+      "base": null,
+      "breadth": null,
+      "breadth_tier": null,
+      "category": "mcp",
+      "change": "added",
+      "direction": "widens",
+      "flags": [
+        "variable_reference"
+      ],
+      "head": {
+        "breadth": null,
+        "direction": "widens",
+        "file": ".mcp.json",
+        "json_pointer": "/mcpServers/events",
+        "key": "mcp:events",
+        "kind": "mcp",
+        "line": 7,
+        "source_sha": "<head-sha>",
+        "tier": "unresolved",
+        "value": {
+          "args": null,
+          "command": null,
+          "env_keys": null,
+          "extra": null,
+          "header_keys": null,
+          "name": "events",
+          "transport": "sse",
+          "type_raw": "sse",
+          "url": "http://${MCP_HOST}/sse"
+        }
+      },
+      "interpretations": [
+        "I7"
+      ],
+      "key": "mcp:events",
+      "kind": "mcp",
+      "notes": [
+        "I7: sse url contains a variable reference; never expanded, target unresolved"
+      ],
+      "rule": "D-mcp-added",
+      "tier": "unresolved"
+    }
+  ]
+}

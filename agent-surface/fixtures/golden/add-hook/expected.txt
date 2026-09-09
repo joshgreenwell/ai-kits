@@ -1,0 +1,16 @@
+CONTROL-SURFACE DIFF  base=<base-sha> head=<head-sha>
+Assumptions
+  Semantics doc date     2026-09-07
+  Scope                  repository-controlled files only
+  Workspace trust        assumed accepted (allow rules/dirs are held until then)
+  Runtime mode           per defaultMode in head; CLI flags not modeled
+  Sandbox                not modeled
+  Hooks                  presence only; decisions not modeled
+  Managed/user/local     not read
+  Plugins                not modeled (flagged if enabledPlugins non-empty)
+EXPANDED
+  hooks
+    added   hook        hook:PreToolUse:Bash:faf748c4921f62d3e3556d5113c779d241d3a64dede6173f6d9fa65ae7f12aaf  widens proven  .claude/settings.json:19
+              I6: command hook on PreToolUse for matcher "Bash"; command recorded, never executed
+verdict: expands (exit 1); expands=true; categories=hook
+  - expands (hook): hook:PreToolUse:Bash:faf748c4921f62d3e3556d5113c779d241d3a64dede6173f6d9fa65ae7f12aaf added (proven widens)

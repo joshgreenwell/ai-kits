@@ -149,15 +149,15 @@ describe("snapshot: CLI output (JG-152)", () => {
   it("text mode lists entries as `kind key file:line` after the assumptions and sources", () => {
     const run = runCli(["snapshot", "HEAD"], repo.dir);
     assert.equal(run.status, EXIT_OK, run.stderr);
-    assert.match(run.stdout, /\nentries \(\d+\):\n/);
+    assert.match(run.stdout, /\nENTRIES \(\d+\)\n/);
     assert.match(run.stdout, /\n {2}perm {8}perm:allow:Bash\(npm run \*\) {2}\.claude\/settings\.json:8\n/);
     assert.match(run.stdout, /\n {2}hook {8}hook:PreToolUse:Bash:[0-9a-f]{64} {2}\.claude\/settings\.json:17\n/);
     assert.match(run.stdout, /\n {2}mcp {9}mcp:docs {2}\.mcp\.json:7\n/);
     assert.match(run.stdout, /\n {2}unknown {5}unknown:\/model {2}\.claude\/settings\.json:33\n/);
     assert.match(run.stdout, /\n {2}perm {8}perm:allow:Bash\(npm test\) {2}\.claude\/settings\.json:8\n {2}perm {8}perm:allow:Bash\(npm test\) {2}\.claude\/settings\.local\.json:7\n/);
-    assert.ok(run.stdout.indexOf("assumptions:") < run.stdout.indexOf("sources:"));
-    assert.ok(run.stdout.indexOf("sources:") < run.stdout.indexOf("entries ("));
-    assert.match(run.stdout, /incomplete: none\n$/);
+    assert.ok(run.stdout.indexOf("\nAssumptions\n") < run.stdout.indexOf("\nSOURCES\n"));
+    assert.ok(run.stdout.indexOf("\nSOURCES\n") < run.stdout.indexOf("\nENTRIES ("));
+    assert.ok(!run.stdout.includes("INCOMPLETE"), "a clean snapshot prints no INCOMPLETE section");
   });
 
   it("JSON mode never prints env values and surfaces the unknown key", () => {

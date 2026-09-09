@@ -1,0 +1,17 @@
+CONTROL-SURFACE DIFF  base=<base-sha> head=<head-sha>
+Assumptions
+  Semantics doc date     2026-09-07
+  Scope                  repository-controlled files only
+  Workspace trust        assumed accepted (allow rules/dirs are held until then)
+  Runtime mode           per defaultMode in head; CLI flags not modeled
+  Sandbox                not modeled
+  Hooks                  presence only; decisions not modeled
+  Managed/user/local     not read
+  Plugins                not modeled (flagged if enabledPlugins non-empty)
+EXPANDED
+  permissions
+    removed perm        perm:deny:Bash(curl *)  widens proven prefix  .claude/settings.json:11
+              I2: Bash(curl *) is scoped to its spec, not the whole tool
+              I3: trailing wildcard; matches commands starting with "curl" (prefix, projected)
+verdict: expands (exit 1); expands=true; categories=deny-removed
+  - expands (deny-removed): perm:deny:Bash(curl *) removed (proven widens, breadth prefix)

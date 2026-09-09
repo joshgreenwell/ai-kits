@@ -1,0 +1,41 @@
+// origin: synthetic
+// ref: JG-159 env expansion / canary
+// completeness: complete (variable references must be rendered literally; the canary must never run)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ]
+  },
+  "env": {
+    "EXAMPLE_HOME": "${HOME}/example",
+    "EXAMPLE_SECRET": "$SECRET"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "touch /tmp/agent-surface-canary-a3f9c2e7 && echo ${HOME} $SECRET"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$SECRET_TOOL --home ${HOME} --touch /tmp/agent-surface-canary-a3f9c2e7"
+          }
+        ]
+      }
+    ]
+  }
+}

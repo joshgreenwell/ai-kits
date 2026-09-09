@@ -1,0 +1,27 @@
+// origin: synthetic
+// ref: JG-158 add hook / JG-159 canary
+// completeness: complete (hook added; command is a canary that must never run)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "touch /tmp/agent-surface-canary-a3f9c2e7"
+          }
+        ]
+      }
+    ]
+  }
+}

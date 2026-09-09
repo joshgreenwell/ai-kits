@@ -1,0 +1,402 @@
+{
+  "added": [
+    {
+      "base": null,
+      "breadth": "unknown",
+      "breadth_tier": null,
+      "category": null,
+      "change": "added",
+      "direction": "neutral",
+      "flags": [
+        "ignored_by_claude_code"
+      ],
+      "head": {
+        "breadth": "unknown",
+        "direction": "neutral",
+        "file": ".claude/settings.json",
+        "json_pointer": "/permissions/allow/3",
+        "key": "perm:allow:Glob(src/**)",
+        "kind": "perm",
+        "line": 11,
+        "source_sha": "<head-sha>",
+        "tier": "proven",
+        "value": {
+          "raw": "Glob(src/**)",
+          "rule": "Glob(src/**)",
+          "spec": "src/**",
+          "tool": "Glob",
+          "wildcard": "none"
+        }
+      },
+      "interpretations": [
+        "I8"
+      ],
+      "key": "perm:allow:Glob(src/**)",
+      "kind": "perm",
+      "notes": [
+        "I8: ignored by Claude Code: Glob(path) is not evaluated; only Read and Edit take path rules; the rule grants nothing and denies nothing"
+      ],
+      "rule": "D-allow-added",
+      "tier": "proven"
+    },
+    {
+      "base": null,
+      "breadth": "unknown",
+      "breadth_tier": null,
+      "category": null,
+      "change": "added",
+      "direction": "neutral",
+      "flags": [
+        "ignored_by_claude_code"
+      ],
+      "head": {
+        "breadth": "unknown",
+        "direction": "neutral",
+        "file": ".claude/settings.json",
+        "json_pointer": "/permissions/allow/4",
+        "key": "perm:allow:MultiEdit(src/)",
+        "kind": "perm",
+        "line": 12,
+        "source_sha": "<head-sha>",
+        "tier": "proven",
+        "value": {
+          "raw": "MultiEdit(src/)",
+          "rule": "MultiEdit(src/)",
+          "spec": "src/",
+          "tool": "MultiEdit",
+          "wildcard": "none"
+        }
+      },
+      "interpretations": [
+        "I8"
+      ],
+      "key": "perm:allow:MultiEdit(src/)",
+      "kind": "perm",
+      "notes": [
+        "I8: ignored by Claude Code: MultiEdit(path) is not evaluated; only Read and Edit take path rules; the rule grants nothing and denies nothing"
+      ],
+      "rule": "D-allow-added",
+      "tier": "proven"
+    },
+    {
+      "base": null,
+      "breadth": "unknown",
+      "breadth_tier": null,
+      "category": null,
+      "change": "added",
+      "direction": "neutral",
+      "flags": [
+        "ignored_by_claude_code"
+      ],
+      "head": {
+        "breadth": "unknown",
+        "direction": "neutral",
+        "file": ".claude/settings.json",
+        "json_pointer": "/permissions/allow/2",
+        "key": "perm:allow:NotebookEdit(notebooks/a.ipynb)",
+        "kind": "perm",
+        "line": 10,
+        "source_sha": "<head-sha>",
+        "tier": "proven",
+        "value": {
+          "raw": "NotebookEdit(notebooks/a.ipynb)",
+          "rule": "NotebookEdit(notebooks/a.ipynb)",
+          "spec": "notebooks/a.ipynb",
+          "tool": "NotebookEdit",
+          "wildcard": "none"
+        }
+      },
+      "interpretations": [
+        "I8"
+      ],
+      "key": "perm:allow:NotebookEdit(notebooks/a.ipynb)",
+      "kind": "perm",
+      "notes": [
+        "I8: ignored by Claude Code: NotebookEdit(path) is not evaluated; only Read and Edit take path rules; the rule grants nothing and denies nothing"
+      ],
+      "rule": "D-allow-added",
+      "tier": "proven"
+    },
+    {
+      "base": null,
+      "breadth": "unknown",
+      "breadth_tier": null,
+      "category": null,
+      "change": "added",
+      "direction": "neutral",
+      "flags": [
+        "ignored_by_claude_code"
+      ],
+      "head": {
+        "breadth": "unknown",
+        "direction": "neutral",
+        "file": ".claude/settings.json",
+        "json_pointer": "/permissions/allow/6",
+        "key": "perm:allow:Read(*.env)",
+        "kind": "perm",
+        "line": 14,
+        "source_sha": "<head-sha>",
+        "tier": "proven",
+        "value": {
+          "raw": "Read(*.env)",
+          "rule": "Read(*.env)",
+          "spec": "*.env",
+          "tool": "Read",
+          "wildcard": "none"
+        }
+      },
+      "interpretations": [
+        "I8"
+      ],
+      "key": "perm:allow:Read(*.env)",
+      "kind": "perm",
+      "notes": [
+        "I8: ignored by Claude Code: unanchored allow glob Read(*.env) is not evaluated; the rule grants nothing and denies nothing"
+      ],
+      "rule": "D-allow-added",
+      "tier": "proven"
+    },
+    {
+      "base": null,
+      "breadth": "unknown",
+      "breadth_tier": null,
+      "category": null,
+      "change": "added",
+      "direction": "neutral",
+      "flags": [
+        "ignored_by_claude_code"
+      ],
+      "head": {
+        "breadth": "unknown",
+        "direction": "neutral",
+        "file": ".claude/settings.json",
+        "json_pointer": "/permissions/allow/1",
+        "key": "perm:allow:Write(src/)",
+        "kind": "perm",
+        "line": 9,
+        "source_sha": "<head-sha>",
+        "tier": "proven",
+        "value": {
+          "raw": "Write(src/)",
+          "rule": "Write(src/)",
+          "spec": "src/",
+          "tool": "Write",
+          "wildcard": "none"
+        }
+      },
+      "interpretations": [
+        "I8"
+      ],
+      "key": "perm:allow:Write(src/)",
+      "kind": "perm",
+      "notes": [
+        "I8: ignored by Claude Code: Write(path) is not evaluated; only Read and Edit take path rules; the rule grants nothing and denies nothing"
+      ],
+      "rule": "D-allow-added",
+      "tier": "proven"
+    },
+    {
+      "base": null,
+      "breadth": "unknown",
+      "breadth_tier": null,
+      "category": null,
+      "change": "added",
+      "direction": "neutral",
+      "flags": [
+        "ignored_by_claude_code"
+      ],
+      "head": {
+        "breadth": "unknown",
+        "direction": "neutral",
+        "file": ".claude/settings.json",
+        "json_pointer": "/permissions/allow/5",
+        "key": "perm:allow:mcp__docs__search(query)",
+        "kind": "perm",
+        "line": 13,
+        "source_sha": "<head-sha>",
+        "tier": "proven",
+        "value": {
+          "raw": "mcp__docs__search(query)",
+          "rule": "mcp__docs__search(query)",
+          "spec": "query",
+          "tool": "mcp__docs__search",
+          "wildcard": "none"
+        }
+      },
+      "interpretations": [
+        "I8"
+      ],
+      "key": "perm:allow:mcp__docs__search(query)",
+      "kind": "perm",
+      "notes": [
+        "I8: ignored by Claude Code: an mcp__ rule with parentheses is not evaluated; use mcp__server or mcp__server__tool; the rule grants nothing and denies nothing"
+      ],
+      "rule": "D-allow-added",
+      "tier": "proven"
+    },
+    {
+      "base": null,
+      "breadth": "unknown",
+      "breadth_tier": null,
+      "category": null,
+      "change": "added",
+      "direction": "neutral",
+      "flags": [
+        "ignored_by_claude_code"
+      ],
+      "head": {
+        "breadth": "unknown",
+        "direction": "neutral",
+        "file": ".claude/settings.json",
+        "json_pointer": "/permissions/deny/0",
+        "key": "perm:deny:Write(secrets/)",
+        "kind": "perm",
+        "line": 17,
+        "source_sha": "<head-sha>",
+        "tier": "proven",
+        "value": {
+          "raw": "Write(secrets/)",
+          "rule": "Write(secrets/)",
+          "spec": "secrets/",
+          "tool": "Write",
+          "wildcard": "none"
+        }
+      },
+      "interpretations": [
+        "I8"
+      ],
+      "key": "perm:deny:Write(secrets/)",
+      "kind": "perm",
+      "notes": [
+        "I8: ignored by Claude Code: Write(path) is not evaluated; only Read and Edit take path rules; the rule grants nothing and denies nothing"
+      ],
+      "rule": "D-deny-added",
+      "tier": "proven"
+    }
+  ],
+  "base": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<base-sha>",
+      "spec": "<base-sha>"
+    },
+    "sha": "<base-sha>",
+    "sources": [
+      {
+        "blob": "40d927a9d4eb943a40a1891209b62075fbc4f5f0",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<base-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "changed": [],
+  "command": "check",
+  "head": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<head-sha>",
+      "spec": "<head-sha>"
+    },
+    "sha": "<head-sha>",
+    "sources": [
+      {
+        "blob": "b02ddd14117007ab86f17b65e2a5bc4252b27d5b",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<head-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "incomplete": [],
+  "removed": [],
+  "schema_version": 1,
+  "semantics_doc_date": "2026-09-07",
+  "summary": {
+    "categories": [],
+    "exit_code": 0,
+    "expands": false,
+    "fail_on": {
+      "categories": [
+        "deny-removed",
+        "directory",
+        "hook",
+        "hooks-reenabled",
+        "mcp",
+        "mode",
+        "whole-tool-allow"
+      ],
+      "projected": false
+    },
+    "reasons": [
+      "narrowing or neutral changes only"
+    ],
+    "strict": false,
+    "verdict": "pass"
+  },
+  "unresolved": []
+}

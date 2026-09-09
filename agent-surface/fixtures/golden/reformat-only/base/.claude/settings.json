@@ -1,0 +1,16 @@
+// origin: synthetic
+// ref: JG-151 / JG-153
+// completeness: complete (same semantics, different formatting and wildcard spelling)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Read"
+    ],
+    "deny": [
+      "Bash(curl:*)"
+    ],
+    "defaultMode": "acceptEdits"
+  }
+}

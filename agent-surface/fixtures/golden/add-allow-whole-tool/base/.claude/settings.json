@@ -1,0 +1,11 @@
+// origin: synthetic
+// ref: JG-154 I2
+// completeness: complete (bare Bash and Bash(*) added)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ]
+  }
+}

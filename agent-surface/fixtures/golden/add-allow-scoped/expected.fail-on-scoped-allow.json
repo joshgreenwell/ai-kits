@@ -1,0 +1,164 @@
+{
+  "added": [
+    {
+      "base": null,
+      "breadth": "prefix",
+      "breadth_tier": "projected",
+      "category": "scoped-allow",
+      "change": "added",
+      "direction": "widens",
+      "flags": [],
+      "head": {
+        "breadth": "prefix",
+        "direction": "widens",
+        "file": ".claude/settings.json",
+        "json_pointer": "/permissions/allow/1",
+        "key": "perm:allow:Bash(npm test *)",
+        "kind": "perm",
+        "line": 9,
+        "source_sha": "<head-sha>",
+        "tier": "proven",
+        "value": {
+          "raw": "Bash(npm test *)",
+          "rule": "Bash(npm test *)",
+          "spec": "npm test *",
+          "tool": "Bash",
+          "wildcard": "trailing"
+        }
+      },
+      "interpretations": [
+        "I2",
+        "I3"
+      ],
+      "key": "perm:allow:Bash(npm test *)",
+      "kind": "perm",
+      "notes": [
+        "I2: Bash(npm test *) is scoped to its spec, not the whole tool",
+        "I3: trailing wildcard; matches commands starting with \"npm test\" (prefix, projected)"
+      ],
+      "rule": "D-allow-added",
+      "tier": "proven"
+    }
+  ],
+  "base": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<base-sha>",
+      "spec": "<base-sha>"
+    },
+    "sha": "<base-sha>",
+    "sources": [
+      {
+        "blob": "c1edf501812e5dbab77ecf3cdd0f80d856b217b9",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<base-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "changed": [],
+  "command": "check",
+  "head": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<head-sha>",
+      "spec": "<head-sha>"
+    },
+    "sha": "<head-sha>",
+    "sources": [
+      {
+        "blob": "ec13c980d7bafb63eb11524a435b37090450ad3b",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<head-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "incomplete": [],
+  "removed": [],
+  "schema_version": 1,
+  "semantics_doc_date": "2026-09-07",
+  "summary": {
+    "categories": [
+      "scoped-allow"
+    ],
+    "exit_code": 1,
+    "expands": true,
+    "fail_on": {
+      "categories": [
+        "scoped-allow"
+      ],
+      "projected": false
+    },
+    "reasons": [
+      "expands (scoped-allow): perm:allow:Bash(npm test *) added (proven widens, breadth prefix)"
+    ],
+    "strict": false,
+    "verdict": "expands"
+  },
+  "unresolved": []
+}

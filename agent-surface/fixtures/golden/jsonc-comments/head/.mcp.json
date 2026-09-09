@@ -1,0 +1,8 @@
+// origin: synthetic
+// ref: JG-158 JSONC comments
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  // no servers yet
+  "mcpServers": {},
+}

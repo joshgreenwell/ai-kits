@@ -1,0 +1,22 @@
+CONTROL-SURFACE DIFF  base=<base-sha> head=<head-sha>
+Assumptions
+  Semantics doc date     2026-09-07
+  Scope                  repository-controlled files only
+  Workspace trust        assumed accepted (allow rules/dirs are held until then)
+  Runtime mode           per defaultMode in head; CLI flags not modeled
+  Sandbox                not modeled
+  Hooks                  presence only; decisions not modeled
+  Managed/user/local     not read
+  Plugins                not modeled (flagged if enabledPlugins non-empty)
+EXPANDED
+  MCP
+    added   mcp         mcp:local  widens proven  .mcp.json:7
+              I7: http over plaintext http to loopback host localhost; not flagged
+    added   mcp         mcp:local4  widens proven  .mcp.json:15
+              I7: http over plaintext http to loopback host 127.0.0.1; not flagged
+    added   mcp         mcp:local6  widens proven  .mcp.json:11
+              I7: sse over plaintext http to loopback host [::1]; not flagged
+verdict: expands (exit 1); expands=true; categories=mcp
+  - expands (mcp): mcp:local added (proven widens)
+  - expands (mcp): mcp:local4 added (proven widens)
+  - expands (mcp): mcp:local6 added (proven widens)

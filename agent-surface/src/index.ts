@@ -135,3 +135,13 @@ export {
   type Tier,
 } from "./types.js";
 export { VERSION } from "./version.js";
+export { renderDiffJson, renderIncompleteJson, renderJson, renderSnapshotJson } from "./render/json.js";
+export {
+  ASSUMPTION_LINES,
+  KIND_GROUPS,
+  NO_CONFIGURATION_LINE,
+  describeIncomplete,
+  redactOutput,
+  redactOutputTree,
+} from "./render/shared.js";
+export { renderDeltaLine, renderDiffText, renderSnapshotText } from "./render/text.js";

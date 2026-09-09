@@ -39,12 +39,18 @@ function clearWorktree(dir: string): void {
  * case. Files are tracked, so a `settings.local.json` counts as tracked.
  */
 export function makeDiffRepo(name: string): DiffRepo {
+  return makePairRepo(path.join(DIFF_FIXTURES, name));
+}
+
+/** The same two-commit repository for any directory holding `base/` and `head/` (also used by the golden suite). */
+export function makePairRepo(caseDir: string): DiffRepo {
+  const name = path.basename(caseDir);
   const dir = tempDir();
   initRepo(dir);
-  fs.cpSync(path.join(DIFF_FIXTURES, name, "base"), dir, { recursive: true });
+  fs.cpSync(path.join(caseDir, "base"), dir, { recursive: true });
   const baseSha = commitAll(dir, `${name}: base`);
   clearWorktree(dir);
-  fs.cpSync(path.join(DIFF_FIXTURES, name, "head"), dir, { recursive: true });
+  fs.cpSync(path.join(caseDir, "head"), dir, { recursive: true });
   const headSha = commitAll(dir, `${name}: head`);
   return { dir, baseSha, headSha };
 }
