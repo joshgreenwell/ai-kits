@@ -85,7 +85,20 @@ describe("CLI: snapshot", () => {
         [".mcp.json", "worktree", "read", true],
       ],
     );
-    assert.deepEqual(snapshot.entries, []);
+    const entries = snapshot.entries as Array<{ key: string; file: string; source_sha: null }>;
+    assert.deepEqual(
+      entries.filter((entry) => !entry.key.startsWith("hook:")).map((entry) => [entry.key, entry.file]),
+      [
+        ["mcp:example-docs", ".mcp.json"],
+        ["mode:defaultMode", ".claude/settings.json"],
+        ["perm:allow:Bash(ls *)", ".claude/settings.local.json"],
+        ["perm:allow:Bash(npm test)", ".claude/settings.json"],
+        ["perm:allow:Read", ".claude/settings.json"],
+        ["perm:deny:Bash(curl *)", ".claude/settings.json"],
+      ],
+    );
+    assert.equal(entries.filter((entry) => /^hook:PreToolUse:Bash:[0-9a-f]{64}$/.test(entry.key)).length, 1);
+    assert.ok(entries.every((entry) => entry.source_sha === null), "worktree reads have no source sha");
     assert.deepEqual(snapshot.incomplete, []);
     assert.equal(runCli(["snapshot", ".", "--json"], repo.dir).stdout, run.stdout, "byte-identical on rerun");
   });
@@ -150,13 +163,17 @@ describe("CLI: malformed input exits 3 with the reason printed", () => {
     ]);
   });
 
-  it("a snapshot file with the wrong shape", () => {
-    fs.writeFileSync(path.join(malformed.dir, "bad.json"), '{"schema_version": 99}');
+  it("a snapshot file with the wrong shape, and one with another schema version", () => {
+    fs.writeFileSync(path.join(malformed.dir, "bad.json"), '{"schema_version": 1, "hello": "world"}');
     const run = runCli(["snapshot", "bad.json", "--json"], malformed.dir);
     assert.equal(run.status, EXIT_INCOMPLETE);
     assert.match(run.stderr, /not a snapshot file/);
     const output = JSON.parse(run.stdout) as { incomplete: Array<{ path: string }> };
     assert.deepEqual(output.incomplete.map((item) => item.path), ["bad.json"]);
+    fs.writeFileSync(path.join(malformed.dir, "old.json"), '{"schema_version": 99}');
+    const mismatch = runCli(["snapshot", "old.json", "--json"], malformed.dir);
+    assert.equal(mismatch.status, EXIT_INCOMPLETE);
+    assert.match(mismatch.stderr, /snapshot schema_version mismatch: file has schema_version 99, this version of agent-surface reads schema_version 1/);
   });
 });
 

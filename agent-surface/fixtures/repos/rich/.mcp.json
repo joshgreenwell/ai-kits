@@ -1,0 +1,28 @@
+// origin: synthetic
+// ref: JG-150
+// completeness: complete (stdio, http and sse servers plus an unknown transport on purpose)
+// excerpt_or_raw: raw
+{
+  "mcpServers": {
+    "docs": {
+      "command": "npx",
+      "args": ["-y", "example-docs-server"],
+      "env": { "DOCS_TOKEN": "synthetic-not-a-real-token", "DOCS_ROOT": "./docs" }
+    },
+    "build": {
+      "type": "http",
+      "url": "http://example.invalid/mcp",
+      "headers": { "Authorization": "Bearer ${BUILD_TOKEN}", "X-Example": "1" }
+    },
+    "events": {
+      "type": "sse",
+      "url": "http://${MCP_HOST}/sse"
+    },
+    "odd": {
+      "type": "websocket",
+      "url": "ws://example.invalid/ws",
+      "cwd": "/srv/odd"
+    }
+  },
+  "extraTopLevel": true
+}
