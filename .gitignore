@@ -21,3 +21,6 @@ coverage/
 .idea/
 .vscode/
 *.swp
+
+# Claude Code subagent worktrees
+.claude/worktrees/
