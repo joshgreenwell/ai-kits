@@ -1,0 +1,12 @@
+{
+  "applies_to": [
+    "observations_v2.csv"
+  ],
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "agentlint tests: TL-B3 Langfuse v2 export as CSV (JSON-encoded cells); one generation has an empty usageDetails cell",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Hand-written. IDs, times and content are invented; no real trace content."
+  }
+}

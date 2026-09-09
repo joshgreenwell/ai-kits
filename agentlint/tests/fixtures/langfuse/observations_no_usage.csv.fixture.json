@@ -1,0 +1,12 @@
+{
+  "applies_to": [
+    "observations_no_usage.csv"
+  ],
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "agentlint tests: TL-B3 v2 CSV export produced without the usage field group; no usage column at all",
+    "completeness": "incomplete",
+    "excerpt_or_raw": "raw",
+    "notes": "Hand-written. The usage field group was deliberately left out of the export; everything else is invented."
+  }
+}
