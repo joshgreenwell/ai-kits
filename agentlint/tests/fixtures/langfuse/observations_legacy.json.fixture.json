@@ -1,0 +1,12 @@
+{
+  "applies_to": [
+    "observations_legacy.json"
+  ],
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "agentlint tests: TL-B3 older Observations API shape (promptTokens/completionTokens/totalTokens and usage.unit); one generation reports usage in CHARACTERS",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Hand-written. IDs, times and content are invented; no real trace content."
+  }
+}
