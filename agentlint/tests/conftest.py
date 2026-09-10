@@ -6,7 +6,10 @@ readability, never copied from a real trace.
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -116,3 +119,94 @@ def mixed_basis_fixture() -> dict[str, Any]:
     """The synthetic mixed-token-basis run fixture, with its metadata header."""
     with (FIXTURES / "run_mixed_basis.json").open(encoding="utf-8") as handle:
         return json.load(handle)
+
+
+# --- CLI helpers (TL-D) ------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CliResult:
+    """Exit status and captured streams of one in-process CLI invocation."""
+
+    code: int
+    out: str
+    err: str
+
+    def json(self) -> Any:
+        return json.loads(self.out)
+
+
+def run_cli(*argv: str) -> CliResult:
+    """Run ``agentlint.cli.main`` in-process with captured stdout / stderr."""
+    from agentlint.cli import main
+
+    out, err = io.StringIO(), io.StringIO()
+    code = main(list(argv), out=out, err=err)
+    return CliResult(code=code, out=out.getvalue(), err=err.getvalue())
+
+
+def sha256_of(value: Any) -> str:
+    """Hex SHA-256 of the canonical JSON of ``value`` (synthetic fingerprints for bundles)."""
+    from agentlint.model import canonical_json
+
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def full_fingerprint(value: Any) -> dict[str, str]:
+    return {"hash": sha256_of(value), "representation": "full"}
+
+
+def write_bundle(path: Path, run_id: str, records: list[dict[str, Any]], **header: Any) -> Path:
+    """Write a synthetic record-bundle document (schema version 1) to ``path``."""
+    document: dict[str, Any] = {
+        "_fixture": {
+            "origin": "synthetic",
+            "ref": "agentlint tests: TL-D CLI, generated in a temporary directory",
+            "completeness": "complete",
+            "excerpt_or_raw": "raw",
+        },
+        "schema_version": "1",
+        "run_id": run_id,
+        **header,
+        "records": records,
+    }
+    path.write_text(json.dumps(document, indent=1), encoding="utf-8")
+    return path
+
+
+def complete_records(result_bytes: int = 120, raw: Any = None) -> list[dict[str, Any]]:
+    """Records covering every generic rule's requirements (a fully covered run).
+
+    Two model calls with per-call usage, a model and a token basis, plus one
+    tool call with full fingerprints, a status and a result size; every
+    record has ``seq`` and both time bounds, so ``ordering`` is met.
+    """
+    tool: dict[str, Any] = {
+        "id": "tc-01",
+        "kind": "tool_call",
+        "status": "ok",
+        "seq": 2,
+        "start_ms": 1000,
+        "end_ms": 1500,
+        "name": "search",
+        "tool_call_id": "call-0001",
+        "args_fingerprint": full_fingerprint({"query": "synthetic search terms"}),
+        "result_fingerprint": full_fingerprint({"hits": ["doc-1", "doc-2"], "n": 2}),
+        "result_bytes": result_bytes,
+    }
+    if raw is not None:
+        tool["raw"] = raw
+    model = {
+        "kind": "model_call",
+        "status": "ok",
+        "model": "synthetic-model",
+        "provider": "synthetic",
+        "token_basis": "input_excludes_cache_read",
+        "tokens_out": 50,
+        "finish_reason": "stop",
+    }
+    return [
+        {**model, "id": "mc-01", "seq": 1, "start_ms": 0, "end_ms": 900, "tokens_in": 1000},
+        tool,
+        {**model, "id": "mc-02", "seq": 3, "start_ms": 1600, "end_ms": 2500, "tokens_in": 1200},
+    ]
