@@ -93,6 +93,13 @@ agentlint explain <RULE_ID>     # the rule's documentation, rendered from its me
 agentlint --version
 ```
 
+**Integrating `agentlint` into an application?** PyPI is not published yet, so
+install it from a local checkout (`uvx --from <path>/agentlint agentlint …`,
+or `uv pip install -e <path>/agentlint`) and follow
+[`docs/integration.md`](https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/docs/integration.md):
+choosing an input, emitting a record bundle from your own debug report,
+reading the exit codes, adding an app rule, and running it in CI.
+
 `analyze` prints **coverage first**, then findings (one per pattern, evidence
 collapsed, thresholds and tier / confidence shown), then run stats (latency
 distribution per event kind, token totals per basis). Anything that could not
@@ -176,6 +183,7 @@ written. The full statement, including what each loader reads, is in
 
 ## Documentation
 
+* [`docs/integration.md`](https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/docs/integration.md) — adding `agentlint` to an application: choosing an input, installing from a local checkout, emitting a record bundle, exit codes, app rules, thresholds, CI.
 * [`docs/cli.md`](https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/docs/cli.md) — commands, output order, formats, exit codes, configuration.
 * [`docs/rules/`](https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/docs/rules/README.md) — one page per rule, generated from metadata.
 * [`docs/loaders/otlp.md`](https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/docs/loaders/otlp.md), [`docs/loaders/langfuse.md`](https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/docs/loaders/langfuse.md), [`docs/loaders/claude-session.md`](https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/docs/loaders/claude-session.md) — what each loader maps, its version note, its coverage vocabulary.
