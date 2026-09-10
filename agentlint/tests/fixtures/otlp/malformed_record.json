@@ -1,0 +1,128 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-121 TL-B1: malformed records never crash the loader",
+    "completeness": "incomplete",
+    "excerpt_or_raw": "raw",
+    "notes": "One good span; one span without spanId; one float timestamp; one bad intValue; one non-object span."
+  },
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "synthetic-agent"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "synthetic.instrumentation",
+            "version": "0.0.0"
+          },
+          "spans": [
+            {
+              "traceId": "0000000000000000000000000000a002",
+              "spanId": "000000000000b001",
+              "name": "chat model-a",
+              "kind": 3,
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000001000000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "conv-0002"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "model-a"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "10"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "5"
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "0000000000000000000000000000a002",
+              "name": "chat model-a (no spanId)",
+              "startTimeUnixNano": "1700000002000000000",
+              "endTimeUnixNano": "1700000003000000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "conv-0002"
+                  }
+                }
+              ]
+            },
+            {
+              "traceId": "0000000000000000000000000000a002",
+              "spanId": "000000000000b003",
+              "name": "chat model-a",
+              "kind": 3,
+              "startTimeUnixNano": 1.7e+18,
+              "endTimeUnixNano": "1700000005000000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "conv-0002"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "12.5"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "7"
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            },
+            "this is not a span object"
+          ]
+        }
+      ]
+    }
+  ]
+}
