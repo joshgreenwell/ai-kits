@@ -1,0 +1,235 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-121 TL-B1: current gen_ai.* naming generation",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Pairs with gen_legacy.json: both must load to the same Run (raw_records aside)."
+  },
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "synthetic-agent"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "synthetic.instrumentation",
+            "version": "0.0.0"
+          },
+          "spans": [
+            {
+              "traceId": "0000000000000000000000000000a001",
+              "spanId": "000000000000a001",
+              "name": "invoke_agent helper",
+              "kind": 3,
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000009000000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "invoke_agent"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "conv-0001"
+                  }
+                },
+                {
+                  "key": "gen_ai.agent.name",
+                  "value": {
+                    "stringValue": "helper"
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "0000000000000000000000000000a001",
+              "spanId": "000000000000a002",
+              "name": "chat model-a",
+              "kind": 3,
+              "startTimeUnixNano": "1700000001000000000",
+              "endTimeUnixNano": "1700000002000000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.model",
+                  "value": {
+                    "stringValue": "model-a"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "provider-x"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "1000"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "50"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": "400"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "stop"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ],
+              "parentSpanId": "000000000000a001",
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "0000000000000000000000000000a001",
+              "spanId": "000000000000a003",
+              "name": "execute_tool search_docs",
+              "kind": 3,
+              "startTimeUnixNano": "1700000003000000000",
+              "endTimeUnixNano": "1700000004000000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "search_docs"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.id",
+                  "value": {
+                    "stringValue": "call-0001"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.arguments",
+                  "value": {
+                    "stringValue": "{\"query\": \"synthetic search terms\", \"limit\": 5}"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.result",
+                  "value": {
+                    "stringValue": "{\"hits\": [\"doc-1\", \"doc-2\"], \"count\": 2}"
+                  }
+                }
+              ],
+              "parentSpanId": "000000000000a001"
+            },
+            {
+              "traceId": "0000000000000000000000000000a001",
+              "spanId": "000000000000a004",
+              "name": "chat model-a",
+              "kind": 3,
+              "startTimeUnixNano": "1700000005000000000",
+              "endTimeUnixNano": "1700000006000000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.model",
+                  "value": {
+                    "stringValue": "model-a"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "provider-x"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "1200"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "error.type",
+                  "value": {
+                    "stringValue": "RateLimitError"
+                  }
+                }
+              ],
+              "parentSpanId": "000000000000a001",
+              "status": {
+                "code": 2,
+                "message": "synthetic failure"
+              }
+            },
+            {
+              "traceId": "0000000000000000000000000000a001",
+              "spanId": "000000000000a005",
+              "name": "GET /synthetic",
+              "kind": 3,
+              "startTimeUnixNano": "1700000007000000000",
+              "endTimeUnixNano": "1700000008000000000",
+              "attributes": [
+                {
+                  "key": "http.request.method",
+                  "value": {
+                    "stringValue": "GET"
+                  }
+                }
+              ],
+              "parentSpanId": "000000000000a001"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

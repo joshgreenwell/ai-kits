@@ -1,0 +1,80 @@
+[
+  {
+    "id": "obs-d-root",
+    "traceId": "trace-dddd-0004",
+    "parentObservationId": null,
+    "type": "SPAN",
+    "name": "agent-loop",
+    "startTime": "2024-01-01T00:00:30.000Z",
+    "endTime": "2024-01-01T00:00:33.000Z",
+    "environment": "default",
+    "projectId": "proj-synthetic-0001",
+    "sessionId": "session-0004",
+    "level": "DEFAULT",
+    "input": "SYNTHETIC-INPUT-DELTA-ROOT invented request about the fictional port of Saltmere",
+    "output": "SYNTHETIC-OUTPUT-DELTA-ROOT invented reply about the fictional port of Saltmere"
+  },
+  {
+    "id": "obs-d-gen1",
+    "traceId": "trace-dddd-0004",
+    "parentObservationId": "obs-d-root",
+    "type": "GENERATION",
+    "name": "chat",
+    "startTime": "2024-01-01T00:00:30.100Z",
+    "endTime": "2024-01-01T00:00:31.000Z",
+    "environment": "default",
+    "projectId": "proj-synthetic-0001",
+    "sessionId": "session-0004",
+    "model": "model-d",
+    "level": "DEFAULT",
+    "input": [
+      {
+        "role": "user",
+        "content": "SYNTHETIC-PROMPT-DELTA-0001 tell me about the fictional port of Saltmere"
+      }
+    ],
+    "output": {
+      "role": "assistant",
+      "content": "SYNTHETIC-COMPLETION-DELTA-0001 an invented port with two piers"
+    },
+    "promptTokens": 800,
+    "completionTokens": 35,
+    "totalTokens": 835,
+    "usage": {
+      "input": 800,
+      "output": 35,
+      "total": 835,
+      "unit": "TOKENS"
+    }
+  },
+  {
+    "id": "obs-d-gen2",
+    "traceId": "trace-dddd-0004",
+    "parentObservationId": "obs-d-root",
+    "type": "GENERATION",
+    "name": "chat",
+    "startTime": "2024-01-01T00:00:31.100Z",
+    "endTime": "2024-01-01T00:00:32.000Z",
+    "environment": "default",
+    "projectId": "proj-synthetic-0001",
+    "sessionId": "session-0004",
+    "model": "model-d",
+    "level": "DEFAULT",
+    "input": [
+      {
+        "role": "user",
+        "content": "SYNTHETIC-PROMPT-DELTA-0002 count the invented piers"
+      }
+    ],
+    "output": {
+      "role": "assistant",
+      "content": "SYNTHETIC-COMPLETION-DELTA-0002 there are two invented piers"
+    },
+    "usage": {
+      "input": 3100,
+      "output": 120,
+      "total": 3220,
+      "unit": "CHARACTERS"
+    }
+  }
+]

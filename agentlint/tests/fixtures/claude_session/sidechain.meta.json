@@ -1,0 +1,8 @@
+{
+  "origin": "synthetic",
+  "ref": "agentlint tests: TL-B5 claude-session-jsonl session with a subagent (isSidechain records carrying agentId)",
+  "completeness": "complete",
+  "excerpt_or_raw": "raw",
+  "format_version_note": "Hand-written after the record shapes of session logs written by Claude Code 2.1.x (sidechain records share the parent sessionId and carry an agentId); the 'version' value 2.1.0 is a placeholder.",
+  "notes": "The main session delegates to agent-synthetic-0001. The sidechain records must become a separate run (id = agentId, conversation_id = parent sessionId) and must never be merged into the parent run's event list."
+}

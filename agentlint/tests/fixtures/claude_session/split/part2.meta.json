@@ -1,0 +1,8 @@
+{
+  "origin": "synthetic",
+  "ref": "agentlint tests: TL-B5 claude-session-jsonl session split across two files (second part: tool_result and final assistant message)",
+  "completeness": "incomplete",
+  "excerpt_or_raw": "raw",
+  "format_version_note": "Hand-written after the record shapes of session logs written by Claude Code 2.1.x; the 'version' values 2.1.0 / 2.1.1 are placeholders chosen to differ between the two parts.",
+  "notes": "Alone, this file holds a tool_result whose tool_use is missing; the loader must mark that run incomplete (tool_result_without_tool_use). Together with part1.jsonl it completes the run."
+}

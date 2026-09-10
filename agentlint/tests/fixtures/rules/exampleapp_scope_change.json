@@ -1,0 +1,127 @@
+{
+  "_fixture": {
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Hand-built by a generator; IDs, timestamps and values are invented. Record-bundle-like shape; tests convert rows to events.",
+    "origin": "synthetic",
+    "ref": "JG-131 TL-C6 negative: a recorded user scope change lies between group failure and single re-issue"
+  },
+  "bundle": {
+    "records": [
+      {
+        "exampleapp": {
+          "scope_change": false
+        },
+        "kind": "other",
+        "locator": "synthetic/exampleapp_scope_change.json#records[0]",
+        "name": "user_message",
+        "row_id": "row-0001",
+        "seq": 1,
+        "status": "ok"
+      },
+      {
+        "kind": "model_call",
+        "locator": "synthetic/exampleapp_scope_change.json#records[1]",
+        "model": "model-a",
+        "name": "chat",
+        "row_id": "row-0002",
+        "seq": 2,
+        "status": "ok",
+        "token_basis": "input_includes_cache_read",
+        "tokens_in": 2000,
+        "tokens_out": 40
+      },
+      {
+        "args_fingerprint": {
+          "hash": "b2e68c2ac4744085fe30c5fad9a2d37bcbb1282f98e547daf6ceebd68c39efac",
+          "representation": "full"
+        },
+        "error_code": "partial",
+        "error_type": "GroupFailure",
+        "exampleapp": {
+          "request_kind": "group",
+          "selection_explicit": true,
+          "targets": [
+            "target-a",
+            "target-b",
+            "target-c"
+          ]
+        },
+        "kind": "tool_call",
+        "locator": "synthetic/exampleapp_scope_change.json#records[2]",
+        "name": "group_request",
+        "result_bytes": 64,
+        "result_fingerprint": {
+          "hash": "ccc2b5f600dde9cad95df4907b438c6e58d27305e43dbad3be4453dc0b101f44",
+          "representation": "full"
+        },
+        "row_id": "row-0003",
+        "seq": 3,
+        "status": "error"
+      },
+      {
+        "exampleapp": {
+          "scope_change": true
+        },
+        "kind": "other",
+        "locator": "synthetic/exampleapp_scope_change.json#records[3]",
+        "name": "user_message",
+        "row_id": "row-0004",
+        "seq": 4,
+        "status": "ok"
+      },
+      {
+        "kind": "model_call",
+        "locator": "synthetic/exampleapp_scope_change.json#records[4]",
+        "model": "model-a",
+        "name": "chat",
+        "row_id": "row-0005",
+        "seq": 5,
+        "status": "ok",
+        "token_basis": "input_includes_cache_read",
+        "tokens_in": 2600,
+        "tokens_out": 40
+      },
+      {
+        "args_fingerprint": {
+          "hash": "b2e68c2ac4744085fe30c5fad9a2d37bcbb1282f98e547daf6ceebd68c39efac",
+          "representation": "full"
+        },
+        "exampleapp": {
+          "request_kind": "single",
+          "selection_explicit": false,
+          "targets": [
+            "target-a"
+          ]
+        },
+        "kind": "tool_call",
+        "locator": "synthetic/exampleapp_scope_change.json#records[5]",
+        "name": "single_request",
+        "result_bytes": 48,
+        "result_fingerprint": {
+          "hash": "a7d9649c07db536b0a1da4642d07d742f73c2583196d929fe837865bb4bcdcdb",
+          "representation": "full"
+        },
+        "row_id": "row-0006",
+        "seq": 6,
+        "status": "ok"
+      },
+      {
+        "exampleapp": {
+          "run_status": "completed"
+        },
+        "kind": "other",
+        "locator": "synthetic/exampleapp_scope_change.json#records[6]",
+        "name": "run_end",
+        "row_id": "row-0007",
+        "seq": 7,
+        "status": "ok"
+      }
+    ],
+    "run": {
+      "id": "run-exampleapp-0002",
+      "source_format": "record-bundle",
+      "status": "completed"
+    }
+  }
+}

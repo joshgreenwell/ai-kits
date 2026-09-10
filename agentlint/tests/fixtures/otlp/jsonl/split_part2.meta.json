@@ -1,0 +1,7 @@
+{
+  "origin": "synthetic",
+  "ref": "JG-122 TL-B2: part 2 of a run split across two collector file-exporter files",
+  "completeness": "complete",
+  "excerpt_or_raw": "excerpt",
+  "notes": "Span 000000000000f003 duplicates split_part1.jsonl; must be deduplicated."
+}

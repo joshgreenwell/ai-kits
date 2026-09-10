@@ -1,0 +1,273 @@
+{
+  "$comment": "Generated from agentlint.loaders.record_bundle.SCHEMA by schema_json(); do not edit by hand.",
+  "$defs": {
+    "fingerprint": {
+      "additionalProperties": false,
+      "description": "SHA-256 over the canonical JSON form of a value (sorted keys, no whitespace, arrays in order), as lowercase hex. Never computed over fewer than 16 bytes. representation says how much of the model-visible value was hashed; only full fingerprints support equality claims.",
+      "properties": {
+        "hash": {
+          "pattern": "^[0-9a-f]+$",
+          "type": "string"
+        },
+        "representation": {
+          "enum": [
+            "full",
+            "redacted",
+            "truncated"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "hash",
+        "representation"
+      ],
+      "type": "object"
+    },
+    "record": {
+      "additionalProperties": false,
+      "description": "One operation in the run. Unknown properties are rejected so that a misspelled field is noticed rather than silently lost; application-specific data goes under scope (namespaced) or raw (opaque).",
+      "properties": {
+        "adapter": {
+          "description": "Client library or adapter through which the model was called, as the source reports it.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "args_fingerprint": {
+          "$ref": "#/$defs/fingerprint",
+          "description": "Fingerprint of the tool call's arguments. The arguments themselves are never included. Omit when the arguments were a placeholder ({}, \"\") or shorter than 16 bytes."
+        },
+        "cache_read_tokens": {
+          "description": "Tokens served from a prompt cache.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cache_write_tokens": {
+          "description": "Tokens written to a prompt cache.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duration_ms": {
+          "description": "Duration in integer milliseconds when the source records it directly. Never computed from start_ms and end_ms by the loader.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "end_ms": {
+          "description": "End as integer milliseconds since the Unix epoch.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error_code": {
+          "description": "Error code as the source names it (an HTTP status, an exit code, an application code).",
+          "minLength": 1,
+          "type": "string"
+        },
+        "error_type": {
+          "description": "Error class or category as the source names it (a type name, not a message).",
+          "minLength": 1,
+          "type": "string"
+        },
+        "finish_reason": {
+          "description": "Why the model stopped, as the source reports it (stop, tool_use, length, ...).",
+          "minLength": 1,
+          "type": "string"
+        },
+        "id": {
+          "description": "Source identity: the identifier the application already has for this record (a row ID, span ID, message ID). Never derived from another identifier. Records that repeat an id are duplicates of one operation and are collapsed.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "included_result_ids": {
+          "description": "For an aggregate: ids of the records whose results it summarises. Also used to exclude the aggregate's usage from token comparisons when children exist.",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "description": "model_call: one request to a model. tool_call: one tool or command execution. approval: a permission or policy decision about a tool call (status blocked when denied). aggregate: a framework span that summarises children (its usage is never added to its children's). other: anything else worth keeping in order.",
+          "enum": [
+            "aggregate",
+            "approval",
+            "model_call",
+            "other",
+            "tool_call"
+          ],
+          "type": "string"
+        },
+        "model": {
+          "description": "Model identifier as the source reports it (model_call and aggregate).",
+          "minLength": 1,
+          "type": "string"
+        },
+        "name": {
+          "description": "Operation name (tool name, request type, span name). Free text; generic rules match whole words of it against a visible exclusion list for routing / retrieval / compaction calls.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "native_tool_call_id": {
+          "description": "The model provider's identifier for the same tool call. Kept separately from tool_call_id; the two are never substituted for one another.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "parent_id": {
+          "description": "id of the record this one is nested under (a tool call under the model call that requested it, a child under an aggregate).",
+          "minLength": 1,
+          "type": "string"
+        },
+        "preview_bytes": {
+          "description": "UTF-8 length of whatever preview or excerpt the debug report kept. Never a substitute for result_bytes.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "provider": {
+          "description": "Model provider as the source reports it.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "raw": {
+          "description": "The application's original record, kept verbatim as evidence. Opaque: never validated beyond being non-null, never interpreted. The application must redact it before emitting; agentlint does not redact.",
+          "type": [
+            "object",
+            "array",
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "result_bytes": {
+          "description": "UTF-8 length of the full model-visible result. Omit when only a preview or excerpt is available; size rules then abstain.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "result_fingerprint": {
+          "$ref": "#/$defs/fingerprint",
+          "description": "Fingerprint of the model-visible tool result. The result itself is never included."
+        },
+        "scope": {
+          "additionalProperties": {
+            "type": "object"
+          },
+          "description": "Application-specific data, namespaced: each key is a namespace (for example the application's name) and each value an object of that application's fields (targets, selection, policy, ...). Passed through untouched. Generic rules never read it; the namespace 'agentlint' with a 'tags' list is the one neutral namespace the loader family uses.",
+          "type": "object"
+        },
+        "seq": {
+          "description": "Application-assigned sequence number within the run. Second ordering key after start_ms; two records without it are ordered by id only, which implies no causal order.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_locator": {
+          "description": "Where this record came from, in the application's own terms (report ID plus row ID, a file and line, a JSON pointer). Defaults to '<file>#/records/<index>' for the file the loader read it from.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "start_ms": {
+          "description": "Start as integer milliseconds since the Unix epoch. First ordering key.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "description": "ok: completed normally. error: failed. blocked: denied by an approval or policy. unknown: the source did not say.",
+          "enum": [
+            "blocked",
+            "error",
+            "ok",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "token_basis": {
+          "description": "What tokens_in measures: input_includes_cache_read or input_excludes_cache_read are the documented values; other strings are kept as-is. Counts are compared and totalled only among records sharing a basis and a model. A record without a basis is comparable to nothing.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "tokens_in": {
+          "description": "Input tokens on the stated basis.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokens_out": {
+          "description": "Output tokens.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokens_total": {
+          "description": "Total tokens when the source reports one directly; never computed by the loader.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tool_call_id": {
+          "description": "The application-level identifier of the tool call this record is (kind tool_call) or decides about (kind approval). Records of the same kind that share it are one operation. An approval and the tool call it decides share it without being merged.",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "status"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/docs/record-bundle.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Neutral JSON that any application can emit from its own debug report so agentlint can lint the run. One document describes one run (or one page of a run; documents sharing run_id are merged). Absent means absent: an optional field is omitted, never null. Counts and timestamps are JSON integers, never floats. Values are never copied into the bundle: tool arguments and results are represented by fingerprints and byte sizes only.",
+  "properties": {
+    "conversation_id": {
+      "description": "The application's identifier for the conversation or session the run belongs to.",
+      "minLength": 1,
+      "type": "string"
+    },
+    "ended_at": {
+      "description": "Run end as integer milliseconds since the Unix epoch.",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "final_status": {
+      "description": "How the run ended, in the application's own vocabulary (for example completed, failed, cancelled). Kept verbatim in the retained bundle document; generic rules never interpret it.",
+      "minLength": 1,
+      "type": "string"
+    },
+    "records": {
+      "description": "The run's operations. Order does not matter; the loader sorts by (start_ms, seq, id). An invalid record is dropped and reported by its JSON pointer; the rest of the document still loads.",
+      "items": {
+        "$ref": "#/$defs/record"
+      },
+      "type": "array"
+    },
+    "run_id": {
+      "description": "The application's own identifier for the run. Documents with the same run_id are merged into one run.",
+      "minLength": 1,
+      "type": "string"
+    },
+    "schema_version": {
+      "description": "Version of this schema the document follows. The loader accepts exactly the versions listed here.",
+      "enum": [
+        "1"
+      ],
+      "type": "string"
+    },
+    "source_refs": {
+      "description": "References to where the data came from (report identifiers, export names). Recorded on the run as evidence, never opened by the loader. When omitted, the loader records the path of the file it read.",
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "started_at": {
+      "description": "Run start as integer milliseconds since the Unix epoch.",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "records"
+  ],
+  "title": "agentlint record bundle",
+  "type": "object"
+}

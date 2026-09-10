@@ -1,0 +1,39 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "agentlint tests: TL-B4 record-bundle loader, first page of a run exported in two files",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Hand-written. Page 1 of run-bundle-0004: carries started_at and the first two records. Record tc-41 is repeated on page 2 with a richer field set and must collapse into one event."
+  },
+  "schema_version": "1",
+  "run_id": "run-bundle-0004",
+  "conversation_id": "conv-bundle-0004",
+  "source_refs": ["exampleapp/debug-report-0004/page-1"],
+  "started_at": 1700000300000,
+  "records": [
+    {
+      "id": "mc-41",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 1,
+      "start_ms": 1700000300000,
+      "end_ms": 1700000301000,
+      "model": "model-a",
+      "token_basis": "input_excludes_cache_read",
+      "tokens_in": 700,
+      "tokens_out": 30,
+      "finish_reason": "tool_use"
+    },
+    {
+      "id": "tc-41",
+      "kind": "tool_call",
+      "status": "unknown",
+      "parent_id": "mc-41",
+      "seq": 2,
+      "start_ms": 1700000301200,
+      "name": "exec",
+      "tool_call_id": "call-0041"
+    }
+  ]
+}

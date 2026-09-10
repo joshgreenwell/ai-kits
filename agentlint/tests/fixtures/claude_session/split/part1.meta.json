@@ -1,0 +1,8 @@
+{
+  "origin": "synthetic",
+  "ref": "agentlint tests: TL-B5 claude-session-jsonl session split across two files (first part: prompt and tool_use)",
+  "completeness": "incomplete",
+  "excerpt_or_raw": "raw",
+  "format_version_note": "Hand-written after the record shapes of session logs written by Claude Code 2.1.x; the 'version' values 2.1.0 / 2.1.1 are placeholders chosen to differ between the two parts.",
+  "notes": "Alone, this file yields a tool_call with no result (status unknown). Together with part2.jsonl the loader must merge both files into one run keyed by the shared sessionId and attach the result to the tool_call."
+}
