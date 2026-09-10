@@ -46,7 +46,7 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "docs": "npm run build && node scripts/render-interpretations.mjs && node scripts/render-explain.mjs",
     "golden": "npm run build && node scripts/update-golden.mjs",
-    "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
+    "test": "npm run build && node --test dist/test/*.test.js",
     "prepublishOnly": "npm run build && npm test"
   },
   "devDependencies": {
