@@ -115,10 +115,11 @@ describe("CLI: snapshot", () => {
   it("snapshot without --json prints the assumptions header and sources", () => {
     const run = runCli(["snapshot"], repo.dir);
     assert.equal(run.status, EXIT_OK, run.stderr);
-    assert.match(run.stdout, /^agent-surface snapshot: worktree \./);
-    assert.match(run.stdout, /assumptions:\n {2}- semantics:/);
+    assert.match(run.stdout, /^CONTROL-SURFACE SNAPSHOT {2}origin=worktree spec=\. sha=none\nAssumptions\n {2}Semantics doc date {5}2026-09-07\n/);
+    assert.match(run.stdout, /\nSOURCES\n/);
     assert.match(run.stdout, /\.claude\/settings\.local\.json +read; local file shared via Git \(trust-held by Claude Code\)/);
-    assert.match(run.stdout, /incomplete: none/);
+    assert.ok(!run.stdout.includes("INCOMPLETE"));
+    assert.match(run.stdout, /\nENTRIES \(\d+\)\n/);
   });
 
   it("snapshot of a saved snapshot.json reproduces it, with origin marked as snapshot", () => {
@@ -150,7 +151,7 @@ describe("CLI: malformed input exits 3 with the reason printed", () => {
     const run = runCli(["snapshot", "HEAD"], malformed.dir);
     assert.equal(run.status, EXIT_INCOMPLETE);
     assert.match(run.stderr, /^incomplete: \.claude\/settings\.json: expected ',' or '\]' after array element.*\(line 8\)\n$/);
-    assert.match(run.stdout, /incomplete:\n {2}- \.claude\/settings\.json:/);
+    assert.match(run.stdout, /\nINCOMPLETE\n {2}\.claude\/settings\.json:/);
   });
 
   it("a duplicate key, with both lines, in JSON mode", () => {
@@ -233,7 +234,7 @@ describe("CLI: diff and check resolve refs and report missing ones (JG-148)", ()
   it("check accepts --fail-on and --strict and prints the diff header with the verdict", () => {
     const run = runCli(["check", "--base", "main", "--head", "HEAD", "--fail-on", "projected,scoped-allow", "--strict"], repo.dir);
     assert.equal(run.status, EXIT_OK, run.stderr);
-    assert.match(run.stdout, new RegExp(`^CONTROL-SURFACE DIFF {2}base=${repo.sha} head=${repo.sha}\nno changes\nverdict: no-change \\(exit 0\\)`));
+    assert.match(run.stdout, new RegExp(`^CONTROL-SURFACE DIFF {2}base=${repo.sha} head=${repo.sha}\nAssumptions\n(?:.*\n)*?no changes\nverdict: no-change \\(exit 0\\)`));
   });
 });
 

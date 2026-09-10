@@ -4,6 +4,24 @@
   "description": "Agent Control-Surface Diff: deterministic, offline diff of repository-controlled Claude Code configuration between two Git refs.",
   "license": "BSD-2-Clause",
   "type": "module",
+  "keywords": [
+    "claude-code",
+    "agent",
+    "permissions",
+    "hooks",
+    "mcp",
+    "diff",
+    "ci"
+  ],
+  "homepage": "https://github.com/joshgreenwell/ai-kits/tree/main/agent-surface#readme",
+  "bugs": {
+    "url": "https://github.com/joshgreenwell/ai-kits/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joshgreenwell/ai-kits",
+    "directory": "agent-surface"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -16,14 +34,20 @@
     "dist/",
     "!dist/test/",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "docs": "npm run build && node scripts/render-interpretations.mjs",
+    "docs": "npm run build && node scripts/render-interpretations.mjs && node scripts/render-explain.mjs",
+    "golden": "npm run build && node scripts/update-golden.mjs",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "prepublishOnly": "npm run lint && npm test"
+    "prepublishOnly": "npm run build && npm test"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

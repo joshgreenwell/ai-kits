@@ -2,6 +2,10 @@ name: agent-surface
 
 on:
   push:
+    branches:
+      - "**"
+    tags:
+      - "agent-surface-v*"
     paths:
       - "agent-surface/**"
       - ".github/workflows/agent-surface.yml"
@@ -34,3 +38,59 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+
+  pack:
+    name: npm pack
+    runs-on: ubuntu-latest
+    needs: test
+    defaults:
+      run:
+        working-directory: agent-surface
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent-surface/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: mkdir -p "$RUNNER_TEMP/pack" && npm pack --pack-destination "$RUNNER_TEMP/pack"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-surface-tarball
+          path: ${{ runner.temp }}/pack/*.tgz
+          if-no-files-found: error
+
+  publish:
+    name: npm publish
+    # Runs only for release tags; the maintainer creates the tag (agent-surface-v<version>)
+    # and sets the NPM_TOKEN repository secret.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/agent-surface-v')
+    runs-on: ubuntu-latest
+    needs: [test, pack]
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: agent-surface
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+          cache-dependency-path: agent-surface/package-lock.json
+      - name: Check that the tag matches package.json
+        run: |
+          expected="agent-surface-v$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "${expected}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match ${expected}" >&2
+            exit 1
+          fi
+      - run: npm ci
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

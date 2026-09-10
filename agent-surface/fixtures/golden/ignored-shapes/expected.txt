@@ -1,0 +1,28 @@
+CONTROL-SURFACE DIFF  base=<base-sha> head=<head-sha>
+Assumptions
+  Semantics doc date     2026-09-07
+  Scope                  repository-controlled files only
+  Workspace trust        assumed accepted (allow rules/dirs are held until then)
+  Runtime mode           per defaultMode in head; CLI flags not modeled
+  Sandbox                not modeled
+  Hooks                  presence only; decisions not modeled
+  Managed/user/local     not read
+  Plugins                not modeled (flagged if enabledPlugins non-empty)
+CHANGED
+  permissions
+    added   perm        perm:allow:Glob(src/**)  neutral proven unknown [ignored_by_claude_code]  .claude/settings.json:11
+              I8: ignored by Claude Code: Glob(path) is not evaluated; only Read and Edit take path rules; the rule grants nothing and denies nothing
+    added   perm        perm:allow:MultiEdit(src/)  neutral proven unknown [ignored_by_claude_code]  .claude/settings.json:12
+              I8: ignored by Claude Code: MultiEdit(path) is not evaluated; only Read and Edit take path rules; the rule grants nothing and denies nothing
+    added   perm        perm:allow:NotebookEdit(notebooks/a.ipynb)  neutral proven unknown [ignored_by_claude_code]  .claude/settings.json:10
+              I8: ignored by Claude Code: NotebookEdit(path) is not evaluated; only Read and Edit take path rules; the rule grants nothing and denies nothing
+    added   perm        perm:allow:Read(*.env)  neutral proven unknown [ignored_by_claude_code]  .claude/settings.json:14
+              I8: ignored by Claude Code: unanchored allow glob Read(*.env) is not evaluated; the rule grants nothing and denies nothing
+    added   perm        perm:allow:Write(src/)  neutral proven unknown [ignored_by_claude_code]  .claude/settings.json:9
+              I8: ignored by Claude Code: Write(path) is not evaluated; only Read and Edit take path rules; the rule grants nothing and denies nothing
+    added   perm        perm:allow:mcp__docs__search(query)  neutral proven unknown [ignored_by_claude_code]  .claude/settings.json:13
+              I8: ignored by Claude Code: an mcp__ rule with parentheses is not evaluated; use mcp__server or mcp__server__tool; the rule grants nothing and denies nothing
+    added   perm        perm:deny:Write(secrets/)  neutral proven unknown [ignored_by_claude_code]  .claude/settings.json:17
+              I8: ignored by Claude Code: Write(path) is not evaluated; only Read and Edit take path rules; the rule grants nothing and denies nothing
+verdict: pass (exit 0); expands=false; categories=none
+  - narrowing or neutral changes only

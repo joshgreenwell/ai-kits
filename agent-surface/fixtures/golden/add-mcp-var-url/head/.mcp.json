@@ -1,0 +1,12 @@
+// origin: synthetic
+// ref: JG-154 I7 variable
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  "mcpServers": {
+    "events": {
+      "type": "sse",
+      "url": "http://${MCP_HOST}/sse"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+// origin: synthetic
+// ref: JG-159 env expansion / canary
+// completeness: complete (variable references in command, args, url and env; none may be expanded)
+// excerpt_or_raw: raw
+{
+  "mcpServers": {
+    "home": {
+      "command": "${HOME}/bin/example-server",
+      "args": ["--secret", "$SECRET", "--touch", "/tmp/agent-surface-canary-a3f9c2e7"],
+      "env": {
+        "EXAMPLE_TOKEN_REF": "$SECRET",
+        "EXAMPLE_HOME_REF": "${HOME}"
+      }
+    },
+    "remote": {
+      "type": "http",
+      "url": "http://${MCP_HOST}/mcp?home=${HOME}"
+    }
+  }
+}

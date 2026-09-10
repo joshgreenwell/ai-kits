@@ -1,0 +1,14 @@
+// origin: synthetic
+// ref: JG-153 D-deny-removed
+// completeness: complete (prefix deny removed)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ]
+  }
+}

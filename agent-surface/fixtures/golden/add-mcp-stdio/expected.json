@@ -1,0 +1,175 @@
+{
+  "added": [
+    {
+      "base": null,
+      "breadth": null,
+      "breadth_tier": null,
+      "category": "mcp",
+      "change": "added",
+      "direction": "widens",
+      "flags": [],
+      "head": {
+        "breadth": null,
+        "direction": "widens",
+        "file": ".mcp.json",
+        "json_pointer": "/mcpServers/docs",
+        "key": "mcp:docs",
+        "kind": "mcp",
+        "line": 7,
+        "source_sha": "<head-sha>",
+        "tier": "proven",
+        "value": {
+          "args": [
+            "-y",
+            "example-docs-server"
+          ],
+          "command": "npx",
+          "env_keys": null,
+          "extra": null,
+          "header_keys": null,
+          "name": "docs",
+          "transport": "stdio",
+          "type_raw": null,
+          "url": null
+        }
+      },
+      "interpretations": [
+        "I7"
+      ],
+      "key": "mcp:docs",
+      "kind": "mcp",
+      "notes": [
+        "I7: stdio server; command \"npx\" recorded, never executed"
+      ],
+      "rule": "D-mcp-added",
+      "tier": "proven"
+    }
+  ],
+  "base": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<base-sha>",
+      "spec": "<base-sha>"
+    },
+    "sha": "<base-sha>",
+    "sources": [
+      {
+        "blob": "bc76b0b5eb90617b2b9c28617b77a686e78de3d7",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<base-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "changed": [],
+  "command": "check",
+  "head": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<head-sha>",
+      "spec": "<head-sha>"
+    },
+    "sha": "<head-sha>",
+    "sources": [
+      {
+        "blob": "bc76b0b5eb90617b2b9c28617b77a686e78de3d7",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<head-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": "8135b5c6d8e253bd872250bc5dcdf3a608c0c403",
+        "note": null,
+        "parsed": true,
+        "path": ".mcp.json",
+        "sha": "<head-sha>",
+        "status": "read",
+        "tracked": true
+      }
+    ]
+  },
+  "incomplete": [],
+  "removed": [],
+  "schema_version": 1,
+  "semantics_doc_date": "2026-09-07",
+  "summary": {
+    "categories": [
+      "mcp"
+    ],
+    "exit_code": 1,
+    "expands": true,
+    "fail_on": {
+      "categories": [
+        "deny-removed",
+        "directory",
+        "hook",
+        "hooks-reenabled",
+        "mcp",
+        "mode",
+        "whole-tool-allow"
+      ],
+      "projected": false
+    },
+    "reasons": [
+      "expands (mcp): mcp:docs added (proven widens)"
+    ],
+    "strict": false,
+    "verdict": "expands"
+  },
+  "unresolved": []
+}

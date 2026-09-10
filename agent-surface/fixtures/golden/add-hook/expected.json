@@ -1,0 +1,169 @@
+{
+  "added": [
+    {
+      "base": null,
+      "breadth": null,
+      "breadth_tier": null,
+      "category": "hook",
+      "change": "added",
+      "direction": "widens",
+      "flags": [],
+      "head": {
+        "breadth": null,
+        "direction": "widens",
+        "file": ".claude/settings.json",
+        "json_pointer": "/hooks/PreToolUse/0/hooks/0",
+        "key": "hook:PreToolUse:Bash:faf748c4921f62d3e3556d5113c779d241d3a64dede6173f6d9fa65ae7f12aaf",
+        "kind": "hook",
+        "line": 19,
+        "source_sha": "<head-sha>",
+        "tier": "proven",
+        "value": {
+          "command": "touch /tmp/agent-surface-canary-a3f9c2e7",
+          "event": "PreToolUse",
+          "matcher": "Bash",
+          "prompt": null,
+          "timeout": null,
+          "type": "command"
+        }
+      },
+      "interpretations": [
+        "I6"
+      ],
+      "key": "hook:PreToolUse:Bash:faf748c4921f62d3e3556d5113c779d241d3a64dede6173f6d9fa65ae7f12aaf",
+      "kind": "hook",
+      "notes": [
+        "I6: command hook on PreToolUse for matcher \"Bash\"; command recorded, never executed"
+      ],
+      "rule": "D-hook-added",
+      "tier": "proven"
+    }
+  ],
+  "base": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<base-sha>",
+      "spec": "<base-sha>"
+    },
+    "sha": "<base-sha>",
+    "sources": [
+      {
+        "blob": "27fe77cca0d85f1654bc63178f2cf4d34e83eff2",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<base-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<base-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "changed": [],
+  "command": "check",
+  "head": {
+    "assumptions": [
+      "semantics: interpretations derive from the Claude Code documentation dated 2026-09-07",
+      "scope: repository-controlled files only (.claude/settings.json, tracked .claude/settings.local.json, .mcp.json)",
+      "trust: workspace trust is assumed accepted",
+      "mode: runtime mode is defaultMode as written in head; CLI flags are not modeled",
+      "sandbox: not modeled",
+      "hooks: presence only; commands are recorded, never executed",
+      "not read: managed settings, user settings (~/.claude), ~/.claude.json, untracked settings.local.json",
+      "plugins: not modeled (flagged when enabledPlugins is non-empty)"
+    ],
+    "incomplete": [],
+    "origin": {
+      "kind": "git",
+      "sha": "<head-sha>",
+      "spec": "<head-sha>"
+    },
+    "sha": "<head-sha>",
+    "sources": [
+      {
+        "blob": "027823c1d572e0d2b31922b25f3b13d715cc923e",
+        "note": null,
+        "parsed": true,
+        "path": ".claude/settings.json",
+        "sha": "<head-sha>",
+        "status": "read",
+        "tracked": true
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".claude/settings.local.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      },
+      {
+        "blob": null,
+        "note": null,
+        "parsed": false,
+        "path": ".mcp.json",
+        "sha": "<head-sha>",
+        "status": "absent",
+        "tracked": false
+      }
+    ]
+  },
+  "incomplete": [],
+  "removed": [],
+  "schema_version": 1,
+  "semantics_doc_date": "2026-09-07",
+  "summary": {
+    "categories": [
+      "hook"
+    ],
+    "exit_code": 1,
+    "expands": true,
+    "fail_on": {
+      "categories": [
+        "deny-removed",
+        "directory",
+        "hook",
+        "hooks-reenabled",
+        "mcp",
+        "mode",
+        "whole-tool-allow"
+      ],
+      "projected": false
+    },
+    "reasons": [
+      "expands (hook): hook:PreToolUse:Bash:faf748c4921f62d3e3556d5113c779d241d3a64dede6173f6d9fa65ae7f12aaf added (proven widens)"
+    ],
+    "strict": false,
+    "verdict": "expands"
+  },
+  "unresolved": []
+}

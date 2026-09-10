@@ -1,0 +1,8 @@
+// origin: synthetic
+// ref: JG-155 incomplete
+// completeness: incomplete on purpose (settings unchanged; duplicate key in head .mcp.json)
+// excerpt_or_raw: raw
+{
+  "mcpServers": {},
+  "mcpServers": {}
+}

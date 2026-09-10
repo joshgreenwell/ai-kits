@@ -1,0 +1,19 @@
+CONTROL-SURFACE DIFF  base=<base-sha> head=<head-sha>
+Assumptions
+  Semantics doc date     2026-09-07
+  Scope                  repository-controlled files only
+  Workspace trust        assumed accepted (allow rules/dirs are held until then)
+  Runtime mode           per defaultMode in head; CLI flags not modeled
+  Sandbox                not modeled
+  Hooks                  presence only; decisions not modeled
+  Managed/user/local     not read
+  Plugins                not modeled (flagged if enabledPlugins non-empty)
+  Flagged (head)         plugins: enabledPlugins is non-empty; plugin-provided hooks and servers are not modeled (.claude/settings.json)
+UNRESOLVED
+  flags
+    changed plugin_flag plugin_flag:enabledPlugins  unknown unresolved  .claude/settings.json:14
+              changed fields: example-plugin@example-marketplace
+              not interpreted: plugin-provided hooks and servers (`enabledPlugins`) are not interpreted
+no verdict derived: every change (1) is unresolved; nothing is proven either way
+verdict: undecided (exit 2); expands=false; categories=none
+  - undecided: plugin_flag:enabledPlugins changed (unresolved unknown)

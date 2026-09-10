@@ -1,0 +1,17 @@
+// origin: synthetic
+// ref: JG-154 not interpreted: plugin-provided hooks and servers
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ]
+  },
+  "enabledPlugins": {
+    "example-plugin@example-marketplace": true
+  }
+}

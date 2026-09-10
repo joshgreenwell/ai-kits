@@ -1,0 +1,5 @@
+{
+  "variants": [
+    { "name": "fail-on-scoped-allow", "args": ["--fail-on", "scoped-allow"] }
+  ]
+}
