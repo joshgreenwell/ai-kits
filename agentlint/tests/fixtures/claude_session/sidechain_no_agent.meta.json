@@ -1,0 +1,8 @@
+{
+  "origin": "synthetic",
+  "ref": "agentlint tests: TL-B5 claude-session-jsonl negative case, isSidechain records without an agentId",
+  "completeness": "incomplete",
+  "excerpt_or_raw": "raw",
+  "format_version_note": "Hand-written; models older inline-sidechain layouts where subagent records sit in the parent file with no agentId. The 'version' value 2.1.0 is a placeholder.",
+  "notes": "The loader has no original identifier to key a separate run on, so it must leave the sidechain records out, mark the parent run incomplete with reason sidechain_without_agent_id, and never merge them into the parent run as sequential events."
+}

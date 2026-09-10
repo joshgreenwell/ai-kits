@@ -1,0 +1,8 @@
+{
+  "origin": "synthetic",
+  "ref": "agentlint tests: TL-B5 claude-session-jsonl session with an is_error tool_result and a short (unhashable) result",
+  "completeness": "complete",
+  "excerpt_or_raw": "raw",
+  "format_version_note": "Hand-written after the record shapes of session logs written by Claude Code 2.1.x; the 'version' value 2.1.0 is a placeholder.",
+  "notes": "toolu_synthetic_0501 fails (is_error true) and must map to status error with result_bytes and result_fingerprint. toolu_synthetic_0502 succeeds with a 10-byte result, which is shorter than the 16-byte hashing minimum: result_bytes is 10, result_fingerprint stays null. Both tool_use blocks belong to one streamed message spanning two lines."
+}
