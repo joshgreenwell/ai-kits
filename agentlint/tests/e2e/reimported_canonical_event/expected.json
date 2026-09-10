@@ -1,0 +1,27 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: re-imported canonical event -> no extra execution",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Two files, one run: the re-imported copy of tc-02 is dropped (events_dropped_dedup=1) and the two-call chain stays below NO_PROGRESS_CYCLE's min_calls=3."
+  },
+  "inputs": [
+    "bundle.json",
+    "reimport.json"
+  ],
+  "checks": {
+    "runs": [
+      "run-e2e-reimport"
+    ],
+    "events_total": 4,
+    "events_dropped_dedup": 1,
+    "coverage_note_codes": [
+      "dedup_merged"
+    ]
+  },
+  "exit_code": 0,
+  "findings": [],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "complete"
+}

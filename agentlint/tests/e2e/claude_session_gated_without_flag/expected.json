@@ -1,0 +1,23 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: experimental Claude session loader gated",
+    "completeness": "incomplete",
+    "excerpt_or_raw": "raw",
+    "notes": "session.jsonl is a copy of tests/fixtures/claude_session/healthy.jsonl (hand-written after the record shapes of Claude Code 2.1.x logs; every identifier, path, prompt and result is invented). Without the flag the loader is never invoked: the file is reported under incomplete with the flag named, and a single input that yields no run exits 3."
+  },
+  "inputs": [
+    "session.jsonl"
+  ],
+  "args": [],
+  "checks": {
+    "runs": [],
+    "incomplete_reason_contains": [
+      "--experimental-claude-session"
+    ]
+  },
+  "exit_code": 3,
+  "findings": [],
+  "incomplete_for_rules": [],
+  "coverage_completeness": null
+}

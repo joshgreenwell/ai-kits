@@ -1,0 +1,110 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: three consecutive failed executions with identical arguments",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "Positive control for the weak form of IDENTICAL_RETRY_AFTER_FAILURE (min_failures=3). No model call sits between the attempts, so the strong form does not apply; the error payloads differ by attempt so NO_PROGRESS_CYCLE stays silent."
+  },
+  "schema_version": "1",
+  "run_id": "run-e2e-irf",
+  "conversation_id": "conv-run-e2e-irf",
+  "source_refs": [
+    "exampleapp/e2e/run-e2e-irf"
+  ],
+  "records": [
+    {
+      "id": "mc-01",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 1,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 0,
+      "end_ms": 900,
+      "tokens_in": 1500,
+      "tokens_out": 60,
+      "finish_reason": "tool_use"
+    },
+    {
+      "id": "tc-01",
+      "kind": "tool_call",
+      "status": "error",
+      "seq": 2,
+      "name": "exec",
+      "start_ms": 1500,
+      "end_ms": 1900,
+      "tool_call_id": "call-0001",
+      "args_fingerprint": {
+        "hash": "1106f69fdf18ffbc2ab089f6091ab681c4705790c9f79b36c049fea441a47f94",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "1998033e6d135026cdd68bc7aec95838f91b6dde006d2c3a4ea2480705372f73",
+        "representation": "full"
+      },
+      "result_bytes": 250,
+      "error_type": "CommandFailed",
+      "error_code": "E_EXIT_1"
+    },
+    {
+      "id": "tc-02",
+      "kind": "tool_call",
+      "status": "error",
+      "seq": 3,
+      "name": "exec",
+      "start_ms": 2000,
+      "end_ms": 2400,
+      "tool_call_id": "call-0002",
+      "args_fingerprint": {
+        "hash": "1106f69fdf18ffbc2ab089f6091ab681c4705790c9f79b36c049fea441a47f94",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "63f050854c2cc8142b9595dfb6f4e6f2254d3903cca813753eae299747869ff9",
+        "representation": "full"
+      },
+      "result_bytes": 250,
+      "error_type": "CommandFailed",
+      "error_code": "E_EXIT_1"
+    },
+    {
+      "id": "tc-03",
+      "kind": "tool_call",
+      "status": "error",
+      "seq": 4,
+      "name": "exec",
+      "start_ms": 2500,
+      "end_ms": 2900,
+      "tool_call_id": "call-0003",
+      "args_fingerprint": {
+        "hash": "1106f69fdf18ffbc2ab089f6091ab681c4705790c9f79b36c049fea441a47f94",
+        "representation": "full"
+      },
+      "result_fingerprint": {
+        "hash": "e3b8d3e589bd4b907e1f6ae9508103f6af30e296c54999633894c34962af6a86",
+        "representation": "full"
+      },
+      "result_bytes": 250,
+      "error_type": "CommandFailed",
+      "error_code": "E_EXIT_1"
+    },
+    {
+      "id": "mc-02",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 5,
+      "name": "chat",
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_excludes_cache_read",
+      "start_ms": 3200,
+      "end_ms": 4000,
+      "tokens_in": 2000,
+      "tokens_out": 60,
+      "finish_reason": "stop"
+    }
+  ]
+}

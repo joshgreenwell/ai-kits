@@ -1,0 +1,33 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: malformed JSONL line -> incomplete run, exit 2, other lines still load",
+    "completeness": "incomplete",
+    "excerpt_or_raw": "raw",
+    "notes": "Line 2 is not JSON; it is recorded as a truncation note naming file and line and the run is marked incomplete. Lines 1 and 3 still load."
+  },
+  "inputs": [
+    "trace.jsonl"
+  ],
+  "args": [
+    "--config",
+    "{dir}/agentlint.toml"
+  ],
+  "checks": {
+    "runs": [
+      "conv-e2e-pages"
+    ],
+    "events_total": 4,
+    "truncation_notes_contain": [
+      "trace.jsonl",
+      "line 2"
+    ],
+    "output_contains": [
+      "\"completeness\": \"incomplete\""
+    ]
+  },
+  "exit_code": 2,
+  "findings": [],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "incomplete"
+}

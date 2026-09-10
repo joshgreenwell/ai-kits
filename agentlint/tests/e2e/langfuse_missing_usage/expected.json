@@ -1,0 +1,34 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: missing usage -> tokens null, coverage absent, exit 2",
+    "completeness": "incomplete",
+    "excerpt_or_raw": "raw",
+    "notes": "Absent usage never becomes zero: tokens_in / tokens_out are null, the loader records usage_absent, and CONTEXT_GROWTH abstains."
+  },
+  "checks": {
+    "runs": [
+      "trace-e2e-0001"
+    ],
+    "event_fields": {
+      "obs-e2e-gen1": {
+        "tokens_in": null,
+        "tokens_out": null,
+        "tokens_total": null,
+        "token_basis": null
+      }
+    },
+    "coverage_fields": {
+      "tokens_in": "absent"
+    },
+    "coverage_note_codes": [
+      "usage_absent"
+    ]
+  },
+  "exit_code": 2,
+  "findings": [],
+  "incomplete_for_rules": [
+    "CONTEXT_GROWTH"
+  ],
+  "coverage_completeness": "incomplete"
+}

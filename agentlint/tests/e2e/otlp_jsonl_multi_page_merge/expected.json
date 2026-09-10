@@ -1,0 +1,31 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: multi-page merge by run ID with one rotation overlap",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw",
+    "notes": "One conversation split across two collector files; the chat span 000000000000e702 appears in both (rotation overlap) and is deduplicated by source identity."
+  },
+  "inputs": [
+    "page_1.jsonl",
+    "page_2.jsonl"
+  ],
+  "args": [
+    "--config",
+    "{dir}/agentlint.toml"
+  ],
+  "checks": {
+    "runs": [
+      "conv-e2e-pages"
+    ],
+    "events_total": 4,
+    "events_dropped_dedup": 1,
+    "coverage_note_codes": [
+      "dedup_merged"
+    ]
+  },
+  "exit_code": 0,
+  "findings": [],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "complete"
+}

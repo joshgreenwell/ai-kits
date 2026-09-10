@@ -1,0 +1,22 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: OVERSIZED_TOOL_RESULT positive -> one proven finding",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw"
+  },
+  "checks": {
+    "finding_tiers": {
+      "OVERSIZED_TOOL_RESULT": "proven"
+    },
+    "finding_evidence_counts": {
+      "OVERSIZED_TOOL_RESULT": 2
+    }
+  },
+  "exit_code": 0,
+  "findings": [
+    "OVERSIZED_TOOL_RESULT"
+  ],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "complete"
+}

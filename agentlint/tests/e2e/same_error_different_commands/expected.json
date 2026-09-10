@@ -1,0 +1,15 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: same error + different commands -> no retry finding",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw"
+  },
+  "checks": {
+    "events_total": 5
+  },
+  "exit_code": 0,
+  "findings": [],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "complete"
+}

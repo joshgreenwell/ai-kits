@@ -1,0 +1,25 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: malformed record -> incomplete run, exit 2",
+    "completeness": "incomplete",
+    "excerpt_or_raw": "raw",
+    "notes": "Every rule still runs on the three valid records; the run itself is incomplete because one record was dropped."
+  },
+  "checks": {
+    "events_total": 3,
+    "coverage_reasons_contain": [
+      "bundle.json#/records/1/tokens_in"
+    ],
+    "coverage_note_codes": [
+      "schema_violation"
+    ],
+    "output_contains": [
+      "\"completeness\": \"incomplete\""
+    ]
+  },
+  "exit_code": 2,
+  "findings": [],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "incomplete"
+}

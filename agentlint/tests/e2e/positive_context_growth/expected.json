@@ -1,0 +1,22 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "JG-135 TL-E1: CONTEXT_GROWTH positive -> one projected finding listing the candidate",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw"
+  },
+  "checks": {
+    "finding_tiers": {
+      "CONTEXT_GROWTH": "projected"
+    },
+    "output_contains": [
+      "candidates"
+    ]
+  },
+  "exit_code": 0,
+  "findings": [
+    "CONTEXT_GROWTH"
+  ],
+  "incomplete_for_rules": [],
+  "coverage_completeness": "complete"
+}
