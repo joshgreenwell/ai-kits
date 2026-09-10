@@ -1,0 +1,59 @@
+{
+  "_fixture": {
+    "origin": "synthetic",
+    "ref": "agentlint tests: TL-B4 record-bundle loader, tool results known only by preview size",
+    "completeness": "complete",
+    "excerpt_or_raw": "excerpt",
+    "notes": "Hand-written. A debug report that kept only a preview of each tool result: preview_bytes is present, result_bytes is absent. No record carries source_locator, so every locator defaults to '<file>#/records/<index>'."
+  },
+  "schema_version": "1",
+  "run_id": "run-bundle-0003",
+  "conversation_id": "conv-bundle-0003",
+  "started_at": 1700000200000,
+  "ended_at": 1700000210000,
+  "final_status": "completed",
+  "records": [
+    {
+      "id": "mc-30",
+      "kind": "model_call",
+      "status": "ok",
+      "seq": 1,
+      "start_ms": 1700000200000,
+      "end_ms": 1700000201000,
+      "model": "model-a",
+      "provider": "provider-x",
+      "token_basis": "input_includes_cache_read",
+      "tokens_in": 9000,
+      "tokens_out": 40,
+      "finish_reason": "tool_use"
+    },
+    {
+      "id": "tc-30",
+      "kind": "tool_call",
+      "status": "ok",
+      "parent_id": "mc-30",
+      "seq": 2,
+      "start_ms": 1700000201200,
+      "end_ms": 1700000203000,
+      "name": "read_file",
+      "tool_call_id": "call-0030",
+      "result_fingerprint": {
+        "hash": "2408e645b5921e0403ef99e03a215ea43c357fbf7d1b84861643bd93f663305c",
+        "representation": "truncated"
+      },
+      "preview_bytes": 4096
+    },
+    {
+      "id": "tc-31",
+      "kind": "tool_call",
+      "status": "ok",
+      "parent_id": "mc-30",
+      "seq": 3,
+      "start_ms": 1700000203500,
+      "end_ms": 1700000204000,
+      "name": "read_file",
+      "tool_call_id": "call-0031",
+      "preview_bytes": 4096
+    }
+  ]
+}
