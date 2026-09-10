@@ -1,0 +1,15 @@
+// origin: synthetic
+// ref: JG-147
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  /* block comment before a key */
+  "permissions": {
+    "allow": [
+      "Bash(npm test)", // trailing comment
+      "Read",
+    ],
+    "deny": ["Bash(curl *)",],
+  },
+  "defaultMode": "acceptEdits",
+}

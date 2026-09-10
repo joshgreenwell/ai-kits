@@ -1,0 +1,14 @@
+// origin: synthetic
+// ref: JG-147
+// completeness: incomplete (duplicate key at depth 4 on purpose)
+// excerpt_or_raw: raw
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "matcher": "*"
+      }
+    ]
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "__proto__": { "polluted": true },
+  "constructor": { "prototype": { "polluted": true } },
+  "prototype": "plain data"
+}
