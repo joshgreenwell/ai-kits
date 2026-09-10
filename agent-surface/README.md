@@ -42,6 +42,14 @@ The step fails (exit 1) on a proven expansion in a failing category, passes (exi
 no change or narrowing, and exits 2 on changes the tool cannot decide (add `--strict` to
 fail on those too). Exit 3 means the scan is incomplete and must be looked at.
 
+## Integrating agent-surface
+
+`docs/integration.md` is the task-oriented guide for adding the tool to an existing
+repository: running it from a **local checkout** (the supported path until the npm
+release) or from a packed tarball, reading a first run, choosing a `--fail-on` policy,
+wiring the GitHub Actions job, using it in a pre-commit hook, keeping a snapshot baseline,
+and a troubleshooting table. Every command there was run and its output pasted.
+
 ## Output
 
 ```
