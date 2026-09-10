@@ -18,6 +18,18 @@ They live in one repository for convenience but share **no code, runtime, or dat
 
 Each kit has its own README, tests, and release process inside its directory.
 
+## Adding a kit to your project
+
+Both kits are pre-release: install them from a checkout of this repository, not
+from PyPI or npm.
+
+* **Kit 1** — [`agentlint/docs/integration.md`](agentlint/docs/integration.md):
+  choosing an input, installing from a local checkout, emitting a record bundle
+  from your own debug report, adding an app-specific rule, and running it in CI.
+* **Kit 2** — [`agent-surface/docs/integration.md`](agent-surface/docs/integration.md):
+  running from a local checkout, reading the verdict, choosing a failure policy,
+  and wiring the check into pull-request CI.
+
 ## License
 
 BSD 2-Clause. See [LICENSE](LICENSE).
