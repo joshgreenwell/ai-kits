@@ -1,0 +1,11 @@
+// origin: synthetic
+// ref: JG-153 negative case
+// completeness: complete (identical allow moved from settings.json to tracked settings.local.json)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ]
+  }
+}

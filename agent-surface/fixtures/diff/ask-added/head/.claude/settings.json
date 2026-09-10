@@ -1,0 +1,17 @@
+// origin: synthetic
+// ref: JG-153 D-ask-added
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ],
+    "deny": [
+      "Bash(curl *)"
+    ],
+    "ask": [
+      "Bash(git push)"
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+// origin: synthetic
+// ref: JG-154 not interpreted: path anchoring
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)",
+      "Read(/etc/example.conf)",
+      "Edit(//src/app.ts)",
+      "Read(~/notes.md)"
+    ]
+  }
+}

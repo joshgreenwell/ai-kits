@@ -183,11 +183,20 @@ describe("snapshot: CLI output (JG-152)", () => {
     assert.deepEqual(parseSnapshot(again.stdout).entries, parseSnapshot(first.stdout).entries);
     for (const command of ["diff", "check"]) {
       const run = runCli([command, "--base", "HEAD", "--head", "saved.json", "--json"], repo.dir);
-      assert.equal(run.status, EXIT_INCOMPLETE, `${command}: diff itself is still pending (CS-C)`);
-      const output = JSON.parse(run.stdout) as { head: Snapshot; incomplete: Array<{ path: string }> };
+      assert.equal(run.status, EXIT_OK, `${command}: a snapshot of HEAD diffed against HEAD is no change (${run.stderr})`);
+      const output = JSON.parse(run.stdout) as {
+        head: { origin: { kind: string }; sources: unknown[] };
+        added: unknown[];
+        removed: unknown[];
+        changed: unknown[];
+        unresolved: unknown[];
+        incomplete: unknown[];
+        summary: { verdict: string };
+      };
       assert.equal(output.head.origin.kind, "snapshot");
-      assert.equal(output.head.entries.length, parseSnapshot(first.stdout).entries.length);
-      assert.deepEqual(output.incomplete.map((item) => item.path), ["<agent-surface>"]);
+      assert.equal(output.head.sources.length, parseSnapshot(first.stdout).sources.length);
+      assert.deepEqual([output.added, output.removed, output.changed, output.unresolved, output.incomplete], [[], [], [], [], []]);
+      assert.equal(output.summary.verdict, "no-change");
     }
   });
 });

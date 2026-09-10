@@ -1,0 +1,11 @@
+// origin: synthetic
+// ref: JG-155 negative case / JG-154 I1
+// completeness: complete (deny and allow for the same string added together)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)"
+    ]
+  }
+}

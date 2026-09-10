@@ -1,0 +1,11 @@
+// origin: synthetic
+// ref: JG-154 I1
+// completeness: complete (allow added for a string base already denies)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "deny": [
+      "Bash(rm *)"
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+// origin: synthetic
+// ref: JG-153 D-mcp-added / JG-154 I7 stdio
+// completeness: complete
+// excerpt_or_raw: raw
+{
+  "mcpServers": {
+    "docs": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "example-docs-server"
+      ]
+    }
+  }
+}
