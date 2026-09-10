@@ -1,0 +1,10 @@
+// origin: synthetic
+// ref: JG-150
+// completeness: complete (a non-string allow element on purpose)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": ["Bash(npm test)", 42, "Read"],
+    "deny": ["Bash(curl *)"]
+  }
+}

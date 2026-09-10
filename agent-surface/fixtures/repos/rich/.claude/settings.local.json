@@ -1,0 +1,9 @@
+// origin: synthetic
+// ref: JG-150
+// completeness: complete (tracked local file on purpose; shares one key with settings.json)
+// excerpt_or_raw: raw
+{
+  "permissions": {
+    "allow": ["Bash(npm test)", "Bash(ls *)"]
+  }
+}

@@ -1,0 +1,5 @@
+// origin: synthetic
+// ref: JG-151
+// completeness: complete (pair member A; same semantics as reformat-b, compact formatting and ':*' wildcards)
+// excerpt_or_raw: raw
+{"permissions":{"allow":["Bash(npm run:*)","Read"],"deny":["Bash(curl:*)"],"defaultMode":"acceptEdits"},"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo pre"}]}]}}

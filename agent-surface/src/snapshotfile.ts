@@ -1,8 +1,12 @@
 /**
- * Loading a saved `snapshot.json` as one side of a comparison (JG-148).
+ * Loading a saved `snapshot.json` as one side of a comparison (JG-148, JG-152).
  *
- * V0 stub: reads the file, parses it, and validates the top-level shape.
- * Entries are carried through verbatim; nothing is re-interpreted.
+ * Reads the file, parses it, and validates the top-level shape. A file whose
+ * `schema_version` is a number other than `SCHEMA_VERSION` is refused with
+ * a dedicated mismatch message (exit 3 at the CLI); every other shape
+ * problem is reported as "not a snapshot file". Entries are carried through
+ * verbatim; nothing is re-interpreted and nothing inside the file is
+ * followed or executed.
  */
 
 import { parseJsonc } from "./jsonc.js";
@@ -15,6 +19,22 @@ export interface SnapshotFs {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The mismatch message for a snapshot written by another schema version, or
+ * `null` when `value` is not an object or carries no numeric `schema_version`
+ * (those cases are shape problems, not version mismatches).
+ */
+export function schemaVersionMismatch(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const version = value["schema_version"];
+  if (typeof version !== "number" || version === SCHEMA_VERSION) {
+    return null;
+  }
+  return `snapshot schema_version mismatch: file has schema_version ${version}, this version of agent-surface reads schema_version ${SCHEMA_VERSION}; re-run 'agent-surface snapshot --json' with this version`;
 }
 
 /** Return the list of shape problems; empty when `value` is a usable Snapshot. */
@@ -40,8 +60,13 @@ export function validateSnapshotShape(value: unknown): string[] {
     problems.push("sources must be an array of {path, ...}");
   }
   const entries = value["entries"];
-  if (!Array.isArray(entries) || !entries.every((item) => isRecord(item) && typeof item["key"] === "string")) {
-    problems.push("entries must be an array of {key, ...}");
+  if (
+    !Array.isArray(entries) ||
+    !entries.every(
+      (item) => isRecord(item) && typeof item["kind"] === "string" && typeof item["key"] === "string" && typeof item["file"] === "string",
+    )
+  ) {
+    problems.push("entries must be an array of {kind, key, file, ...}");
   }
   const incomplete = value["incomplete"];
   if (
@@ -78,6 +103,10 @@ export function loadSnapshotFile(abs: string, spec: string, fs: SnapshotFs): Sna
         lines: first?.lines ?? null,
       },
     };
+  }
+  const mismatch = schemaVersionMismatch(parsed.value);
+  if (mismatch !== null) {
+    return { ok: false, incomplete: { path: spec, reason: mismatch, lines: null } };
   }
   const problems = validateSnapshotShape(parsed.value);
   if (problems.length > 0) {

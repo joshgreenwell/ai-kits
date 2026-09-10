@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-surface/snapshot.schema.json",
+  "title": "agent-surface Snapshot",
+  "description": "Output of `agent-surface snapshot [path] --json` (plan 3.4 / 3.7, JG-152). Byte-deterministic: object keys are sorted, entries are sorted by key, file, json_pointer. Absent information is always null, never 0, an empty string or an empty object.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "semantics_doc_date",
+    "min_claude_version",
+    "origin",
+    "assumptions",
+    "sources",
+    "entries",
+    "incomplete"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Schema version of this document. A reader that supports another version must refuse the file (exit 3).",
+      "const": 1
+    },
+    "semantics_doc_date": {
+      "description": "Date (YYYY-MM-DD) of the Claude Code documentation the interpretations derive from.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "min_claude_version": {
+      "description": "Lowest Claude Code version the semantics are known to hold for; null when not asserted (V0).",
+      "type": ["string", "null"]
+    },
+    "origin": { "$ref": "#/$defs/origin" },
+    "assumptions": {
+      "description": "Assumptions header (plan 3.7): a fixed ordered list of strings, followed by discovery and extraction notes (tracked local file, non-empty enabledPlugins).",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "sources": {
+      "description": "One record per supported file, sorted by path.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/source" }
+    },
+    "entries": {
+      "description": "Control-surface entries sorted by key, then file, then json_pointer.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    },
+    "incomplete": {
+      "description": "Reasons the scan cannot be rendered as clean. Non-empty means exit 3 wherever this snapshot is used.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/incomplete" }
+    }
+  },
+  "$defs": {
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "spec", "sha"],
+      "properties": {
+        "kind": { "enum": ["git", "worktree", "snapshot"] },
+        "spec": { "description": "The argument as given on the command line.", "type": "string" },
+        "sha": { "description": "Resolved commit SHA for git origins (carried through for snapshot origins); null otherwise.", "type": ["string", "null"] }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha", "blob", "parsed", "status", "tracked", "note"],
+      "properties": {
+        "path": { "description": "Repository-relative, slash-separated path.", "type": "string" },
+        "sha": { "description": "Commit SHA the file was read at, or the literal \"worktree\" / \"snapshot\".", "type": "string" },
+        "blob": { "description": "Git blob object id when read from a ref; null otherwise.", "type": ["string", "null"] },
+        "parsed": { "type": "boolean" },
+        "status": { "enum": ["read", "absent", "ignored", "incomplete"] },
+        "tracked": { "description": "Whether git tracks the file; null when not determinable.", "type": ["boolean", "null"] },
+        "note": { "description": "Human-readable flag, e.g. the tracked settings.local.json notice.", "type": ["string", "null"] }
+      }
+    },
+    "incomplete": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "reason", "lines"],
+      "properties": {
+        "path": { "type": "string" },
+        "reason": { "type": "string" },
+        "lines": {
+          "description": "1-based line numbers involved, or null when the reason is not tied to a line.",
+          "type": ["array", "null"],
+          "items": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "value", "breadth", "direction", "tier", "file", "line", "json_pointer", "source_sha"],
+      "properties": {
+        "kind": {
+          "enum": ["perm", "mode", "hook", "mcp", "dir", "sandbox", "env_key", "helper", "plugin_flag", "unknown", "credential"]
+        },
+        "key": {
+          "description": "Stable identity: perm:<allow|ask|deny>:<canonical rule>, mode:<key>, hook:<event>:<matcher>:<sha256>, mcp:<server>, dir:<path>, sandbox:<key>, env_key:<NAME>, helper:<key>, plugin_flag:<key>, unknown:<json_pointer>, credential:<json_pointer>.",
+          "type": "string",
+          "pattern": "^(perm|mode|hook|mcp|dir|sandbox|env_key|helper|plugin_flag|unknown|credential):"
+        },
+        "value": {
+          "description": "Normalized value. Shape depends on kind (see src/entries.ts). Never carries an env value or a credential-like literal; those are replaced by \"<redacted>\"."
+        },
+        "breadth": {
+          "description": "Breadth of a perm rule; null for every other kind. Set by the interpretations (CS-C); \"unknown\" until then.",
+          "enum": ["exact", "prefix", "whole_tool", "glob", "unknown", null]
+        },
+        "direction": { "enum": ["widens", "narrows", "neutral", "unknown"] },
+        "tier": { "enum": ["proven", "projected", "unresolved"] },
+        "file": { "description": "Repository-relative path the entry came from.", "type": "string" },
+        "line": { "description": "1-based line of the value in the source file, or null if unknown.", "type": ["integer", "null"], "minimum": 1 },
+        "json_pointer": { "description": "RFC 6901 pointer of the value, or null if unknown.", "type": ["string", "null"] },
+        "source_sha": { "description": "Commit SHA the file was read at, or null for worktree reads.", "type": ["string", "null"] }
+      }
+    }
+  }
+}

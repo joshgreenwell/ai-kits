@@ -1,0 +1,23 @@
+// origin: synthetic
+// ref: JG-151
+// completeness: complete (pair member B; same semantics as reformat-a, expanded formatting, comments, trailing commas, key order changed, ' *' wildcards, padded rule strings)
+// excerpt_or_raw: raw
+{
+  /* hooks first: key order is not semantic */
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [ { "command": "echo pre", "type": "command", }, ],
+        "matcher": "Bash",
+      },
+    ],
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "deny": [ " Bash(curl *) ", ], // trailing comment
+    "allow": [
+      "Bash( npm run * )",
+      "  Read  ",
+    ],
+  },
+}

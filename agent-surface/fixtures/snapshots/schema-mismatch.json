@@ -1,0 +1,14 @@
+// origin: synthetic
+// ref: JG-152
+// completeness: complete (schema_version deliberately wrong; every other field is a valid shape)
+// excerpt_or_raw: raw
+{
+  "schema_version": 99,
+  "semantics_doc_date": "2026-09-07",
+  "min_claude_version": null,
+  "origin": { "kind": "git", "spec": "main", "sha": null },
+  "assumptions": [],
+  "sources": [],
+  "entries": [],
+  "incomplete": []
+}
