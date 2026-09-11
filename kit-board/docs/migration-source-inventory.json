@@ -1,0 +1,730 @@
+{
+  "source_commit": "74abf3ed8db78edb3b6d12b4cdba03ef2a25d6b1",
+  "files": {
+    ".env.example": {
+      "source_sha256": "b8e14a5833b3434f7a735513c0f834f543aae427ba38c7feff0f674d8e086929",
+      "disposition": "adjusted",
+      "reason": "Portable localhost origin, explicit credential shapes and optional cron/legacy variables."
+    },
+    ".gitignore": {
+      "source_sha256": "0ef14cee4684650c18024df76e396ed5ad0c8be33eebe44ad4dbe8934bc75c73",
+      "disposition": "identical",
+      "reason": null
+    },
+    ".vercelignore": {
+      "source_sha256": "74612ed077943f495e4efcc6badf9fe33354b50c359bac1110a2875477ae17cc",
+      "disposition": "identical",
+      "reason": null
+    },
+    "AGENTS.md": {
+      "source_sha256": "63f2c50380ed6303237cce215ce27af1d620d094c215e28d1b1538a3c070e3bb",
+      "disposition": "identical",
+      "reason": null
+    },
+    "CLAUDE.md": {
+      "source_sha256": "336cc4fbf19beaada7ccf9986414fa91851a8d7a07dfb3ccbe800a69eed0ab49",
+      "disposition": "omitted: provider instruction artifact",
+      "reason": null
+    },
+    "README.md": {
+      "source_sha256": "c078afbb5862a6ee31a1dca90e9589b66e37d163793b638dbf4b112ea5373216",
+      "disposition": "adjusted",
+      "reason": "New checkout root and recovery/provenance links."
+    },
+    "app/(private)/[section]/page.tsx": {
+      "source_sha256": "d86c4cbafa5789aeb03109acd3d9c955f641ff9666a172d79c92aebbfdb8c525",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/(private)/error.tsx": {
+      "source_sha256": "7fe76fc07fc84ab407ffee44bba67515139549f9dd3592011ac9d72ada452a80",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/(private)/layout.tsx": {
+      "source_sha256": "e06a229a120989fd8b087b293e4abbba69d4c693811045af0f7364b458f9f4aa",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/(private)/page.tsx": {
+      "source_sha256": "f7f33676caece926b4fe071e8a5248f6c353ce260ba91033d422509e33796d9e",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/(private)/schedules/page.tsx": {
+      "source_sha256": "657ad461e3b3e8a1883ee3e68a55993e4d77ada9e87e0dd2b70d669b033155f9",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/(private)/usage/connections/page.tsx": {
+      "source_sha256": "9fa8938b2988bf85e8f1921644bb3792f7488381ba1f915a52b908e8d429eff8",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/(private)/usage/environmental-factors.json": {
+      "source_sha256": "78978817363779a18e8803a0fc48147604aa082dfc3e14b7ea2860a7c1d3213d",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/(private)/usage/layout.tsx": {
+      "source_sha256": "5a33b82743476fde23865802b9529e9dd4ad7264d80459b508bc70201610921f",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/(private)/usage/live/page.tsx": {
+      "source_sha256": "6872dcb62c34bdbb63853784e00c34559f48cb7beff5525d75905441f33caf7a",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/(private)/usage/page.tsx": {
+      "source_sha256": "cf8bcd1f8b16f24bb42046f5fc54c0aaf79fb8b8606b9b388e1340c704a4e5cf",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/(private)/usage/reports/page.tsx": {
+      "source_sha256": "504e303b20d64e8821190e5385fe227fb5aec1f299c8427031ba52c5d2cfff65",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/(private)/usage/resets/page.tsx": {
+      "source_sha256": "ebedf6f89aa76310f66dc5788ad94db97fc6088f54a1dd73ce6d78db3e61efec",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/artifacts/[id]/files/[key]/route.ts": {
+      "source_sha256": "2fd277ba743fed8e482018f02db21d22b59d1560879b330ac7570b0d27d6af80",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/artifacts/[id]/route.ts": {
+      "source_sha256": "73a652142ea751d137b8854e487ff53af0ff7b0da8543ebcc4e01df018d11957",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/auth/login/route.ts": {
+      "source_sha256": "c24468ec3a02e12747403fb9adea3045a28593be3d3cc41761c0545c2b505845",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/auth/logout/route.ts": {
+      "source_sha256": "b251b8a192fd5c3a937cc836489f84aa578bcb0ac3a2e7c7f788446f966a808a",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/collector-download/route.ts": {
+      "source_sha256": "41b2ebfd3bad6277e4e02d3e54a3f11153dc1e7c1a25b2e5a77efa77d4ce6db8",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/internal/sync-legacy-usage/route.ts": {
+      "source_sha256": "67da52aea628f2610a9604d522ca9a51b6da8731c363024ec3949c6e341fb535",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/internal/sync-reset-feeds/route.ts": {
+      "source_sha256": "3897742f40bc4b31d310213dc1ad1ada658b3719c0f2ce55aaf1d7fdb676b9df",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/reports/route.ts": {
+      "source_sha256": "faec8698a7b4a07d03061158e2bb1ae015cf93807d4eb6b83fd8c4cef1b4cc56",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/reset-feeds/route.ts": {
+      "source_sha256": "93e1522207889223ced8473fdb5b29f8ce3e5c6ef47ae0780122021a8d976aab",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/usage-calibrations/route.ts": {
+      "source_sha256": "d2e7c4d95e41c11606f5dc8655bf67ff7dc5d883c75b41de44974e762ee1eeff",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/usage-connections/route.ts": {
+      "source_sha256": "6de2bc5683cab32cca642bff5577250a7529ea170a8b1c6ba3277a09da88b095",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/usage-live/route.ts": {
+      "source_sha256": "103f371d0cc180d5a3f89684d080df96b2d280475bac30aa4bc0d081bf703ac4",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/v1/agent-events/route.ts": {
+      "source_sha256": "272c34532953444e085c7e1ecf4648df21c2c5bfabf3111f156ca80ab0b3ac55",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/v1/quota-state/route.ts": {
+      "source_sha256": "296309b02dfe089365ebbad91a799b0de586e829870dc5274b1a211c469226b7",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/v1/reports/[kind]/[id]/assets/route.ts": {
+      "source_sha256": "527c50cddb0404d11346c564d479c125099d5f08035872d78a65a5a8db823f62",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/v1/reports/[kind]/route.ts": {
+      "source_sha256": "11bb539d59dcfa656eee48599a0f72800f3a73d11b16da383179e659285b5cad",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/api/v1/telemetry/route.ts": {
+      "source_sha256": "b4475e026e097fbddfc067e218f38054e74419df3fd25862045da45228038d68",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/layout.tsx": {
+      "source_sha256": "c3a05a74872ee4fad6d19a1b0a29e247fa93f544795753d69582a43bad3b50c1",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/login/page.tsx": {
+      "source_sha256": "9dca1011bfe1c3ba224c9399a9098e9756320b2a37f4e6a75014693fefea89c3",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/observatory.css": {
+      "source_sha256": "708cdeed98752d5d1a455f77b37bb6773186c2f8ecbbee2f92830dc855edc1a6",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/portal.css": {
+      "source_sha256": "0a858bca2256d7e151b721fc172f0f02ceda72db96d5d5f315c7c2d8a2f227a8",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/telemetry.css": {
+      "source_sha256": "89b3373f4820351d1767188a2c215a0b7d07d098c5c8c298d68a09630863269c",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/theme.css": {
+      "source_sha256": "c6820b26e79ff1cfca4ef9b0444d938580b4ceb40c4bc65f8e963bc1dc68e837",
+      "disposition": "identical",
+      "reason": null
+    },
+    "app/usage-header.css": {
+      "source_sha256": "1ec053a7257e10c4f40d3770b54c68bbe7587ce560fa9766950b71c252dc22bb",
+      "disposition": "identical",
+      "reason": null
+    },
+    "browser/claude-quota/background.js": {
+      "source_sha256": "da4675600ca51c0d988431f270b7ad3200bbb4beaf5949d798890955a394a444",
+      "disposition": "identical",
+      "reason": null
+    },
+    "browser/claude-quota/manifest.json": {
+      "source_sha256": "40385fc57341d2e0ac3aaf864cec44e77fc7cc5dba4956cab4baa59f26c109db",
+      "disposition": "identical",
+      "reason": null
+    },
+    "browser/claude-quota/normalize.js": {
+      "source_sha256": "cc8dddcd3aba0cc6bae0fe5ea20e63955f3792fa8bf050fa1dfe96b89bebf3a3",
+      "disposition": "identical",
+      "reason": null
+    },
+    "browser/claude-quota/options.css": {
+      "source_sha256": "a5871dc9bb814614ba88f22bffa81582fb9b437bf1ae67908b1ad8858de61651",
+      "disposition": "identical",
+      "reason": null
+    },
+    "browser/claude-quota/options.html": {
+      "source_sha256": "c65a8d4b242daaf840d027605e7b4c675315c1dd8449a09a4256696210dfd519",
+      "disposition": "identical",
+      "reason": null
+    },
+    "browser/claude-quota/options.js": {
+      "source_sha256": "f7217657da93fcac1b6612137215e7967584043471d7c2f853aedea1f87d868e",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components.json": {
+      "source_sha256": "519aaf02224a9d678c5d87204a19b1de227eb1e9e772430d748fa4371f2a7353",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/allowance-card.tsx": {
+      "source_sha256": "b00958799ceda39c60d36f20ce8f744d72ab5f95710e8e1b2eb3ef09898ba774",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/cloud-estimate-card.tsx": {
+      "source_sha256": "a41825b666de60c6a81b3807cdab5e65898e42e5768785c7dc19165eb0d83f2b",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/document-selects.tsx": {
+      "source_sha256": "a22612b35b654ae6ea52842f91ef478a5d5aa8148a3665c7eb9a6a35bf40be63",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/machine-reporters.tsx": {
+      "source_sha256": "e388ef1fbe78c738513796deab0de524623dda365f9882e2d3daab23260bd288",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/navigation.tsx": {
+      "source_sha256": "e714f16c834602cb2426832c39dc7ad6554b2d6d7bd3f3646186c25c7137e9e8",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/page-header.tsx": {
+      "source_sha256": "72fbb7958335ed177cb019bd48c06a68d654f551b80c31a8238b48119b6264a3",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/report-frame.tsx": {
+      "source_sha256": "ad8f217609bab8820f25ae7b96588dfb204ad34120f887c5183415082b0c10d7",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/report-view.tsx": {
+      "source_sha256": "a7a697d803a89ad8ad1f2a89f51106b2f31ab3999bd72cfd25e7680e11ea7b65",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/reset-calendar.tsx": {
+      "source_sha256": "d8e66c6d521a8a315871fe0112c01eced1ef18a38950bca95715f63e93a0330f",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/telemetry-shared.tsx": {
+      "source_sha256": "3ebdceced593f63e9c323e2eb8074f2c294db6ba60109a12122c7e7d5688b34d",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/ui/badge.tsx": {
+      "source_sha256": "13a9380dfff853ee730c14a52df49f22aecd31f40f2998d7c1e7ec458b6e1650",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/ui/button.tsx": {
+      "source_sha256": "79dd6f75f8136394442202d6b8b922fb269eaad0a5dba579397c9d5b41f893bb",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/ui/card.tsx": {
+      "source_sha256": "ef8305b12c3112dab42a4708b41b1ebcc042fa5ab4c20f039da8d45b09ed5059",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/ui/hover-card.tsx": {
+      "source_sha256": "73f59aa759656501ed615604ac3f2c04ba564acaea4529288fe3a487ad934953",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/ui/input.tsx": {
+      "source_sha256": "0c9457181f6ddc80969bcf854e92c362903a55b6e889fbef3fd85343ecc4af5b",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/ui/select.tsx": {
+      "source_sha256": "962830436bd0b7ee50e556f0747e277d6a86869ed27d167516346b15f26309d8",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/ui/tabs.tsx": {
+      "source_sha256": "e1df6e2f95ece373ca909c1d54b8ba8cf4c47dd425c1784bbb9a01c38dd0936b",
+      "disposition": "identical",
+      "reason": null
+    },
+    "components/usage-navigation.tsx": {
+      "source_sha256": "3b03ba5151c8e5ce23a7b6891ed13b8db6c5475f51eb7c4a4c4e2969337b458f",
+      "disposition": "identical",
+      "reason": null
+    },
+    "docs/agent-handoff.md": {
+      "source_sha256": "d42b9fb0088218469df4cc7b54df4744cd0c53f944886a08e9a917a2061cabd5",
+      "disposition": "adjusted",
+      "reason": "Relocated root, historical-status qualification, deployment-cutover instructions, private identifier removal."
+    },
+    "docs/agent-routing.md": {
+      "source_sha256": "8d39e10bee5ae67746e00527f81a8a8627d8ceca71c1870fcc7825bb57b2b152",
+      "disposition": "identical",
+      "reason": null
+    },
+    "docs/architecture.md": {
+      "source_sha256": "cb0d800b5e59e562066005b3651324aa928b182f041436640c4658ba45d84845",
+      "disposition": "adjusted",
+      "reason": "Relocated application ownership path; historical deployment IDs omitted."
+    },
+    "docs/font-licenses/DM-Mono.txt": {
+      "source_sha256": "f5898de81851415b71431c1a8ea527c88a4e79caeb23936483428d2e911af40c",
+      "disposition": "identical",
+      "reason": null
+    },
+    "docs/font-licenses/Manrope.txt": {
+      "source_sha256": "f612090fb72b6dca3e807e66fa0d2b5def163cef86f1a3209b5c897cba5ee4b7",
+      "disposition": "identical",
+      "reason": null
+    },
+    "docs/schedules.md": {
+      "source_sha256": "f02ee1c3d28fda46df8e1ae4d33b990eae7f25053b70c627ad9e1172ca070e5b",
+      "disposition": "adjusted",
+      "reason": "Private source/receipt/cloud-task/deployment identifiers omitted; historical behavior retained."
+    },
+    "docs/usage-collection.md": {
+      "source_sha256": "2c105b2c3c0757e98bbad8b0f5e31c2a69dd3fa2ad726b77493d2a171fcbf0a5",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/artifact-runtime.ts": {
+      "source_sha256": "64a29b556df8bdd97ba31b324d28559764c363bdbabf2ac7d48f329a43bc5323",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/artifact.ts": {
+      "source_sha256": "39a7b885be159dd3d0b32e4d5c409a0d3b4e108226d4e98f8fbda0eb55674ec4",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/assets-store.ts": {
+      "source_sha256": "d6dd3cf8e68500c76ae57e349615af2f577f3e3cddeae1cb040a1d19442c13ec",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/assets.ts": {
+      "source_sha256": "7303d4feba2760e575a9f7bf074051758fa5ebe0cb9ba623425afe9415ccca73",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/auth.ts": {
+      "source_sha256": "ebcf729a333acc390a5ffd43ad4f048b8913346f2a77b69a82ee0efb0adab9ce",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/catalog.ts": {
+      "source_sha256": "37297315a6d64bf05576f5da90dba7a24837feca047e9e2aa56844701513b2de",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/cloud-estimate-store.ts": {
+      "source_sha256": "de68c635bec515402f00b8fa566d0c10fa048a70016f7002e751e6afcf26aeea",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/cloud-estimate.ts": {
+      "source_sha256": "05fc5aff93eb5a3dda28ade67cc31858714df39ac89ba9e4650fc1d788b70fbb",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/contracts.ts": {
+      "source_sha256": "16c8fe2fec08e0ec63e7215f5a543c66496db2f1d5d8ab55996c2ec71d0baf2c",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/crypto.ts": {
+      "source_sha256": "0471169692f87e13fab3749eb8685f480efa27f2a53975f6b31205c32ddd7252",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/database-queue.ts": {
+      "source_sha256": "0b032a4049906748fae7310561a9eb78884966d2ed3c5113a072ca131144012e",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/db.ts": {
+      "source_sha256": "ba4e2de7edccf0893e668821ab6cab8ac781a9c4dc9184136a6522ea33c6078e",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/fetch-private-json.ts": {
+      "source_sha256": "bb8fe1e8c9fb3ac7c47eed67a647b1bbc2278320ecd4006d9412f6b8ba9bdcca",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/generated/collector-bundles.json": {
+      "source_sha256": "00cec18881952e20051ffb38bdca74d14bfcdd684d244200f99f31e60c4244e5",
+      "disposition": "adjusted",
+      "reason": "Rebuilt from imported collector sources with deterministic ZIP metadata."
+    },
+    "lib/generated/report-ui.json": {
+      "source_sha256": "cbc5f39a0cc1089e5db1888893cb998a68e00d0667a8268986832f2f8cc44d37",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/http.ts": {
+      "source_sha256": "67cb48ee4484291bee4f6f6e8ef150c4d67da8467b9057d957a97054f2f501d2",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/legacy-usage.ts": {
+      "source_sha256": "5cdd5f2cf2d9066762a6b6502a27a9ccf3892884d391ce42bcaaa44fa3612cc3",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/read-cache.ts": {
+      "source_sha256": "5d92987bdd48c31ee4aac8e0c1159c20e980398b59c01992ac9d4757dc82eb77",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/report-fonts.json": {
+      "source_sha256": "ffc692cd7b6c7b90b20889961192475f4b04c6e816719b48f8d8aeb984c477bc",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/report-selection.ts": {
+      "source_sha256": "8c8d3898f0c87d1aab8eb710b88d5ee8ef91e039a9b39eaf955caea971709207",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/reset-calendar.ts": {
+      "source_sha256": "3071c211f387b94b658270599f711a241f1e7a4993b8e0be09a3a7610e43aa60",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/reset-feed-store.ts": {
+      "source_sha256": "20c082afce9d13a37b1765e311ef83ac977036e22c24fa338a452dbfea3f9ef2",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/reset-feeds.ts": {
+      "source_sha256": "fd05f352f5db147bebf9efe716d5d6cd0d1700e43e7614834ec78ec9152d6fd3",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/routing-contract/event.schema.json": {
+      "source_sha256": "5d89ba60cc4182f674148ec057ecfa00f9c987f20d6fb1d9d7efb084c53846a1",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/routing-contract/validate.mjs": {
+      "source_sha256": "62accdc82371deb63d11ff548b4369401c1cfe3c6a3093b1c3c29dd5d3d7e120",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/routing-event-contract.ts": {
+      "source_sha256": "cd4049b716dc67d05b9e8f8b8c0628a7779a370ab86764295292547f796d444b",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/routing-quota.ts": {
+      "source_sha256": "87be79c1fc092568b90cafcc200dd8c345655c91398ec6a4027572b4020c5b54",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/routing-source.ts": {
+      "source_sha256": "4201b3be466435c072b2b2993d6265a9ac042f8400e8f4ec0961d39b252aaa7f",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/routing-store.ts": {
+      "source_sha256": "4d94243aa7c57a1de1d5f245f6fad103f1927ddec4780046035598a0e52a4861",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/telemetry-contract.ts": {
+      "source_sha256": "34a98c7fc84ddfc57ae2b2f75a0809af2266c866055722d07d1b127f4bcc8c3b",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/telemetry-store.ts": {
+      "source_sha256": "3f385674dec8579afb089578f8ca9c60b2df7f24223ad761479845202ccddeb5",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/usage.ts": {
+      "source_sha256": "c5371dc428b6831f9f2f458278a3e48891ea66e5c5f3cf4a42248335dec429c6",
+      "disposition": "identical",
+      "reason": null
+    },
+    "lib/utils.ts": {
+      "source_sha256": "9304a861c8673bee09e0f12de31773abbde503b02e59dfd74763ddec2e37cf05",
+      "disposition": "identical",
+      "reason": null
+    },
+    "next-env.d.ts": {
+      "source_sha256": "1862ac4bbbc5192d4bf562161df66ea547ed3e67173100656ab606ae9797db2b",
+      "disposition": "identical",
+      "reason": null
+    },
+    "next.config.ts": {
+      "source_sha256": "7cda29b3dad7ed7744136d2debfcad2f3ac0421eea51eff0890046f85ae2cb01",
+      "disposition": "identical",
+      "reason": null
+    },
+    "package-lock.json": {
+      "source_sha256": "d85d30c3b3898f1c6781143066e0e7240aaa586044177772c2ff0c3374039186",
+      "disposition": "identical",
+      "reason": null
+    },
+    "package.json": {
+      "source_sha256": "94363330c57b02f05cc48f0fdc0fd456034ed0f2beebecd0bdb93fc141e876fa",
+      "disposition": "identical",
+      "reason": null
+    },
+    "postcss.config.mjs": {
+      "source_sha256": "f50058e0d309cdb3e7c25a1123337338641fb71e988572607d57f47209db1fd1",
+      "disposition": "identical",
+      "reason": null
+    },
+    "proxy.ts": {
+      "source_sha256": "2e1eccb8aa5970f9ad23c85eff2859afc36c66db2b2775e89e9cc1ba54d39367",
+      "disposition": "identical",
+      "reason": null
+    },
+    "public/favicon.svg": {
+      "source_sha256": "e6d2e59b7b5bbb0342e0fb496dfc262decbfe4426bbb7b047aec8d467d1dc6f7",
+      "disposition": "identical",
+      "reason": null
+    },
+    "scripts/build-collector-bundles.py": {
+      "source_sha256": "5fa2fcc4731614002a99c27a02b1b2ac9db5a28565b7fa2d942d67a90c717a69",
+      "disposition": "adjusted",
+      "reason": "Deterministic ZIP metadata so generated bundles match across fresh checkouts."
+    },
+    "scripts/build-report-ui.mjs": {
+      "source_sha256": "590ed87815d291ae5faf95b54769be3322b30a97bac4bf67f5f786949eb5425f",
+      "disposition": "identical",
+      "reason": null
+    },
+    "scripts/publish-assets.mjs": {
+      "source_sha256": "5582f1759806ddbfebe3f27ede25fe2d8e9d3e24accc557fda8b2b20e56a5cfc",
+      "disposition": "identical",
+      "reason": null
+    },
+    "scripts/publish.mjs": {
+      "source_sha256": "6e5d29ceac267e0637b528bf795b21da636ac62b5b1c37be5e379198dbaca9e6",
+      "disposition": "identical",
+      "reason": null
+    },
+    "scripts/render-readings.mjs": {
+      "source_sha256": "324478b2e5b60105d5c73e8fdfcdc8dde64626f5c86c846ce2353225937092ea",
+      "disposition": "identical",
+      "reason": null
+    },
+    "scripts/telemetry/collect.py": {
+      "source_sha256": "991d9eb255e31d5f9b441a22ee48c2b032b6801c1a389b891d72c695c277101a",
+      "disposition": "identical",
+      "reason": null
+    },
+    "scripts/telemetry/detailed_report.py": {
+      "source_sha256": "eabbfa970fdd9c6a0844fcaf1a0f0e5cbf399ae119d44836a21b472de8bffd71",
+      "disposition": "identical",
+      "reason": null
+    },
+    "scripts/telemetry/install_schedule.py": {
+      "source_sha256": "bad7b668bfabd16a7eac219fcae3121a9284a29668cfe92fcc25846b94c2e374",
+      "disposition": "identical",
+      "reason": null
+    },
+    "scripts/telemetry/statusline.py": {
+      "source_sha256": "06949e067d4123d649bb375cf33ea3e634ead4667393ac9829a8ddc20f354a84",
+      "disposition": "identical",
+      "reason": null
+    },
+    "scripts/test-routing-db.mjs": {
+      "source_sha256": "91c29bb1eeb07f2d32648dfbf1e5f8be610e26eb0311991a5931861557842a6f",
+      "disposition": "identical",
+      "reason": null
+    },
+    "supabase/migrations/20260908050538_personal_hub_report_history.sql": {
+      "source_sha256": "cc60a9748ae39d7daaf747be63b1dc5df09966c04e9ec75a74d4ce17d70b5dbf",
+      "disposition": "identical",
+      "reason": null
+    },
+    "supabase/migrations/20260908051221_personal_hub_app_role.sql": {
+      "source_sha256": "641352155330575c34c5543c304b4cb16727a7cc90d6f34d15418d5947422164",
+      "disposition": "identical",
+      "reason": null
+    },
+    "supabase/migrations/20260908052915_report_assets.sql": {
+      "source_sha256": "911a7cbbebb0b059cda63b99761f76b248b9c3228e9c6ec7050a7da89e8c0675",
+      "disposition": "identical",
+      "reason": null
+    },
+    "supabase/migrations/20260909184129_usage_telemetry_and_reset_feeds.sql": {
+      "source_sha256": "1bfc2d5ece0ff894aeedb2686f78b2967f2ecc24b11d756b7ca0afe30768c582",
+      "disposition": "identical",
+      "reason": null
+    },
+    "supabase/migrations/20260909200659_cloud_usage_calibrations.sql": {
+      "source_sha256": "fcedb844934eb9a4f9b8c97495dca8336b6ca0cd7b143f19f1f01e9c626e1b85",
+      "disposition": "identical",
+      "reason": null
+    },
+    "supabase/migrations/20260910193058_agent_routing_events.sql": {
+      "source_sha256": "89658f61b4dbde64b762c7b1125ae6f9a6f61313c69a0b08e1c820d6142a5c24",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/assets.test.ts": {
+      "source_sha256": "52cdc853a2be3156dd78fde3231ee948049f97d5293575d55f596c22b7d84154",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/browser-collector.test.ts": {
+      "source_sha256": "88b686b4b5ec9b7a59382b1983504091729e4793bee62c75733839244ccf846e",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/cloud-estimate.test.ts": {
+      "source_sha256": "fb394639be448e600d0361beb8165f0e6234274edf176755a1c30dab5621c1c4",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/collector_test.py": {
+      "source_sha256": "930dcf87477f53de771216ef3712cadeac5951ff665cf54f2a74cbaccc1b5f84",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/detailed_report_test.py": {
+      "source_sha256": "eae0529f1c0b3b6eb652b41192b9dd5ef843bd4b56647978ad5385eba3712ed4",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/legacy-usage.test.ts": {
+      "source_sha256": "f6eae6bdebf5f6052c86d41ad2592e593b9447133e7f20032e7e9be810d65f2c",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/loading.test.ts": {
+      "source_sha256": "828fb23968b91e5506e7dc46412a3fb375e02b3a10385daf8465e56839221cc2",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/readings-renderer.test.ts": {
+      "source_sha256": "68d4c906ce727a427af2800305c3ba1c4f0e08083883c15b2147148d005686cc",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/report-selection.test.ts": {
+      "source_sha256": "d0b3eebb11ed5e3475b85a788ebaa25a03871f875e704f55c3da651f1ea3db81",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/routing-contract.test.ts": {
+      "source_sha256": "21daac30ac49fc76a49d671b006b24a4304d9321a138d960b364b687c955d63b",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/routing-store.integration.test.ts": {
+      "source_sha256": "eea85b2e60187194c51e43019c29b9f15a03af9870ae643f71dcb7e1cf06799e",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/security.test.ts": {
+      "source_sha256": "e548a12d4f2346cb22e34b9f6911fb06f9cde89ce076f973de4d21d9dca5e6c1",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tests/telemetry.test.ts": {
+      "source_sha256": "f4a5163c71d2b0ddcd3572e13f80fdc844dce52bfff3279529ed44186e5f2a6c",
+      "disposition": "identical",
+      "reason": null
+    },
+    "tsconfig.json": {
+      "source_sha256": "b39cc0787232c8a7f566f850cdd84b04bf877a75db6ac894d6d7b8fe0e77e90c",
+      "disposition": "identical",
+      "reason": null
+    },
+    "vercel.json": {
+      "source_sha256": "b22a1665943505056f762fe06953f6b0017bb84a3438e1e71fe081abddc1dc7b",
+      "disposition": "identical",
+      "reason": null
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "methodology_version": "2026-08-20.1",
+  "planning_context_threshold_tokens_per_call": 50000,
+  "energy_wh_per_call": {
+    "efficient_production_floor": 0.24,
+    "frontier_typical": 0.34,
+    "reasoning_heavy": 4.32,
+    "long_context_upper": 33.0
+  },
+  "direct_water": {
+    "efficient_production_ml_per_call": 0.26,
+    "planning_wue_liters_per_kwh": 0.3,
+    "upper_wue_liters_per_kwh": 1.9
+  },
+  "operational_carbon": {
+    "clean_energy_kg_per_call": 0.00003,
+    "us_grid_kg_per_kwh": 0.394
+  },
+  "comparisons": {
+    "average_shower_liters": 75.70823568,
+    "us_home_kwh_per_day": 28.43835616,
+    "smartphone_charge_kwh": 0.019,
+    "urban_tree_seedling_kg_co2_over_10_years": 60.0,
+    "average_gasoline_vehicle_kg_co2e_per_mile": 0.393
+  },
+  "sources": [
+    {
+      "label": "Google production median prompt",
+      "url": "https://arxiv.org/abs/2508.15734",
+      "supports": "0.24 Wh, 0.03 gCO2e, and 0.26 mL direct water per median Gemini Apps text prompt"
+    },
+    {
+      "label": "Energy Use of AI Inference",
+      "url": "https://arxiv.org/abs/2509.20241",
+      "supports": "0.34 Wh frontier median and 4.32 Wh test-time-scaling scenario"
+    },
+    {
+      "label": "How Hungry is AI?",
+      "url": "https://arxiv.org/abs/2505.09598",
+      "supports": "more than 33 Wh for energy-intensive long prompts"
+    },
+    {
+      "label": "Microsoft datacenter water efficiency",
+      "url": "https://www.microsoft.com/en-us/microsoft-cloud/blog/2024/12/09/sustainable-by-design-next-generation-datacenters-consume-zero-water-for-cooling/",
+      "supports": "FY2024 global average WUE of 0.30 L/kWh"
+    },
+    {
+      "label": "EPA showerheads",
+      "url": "https://www.epa.gov/watersense/showerheads",
+      "supports": "2.5 gallons per minute standard showerhead; comparison assumes eight minutes"
+    },
+    {
+      "label": "EIA residential electricity",
+      "url": "https://www.eia.gov/todayinenergy/detail.php?id=65244",
+      "supports": "865 kWh per month for the average U.S. residential customer in 2024"
+    },
+    {
+      "label": "EPA greenhouse-gas equivalencies",
+      "url": "https://www.epa.gov/energy/greenhouse-gas-equivalencies-calculator-calculations-and-references",
+      "supports": "U.S. grid carbon, smartphone charging, 0.393 kg CO2e per average gasoline-vehicle mile, and 60 kg CO2 sequestered per urban tree seedling grown for 10 years"
+    },
+    {
+      "label": "User-supplied environmental evidence synthesis",
+      "url": "",
+      "supports": "1.9 L/kWh industry WUE upper planning factor and scope caveats"
+    }
+  ],
+  "scope": "Operational inference-equivalent scenarios only; excludes training, embodied hardware, client devices, networking, and indirect supply-chain water.",
+  "assumptions": [
+    "Codex logs do not include datacenter power, hardware, location, grid mix, or water telemetry, so this is a scenario estimate rather than a measurement.",
+    "Observed model-call count is the multiplier because no validated vendor-independent joules-per-token factor exists for these proprietary agentic workloads.",
+    "Reports averaging at least 50,000 raw tokens per call use the 4.32 Wh reasoning-heavy planning scenario; lighter reports use the 0.34 Wh frontier-typical scenario.",
+    "The efficient floor uses Google's measured production prompt footprint; the upper scenario uses 33 Wh per long prompt and 1.9 L/kWh.",
+    "U.S.-grid carbon comparisons use 0.394 kg CO2 per kWh; actual emissions can differ substantially by datacenter region and clean-energy procurement.",
+    "Driving and tree-planting figures are educational equivalencies. A tree seedling must grow for 10 years to match the cited sequestration factor, so the comparison is not proof of an immediate, purchased, or durable carbon offset."
+  ]
+}
