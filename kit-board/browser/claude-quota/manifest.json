@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Personal Observatory · Claude quota",
+  "version": "1.0.0",
+  "description": "Hourly allowance readings from your signed-in Claude tab. No prompts, cookies, or account credentials are uploaded.",
+  "permissions": ["storage", "alarms", "scripting"],
+  "host_permissions": ["https://claude.ai/*", "https://personal-observatory-jg.vercel.app/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "Claude quota collector", "default_popup": "options.html" },
+  "options_page": "options.html"
+}

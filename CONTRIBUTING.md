@@ -2,10 +2,11 @@
 
 ## Layout
 
+* `kit-board/` — Personal Observatory, Node 22 and Python 3.10+. See its [startup and verification guide](kit-board/docs/startup-and-recovery.md).
 * `agentlint/` — Kit 1, Python. Run `cd agentlint && uv run pytest`.
 * `agent-surface/` — Kit 2, TypeScript. Run `cd agent-surface && npm ci && npm test`.
 
-The kits never import from each other. Fixtures, docs, and CI live inside each kit directory. Root-level files are limited to this file, the README, the license, and CI workflow definitions under `.github/`.
+The directories never import from each other. Observatory runtime data and credentials stay outside Git. Fixtures, docs, and CI live inside each kit directory. Root-level files are limited to this file, the README, the license, and CI workflow definitions under `.github/`.
 
 ## Branches and pull requests
 

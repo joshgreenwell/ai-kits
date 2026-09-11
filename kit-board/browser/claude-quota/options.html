@@ -1,0 +1,6 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Claude quota · Personal Observatory</title><link rel="stylesheet" href="options.css"></head><body>
+<p class="eyebrow">Personal Observatory</p><h1>Connect Claude usage</h1><p>This collector reads allowance percentages and reset times once an hour from an open Claude tab. It never reads conversations or exports Claude cookies.</p>
+<section><h2>1. Import your connection</h2><p>Download a browser connection for the correct account from Observatory → AI usage → Connections.</p><input id="connection" type="file" accept="application/json"><p id="connection-label"></p></section>
+<section><h2>2. Verify the signed-in account</h2><button id="inspect">Find my Claude account</button><p id="identity"></p><div id="organizations"></div></section>
+<section><h2>3. Collect</h2><button id="collect">Collect now</button><p id="status" role="status"></p><p id="health"></p></section>
+<p class="muted">Keep Claude open in this browser profile. If you sign into a different account, collection pauses. Personal subscription allowances are separate from Console API billing.</p><script type="module" src="options.js"></script></body></html>
