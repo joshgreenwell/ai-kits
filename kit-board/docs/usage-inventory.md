@@ -125,6 +125,62 @@ the repository and refuses with specific, well-worded reasons.
    the monthly view, an absent prior-month total renders as a real `↑ 0.0%` comparison
    (`usage/page.tsx:359-361`, rendered `:446`).
 
+### Diagnosed: why the Claude allowance card shows one dot
+
+Reported symptom: Claude is reporting, but each new reading **replaces** the previous point on the
+burn-rate chart instead of extending the line.
+
+**It is neither a UI bug nor data corruption.** Both of those were ruled out by reading the path and
+then exercising `quotaPace` directly against synthetic sample sequences:
+
+| Sequence | Samples kept | Burn rate |
+| --- | --- | --- |
+| Hourly readings, same reset, rising | 5 | 10.0 pts/h |
+| Same, but a 3.5 h gap before the newest | **1** | none |
+| One mid-series dip (a decrease) | 3 | 17.5 pts/h |
+| Older rows whose `resets_at` string lacks `.000` | **1** | none |
+| Two readings 45 min apart | 2 | 13.3 pts/h |
+| Two readings 20 min apart | 2 | none — under the 30-minute floor |
+
+The UI is faithful: `app/(private)/usage/live/page.tsx:27` passes **every** stored sample for that
+(account, window) to `quotaPace`, and `components/allowance-card.tsx:14` draws a polyline over every
+point it returns. Given continuous readings it draws a real line. Storage is faithful too — one
+sample per UTC hour of Claude Code activity, deduplicated on content, never overwritten.
+
+**The cause is `quotaPace`'s segment rule meeting a source that only fires when a human runs Claude
+Code.** Walking backwards from the newest sample, the history stops at the first row that is more
+than **3 hours** older than the one after it (`lib/telemetry-contract.ts:52`). The statusline writes
+at most one reading per UTC hour, and only when Claude Code is actually invoked. Any break longer
+than three hours — a meeting, lunch, overnight — restarts the history, leaving exactly one point and
+no rate. That is the symptom, and it is the same gap §5 names: the reading is a side effect of a
+human, so the cadence is the human's.
+
+Two further defects fall out of the same rule, both verified:
+
+1. **The 3-hour rule is applied unchanged to the 7-day window.** A `seven_day` window has
+   `window_minutes = 10080`, but the same 3-hour continuity requirement. With one reading per day the
+   history collapses to a single point; with readings across six days and idle nights, only the final
+   afternoon survives. So the weekly card can essentially only measure a week's burn from one
+   afternoon — and then `projectedUsedPercent` extrapolates that rate across `hoursLeft`, which for a
+   weekly window can be days. The gap tolerance should scale with the window it describes.
+
+2. **`resets_at` is compared as a raw string** (`:51`), not as an instant. Two spellings of the same
+   moment — `…T13:00:00Z` from Python's `isoformat()` versus `…T13:00:00.000Z` from JavaScript's
+   `toISOString()` — break the segment (row 4 above). Today the dashboard path is protected because
+   `resets_at` is a `timestamptz` that normalises on read, but the two collectors genuinely do emit
+   different spellings, and anything comparing uploaded payloads rather than stored rows is exposed.
+
+**What would fix it, in order of value:**
+
+- Collect more often. Nothing else raises the number of points, and this is the §5 gap.
+- Scale the gap tolerance to `window_minutes` instead of a flat 3 hours.
+- Compare `resets_at` as a parsed instant.
+- Say why the line restarted. The card renders "—" for burn with the explanation buried in a
+  collapsed `<details>` (`components/allowance-card.tsx:48`); "history restarted after a 5 h gap"
+  belongs on the face of the card.
+
+Only the first requires new collection. The other three are Half A work.
+
 ### The finding that reframes all of it
 
 **A stricter, more correct freshness model already exists in this repository, over the same table,
