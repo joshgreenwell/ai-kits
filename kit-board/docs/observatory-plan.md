@@ -11,8 +11,10 @@ live outside this repository and remain blocked — see §10.
 Labels: **Decided** (settled across v1–v4, not reopened) · **Proposed** (recommendation) ·
 **Deferred** (parked, with the reason) · **Corrected** (plan v4 said otherwise; the code says this).
 
-Companion: [report contract v0 (observed)](report-contract.md) records what the publication path
-actually enforces today, with citations. This plan refers to it rather than restating it.
+Companions, each recording what the code actually does rather than restating it here:
+[report contract v0](report-contract.md) for the publication path,
+[usage coverage inventory](usage-inventory.md) for Phase 0b, and
+[usage collection architecture](usage-collection-architecture.md) for how usage detail is acquired.
 
 ---
 
