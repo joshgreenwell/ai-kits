@@ -17,39 +17,110 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--foreground);
-  --color-muted: var(--secondary);
+  --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
   --radius-sm: calc(var(--radius) * .6);
   --radius-md: calc(var(--radius) * .8);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.5);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
   --font-sans: Manrope, ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'DM Mono', ui-monospace, monospace;
 }
 
+/* ---------------------------------------------------------------------------
+   Palette: graphite ground, green accent.
+
+   The ground is a near-neutral graphite carrying about a 2% green bias, so the
+   primary reads as native to the surface rather than pasted onto a pure grey.
+   It is a decision, not a default: every step from --background to --input is
+   the same hue, separated only by lightness.
+
+   --primary is the one meaning-bearing colour: validated, within allowance,
+   added, connected. It is never spent on decoration. --destructive, --warning
+   and --info carry severity and provider identity and are tuned to sit beside
+   the green without vibrating.
+
+   SHAPE IS DERIVED. --radius is the single knob; every other radius in the app
+   is calc()'d from it, so nothing can drift out of the scale by hand. 0.5rem is
+   shadcn's compact ("Nova") setting: right for dense tables and ledgers.
+   --------------------------------------------------------------------------- */
+
 :root {
-  --background: #07100b;
-  --foreground: #edf7ef;
-  --card: #0e1913;
-  --popover: #122018;
-  --primary: #a8f3c2;
-  --primary-foreground: #07100b;
-  --secondary: #15261b;
-  --muted-foreground: #91a099;
-  --accent: #1d3627;
-  --destructive: #ff9a6c;
-  --border: #26362d;
-  --input: #3b5244;
-  --ring: #a8f3c2;
-  --radius: 1rem;
-  --radius-card: 1.5rem;
-  --radius-control: .8rem;
+  /* surfaces — one hue, lightness only */
+  --background: #0b0c0c;
+  --card: #111312;
+  --popover: #161918;
+  --secondary: #1a1d1c;
+  --muted: #161918;
+  --accent: #212524;
+
+  /* text */
+  --foreground: #e9ecea;
+  --muted-foreground: #8b918e;
+
+  /* lines */
+  --border: #242827;
+  --input: #2e3331;
+  --ring: #4fa57e;
+
+  /* the meaning stop */
+  --primary: #63bc93;
+  --primary-foreground: #04130c;
+
+  /* severity */
+  --destructive: #d66a5b;
+  --destructive-foreground: #150605;
+  --warning: #cfa24f;
+  --warning-foreground: #181205;
+  --info: #7e90cc;
+  --info-foreground: #0a0d1b;
+
+  /* charts / provider identity */
+  --chart-1: #63bc93;
+  --chart-2: #5b92ae;
+  --chart-3: #7e90cc;
+  --chart-4: #cfa24f;
+  --chart-5: #d66a5b;
+
+  /* sidebar */
+  --sidebar: #0e100f;
+  --sidebar-foreground: #e9ecea;
+  --sidebar-primary: #63bc93;
+  --sidebar-primary-foreground: #04130c;
+  --sidebar-accent: #212524;
+  --sidebar-accent-foreground: #e9ecea;
+  --sidebar-border: #242827;
+  --sidebar-ring: #4fa57e;
+
+  /* ONE KNOB — every corner in the app derives from this */
+  --radius: .5rem;
+  --radius-card: calc(var(--radius) * 1.4);
+  --radius-control: calc(var(--radius) * .8);
 }
 
 /* Component shapes and states are shared by the app and sandboxed documents. */
