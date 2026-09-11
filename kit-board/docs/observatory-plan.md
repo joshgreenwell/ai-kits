@@ -376,6 +376,11 @@ by the closed provider set above; **(2) unattended Claude allowance freshness**,
 exists only when Claude Code runs; **(3) Codex credits and additional rate-limit windows**, which
 `save_codex_quotas` does not collect. Neither parser is a gap.
 
+**Phase 0b has since sized all three and named the gap** — see the
+[usage coverage inventory](usage-inventory.md). In short: Cursor fits neither accepted schema and
+needs a credential this plan rules out; Codex windows are cheap but may surface nothing; the named
+gap is **Claude allowance freshness**, taken in two halves, with the measurement instrument first.
+
 ### Environmental estimates — Corrected, Phase 4
 
 A method already ships and is rendered on `/usage`: per-**call** energy and water scenario factors
@@ -462,23 +467,24 @@ scope cut cannot remove accounting or access-control correctness and still be ca
 | Phase | Deliverable | Hours | Window |
 | --- | --- | --- | --- |
 | **0a** | Repair the two audit prompts' publisher paths (§6A) and verify one publish. **Repo-side portion complete**: post-move ref recorded, dirty-work step discharged, report contract v0 written down, weekly hours confirmed | 3–5, of which the repo-side share is done | prompt repair **blocked**; see §10 |
-| **0b** | Usage inventory of actual account/platform/freshness coverage; one named gap; at most one upstream routine inspected; fixtures, baseline, reuse/no-reuse decision; revised estimates for Phases 1–5 | 8–12 ceiling | Sep 14 → Fri 2026-10-02 |
-| **1** | Monday assurance publishes to the Observatory as a second producer; `/audit` distinguishes producers and subjects (§6B) | 6–8 | Oct 5 → Fri 2026-10-16 |
-| **2** | One Usage improvement end to end from the 0b gap: source/normalization change only as needed, comparison mode that never feeds canonical totals, calculation, visible UI result; existing APIs preserved | 20–28, hard cap 30 | Oct 19 → Fri 2026-11-20 |
-| **3** | Report contract v1, per-subject history and compare views, audit-run usage attribution (§6C) | 10–14 | Nov 23 → Fri 2026-12-18 |
+| **0b** | Usage inventory, one named gap, reuse decision, revised estimates — **complete, 2026-09-11**, in [usage-inventory.md](usage-inventory.md). Outcome: gap is Claude allowance freshness in two halves; **no upstream reuse**; the baseline still has to be measured on the owner's machine | 8–12 ceiling | done |
+| **1** | Monday assurance publishes to the Observatory as a second producer; `/audit` distinguishes producers and subjects (§6B) | 6–9 | Oct 5 → Fri 2026-10-16 |
+| **2** | The 0b gap, Half A: reconcile the two staleness definitions, fix the four freshness holes, add the comparison mode on the `usage_calibrations` pattern, run the Half B spike | 16–24 | Oct 19 → Fri 2026-11-20 |
+| **2b** | The 0b gap, Half B: unattended browser allowance collection. **Conditional on the spike**; split out rather than raising Phase 2's budget | 14–20 | only if the spike succeeds |
+| **3** | Report contract v1, per-subject history and compare views, audit-run usage attribution (§6C). History cannot reuse the dashboard read (35-day / 9-day bounds) and needs its own queries | 12–16 | Nov 23 → Fri 2026-12-18 |
 | **4** | Environmental method review and bounds; one range-based view if supported | 6–8 | Jan 4 → Fri 2027-01-15 |
 | **5** | Extract shared conventions Usage and Audits demonstrably share: registration, settings, accepted result versions, presentation, intake/enablement — including a legible disabled-intake response (§4); no dependency on agentlint | 8–10 | Jan 18 → Fri 2027-01-29 |
 | 6 | Assistant design only | — | Feb 2027 |
 | 7 | External usage-tool adapters | — | demand-gated, after 5 |
 | 8 | Generic audit kit / AI Kits rethink / Luumen debug-tool exploration | — | unscheduled |
 
-Total 0a–5: **61–87 h** (up to 89 if Phase 2 uses its cap). Capacity over ~18 active weeks at the
-confirmed 7 h/week is ~126 h, so the plan fits with roughly a third of the period as slack.
+Total 1–5 after 0b's re-estimate: **42–57 h**, plus **14–20 h** for the conditional Phase 2b.
+Capacity over ~18 active weeks at the confirmed 7 h/week is ~126 h, so both fit with slack.
 
-0b's gap should be chosen from the three candidates in §5, and the choice is now better informed
-than plan v4 allowed for: the parsers are not the gap, and Cursor is blocked behind a provider set
-hard-coded in ten places including two unnamed database constraints — which makes it the larger of
-the coverage options and the one most likely to consume Phase 2's cap.
+Phase 2 shrank rather than grew because 0b found its hardest requirement already solved twice over:
+the comparison mode has a working precedent in `usage_calibrations`, and the freshness model it
+needs already exists in the routing subsystem. What 0b could not do is measure the baseline — that
+is machine-side work, and Phase 2 should not start before seven days of it exist.
 
 Sequencing rationale is unchanged: Phase 1 goes before the big Usage phase because it is small, uses
 only existing machinery, and produces the second real producer that Phase 5 needs. Phase 2 remains
@@ -488,8 +494,11 @@ the largest block and starts within five weeks.
 
 - **0a:** the next Tuesday run publishes successfully from the new path with a verified receipt and
   renders at `<url>?report=<id>`. Repo-side facts recorded (done).
-- **0b:** verified current-vs-target matrix; one named gap with a measurable success criterion;
-  reuse/no-reuse with provenance; Phases 1–5 re-estimated with confidence stated.
+- **0b:** **met, 2026-09-11** for everything source can establish — capability matrix, named gap
+  with a falsifiable criterion, no-reuse recorded with its reason, Phases 1–5 re-estimated with
+  confidence. **Not met:** the "actual account/platform/freshness coverage" half, which needs the
+  owner's machines (see the inventory's check list), and the seven-day baseline Phase 2's criterion
+  depends on.
 - **1:** a Monday run produces a receipt and renders; Slack delivery unchanged; a simulated publish
   failure leaves the audit and Slack outcome intact; the index distinguishes producers and subjects.
 - **2:** fixtures reconcile; repeated/reordered inputs safe; identities separated; overlapping
@@ -578,6 +587,11 @@ Resolved since plan v4:
 
 Still open:
 
+0. **The Phase 2 baseline and four machine-side facts.** Phase 0b is complete on everything source
+   can settle and blocked on everything it cannot — see the
+   [usage coverage inventory](usage-inventory.md) §4. The one with a deadline is the baseline: seven
+   days of hourly readings, starting before any Phase 2 code change, or the gap's success criterion
+   is unfalsifiable.
 1. **Authorization to edit two scheduled prompts** — the Tuesday path repair (§6A) and the Monday
    second-destination publish (§6B). Both prompts are explicit about what writes they authorize and
    both live outside this repository. **Blocked; no replacement text is drafted here.** The expected
@@ -597,10 +611,14 @@ The repo-side half of Phase 0a is done: the post-move ref is recorded, the dirty
 the report contract is written down, and hours are confirmed. What remains of 0a is the prompt
 repair, which is blocked on §10 item 1.
 
-Start 0b as an **inventory, not a refactor**. Use §5's verified current state as the baseline
-instead of re-reading the collectors. Pick the gap from the three candidates there, size Cursor
-honestly against the closed provider set, inspect at most one upstream routine, build fixtures, and
-send revised estimates back to the owner.
+**0b is done** — read the [usage coverage inventory](usage-inventory.md) rather than re-deriving it.
+The named gap is Claude allowance freshness, in two halves, instrument first; no upstream code is
+reused; Phases 1–5 are re-estimated above.
+
+What Phase 2 needs before it starts is not code. Run the inventory's check 9 hourly for seven days
+to establish the baseline, run the two-hour service-worker spike that decides whether Phase 2b
+exists at all, and run check 4 to find out whether the cheap Codex-windows work would surface
+anything. All three are machine-side and none of them is this repository's to do.
 
 Preserve existing schedules, brain ownership, routing ownership, and the root layout contract.
 Nothing in this document authorizes audit execution, tracker changes, production changes, credential
