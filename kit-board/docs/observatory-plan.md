@@ -199,11 +199,17 @@ Every line below was read at `373fdbb7`; nothing here is rebuilt.
   rather than dropping the event. Covered by `test_codex_cumulative_duplicate_and_reset` in
   `tests/collector_test.py`. **Not an open gap.**
 - **Codex allowance** — `save_codex_quotas` (`:85`) reads the `rate_limits` snapshot embedded in
-  `token_count` events. No network call. Only `primary` and `secondary` windows.
-- **Claude allowance** — `statusline.py` writes `five_hour` and `seven_day` readings into a
-  `quota_inbox` directory, which `collect.py:289-293` drains (Claude connections only, and only
-  those two window keys). A reading therefore exists only when Claude Code actually ran; an idle day
-  produces none and there is no fallback.
+  `token_count` events. No network call. It iterates only `('primary','secondary')` (`:87`), so
+  credits and any additional per-model window are dropped at the collector, before the contract.
+- **Claude allowance** — `statusline.py` writes `five_hour` and `seven_day` readings
+  (`WINDOWS`, `:14`) into a `quota_inbox` directory, which `collect.py:289-293` drains (Claude
+  connections only, and only those two window keys). A reading therefore exists only when Claude Code
+  actually ran; an idle day produces none and there is no fallback.
+  **Phase 0b lead:** `record_status` (`statusline.py:17-50`) already writes a sidecar status file
+  *beside* the inbox — deliberately outside it, so `collect.py`'s `*.json` glob never parses it as a
+  sample — recording `rate_limit_keys` (every window Claude offered) next to `published_windows`
+  (the two that were kept). Reading that file on a machine that has run Claude Code answers "which
+  allowance windows are being discarded" with no new code.
 - **Browser quota adapter** — `browser/claude-quota/`, documented as experimental. It runs inside a
   signed-in `claude.ai` tab and reads `/api/account`, `/api/organizations` and
   `/api/organizations/{id}/usage` with `credentials: 'same-origin'`, then posts to the Observatory
@@ -481,6 +487,21 @@ restoring the prior prompt text; the Observatory tolerates a producer that stops
 Schema changes apply through `supabase/migrations/` in filename order, via an administrative
 connection; the application identity deliberately cannot change schema or delete report history.
 `npm run test:routing:db` validates every migration against a disposable local cluster.
+
+**Two rollback promises have no mechanism yet, and both are worth knowing before Phase 2 relies on
+them.**
+
+*"Blocks the failed adapter from canonical observations"* — disabling a source stops future uploads
+only; the canonical read has no source predicate (§5). Quarantining what a bad adapter already wrote
+would be new work.
+
+*"Records source and calculation versions for corrections"* — `collector_version` is required by the
+contract (`lib/telemetry-contract.ts:27`), but it is stored only in `telemetry_sources.coverage`,
+which is **overwritten on every ingest** (`lib/telemetry-store.ts:45`).
+`token_bucket_revisions` carries `source_id`, `observed_at`, `received_at` and `content_hash` but
+**no version column** (`supabase/migrations/20260909184129…:11-21`). So an observation can be traced
+to a source, never to the collector version that produced it. A correction that needs to say "every
+bucket from collector 1.0.9 is wrong" cannot currently be expressed.
 
 ---
 

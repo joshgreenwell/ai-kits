@@ -127,9 +127,11 @@ The latest application commits, **named as pre-migration source-repository SHAs*
 - `2b4ce7f fix(db): prevent pooled query hangs`
 - `ce0816f feat(usage): add hourly telemetry and reset intelligence`
 
-None of those refs resolves in `ai-kits`: the source history was deliberately not imported. In this
-repository the whole import arrived as one commit, `373fdbb714f1dbac365ad4e1829155136819723a`
-("Move Personal Observatory into kit-board (#16)", 2026-09-10). Use that as the baseline ref.
+None of those refs resolves in `ai-kits`: the source history was deliberately not imported. The same
+is true of **every short commit ref elsewhere in this file** and in `docs/schedules.md` — they are
+historical evidence from the source repository, not refs you can check out. In this repository the
+whole import arrived as one commit, `373fdbb714f1dbac365ad4e1829155136819723a` ("Move Personal
+Observatory into kit-board (#16)", 2026-09-10). Use that as the baseline ref.
 
 The site has a working shared shell, responsive report documents, full-depth audit selection, shadcn selects, authenticated assets, shared Supabase storage, hourly telemetry, reset intelligence, and a deployed cloud-estimate waiting state. Do not claim an estimate exists until Claude samples and a human-confirmed local-only baseline are present.
 

@@ -62,6 +62,10 @@ default report even if it is the most complete one. Any other value is accepted 
 
 ## 3. Publisher CLI surface
 
+Operator-facing setup for these scripts — config shape, dry-run guidance, credential handling — is
+in [startup and recovery](startup-and-recovery.md), section "Publish external workflow results".
+This section records the enforced surface rather than the operating procedure.
+
 `scripts/publish.mjs:10` is authoritative:
 
 - **Required always:** `--kind`, `--producer`, `--file`

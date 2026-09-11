@@ -46,7 +46,7 @@ Audit histories prefer the newest nonfailed revision marked `coverage.presentati
 4. Update producers only after successful end-to-end publication receipts. Preserve their recurrence, source restrictions, merge rules, and existing output artifacts.
 5. Document every producer connection and unresolved source. A one-time backfill is not proof that a schedule is connected.
 
-Keep the old Token Observatory and local reports available until parity is confirmed. The old source is pinned at `3315a6b0b850f9711106d1cacbd1145b357124dc`; the dashboard presentation and environmental assumptions were copied from that version. No old reports are deleted by this application.
+Keep the old Token Observatory and local reports available until parity is confirmed. The old source is pinned at `3315a6b0b850f9711106d1cacbd1145b357124dc` — a ref in the Token Observatory's own repository, not resolvable here; the dashboard presentation and environmental assumptions were copied from that version. No old reports are deleted by this application.
 
 The current merged Luumen AI audit artifact is about 3 MB. The generic HTTP limit is 4 MB, below Vercel's request ceiling. Publish HTML with a compact metadata payload, not a second copy of all embedded evidence. Keep raw execution logs and full source trees outside this site.
 
