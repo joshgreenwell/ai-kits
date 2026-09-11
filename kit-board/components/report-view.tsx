@@ -6,7 +6,7 @@ import { PageHeader } from './page-header';
 import { Workspace } from './workspace';
 import { Card, CardContent } from './ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { CopyButton, EmptyState, StatusBadge } from './kit';
+import { CopyButton, EmptyState, Prose, StatusBadge } from './kit';
 
 const date = (value: string) =>
   new Date(value).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -70,23 +70,9 @@ export function ReportView({ title, empty, history, report }: { title: string; e
             <ReportFrame key={report.id} id={report.id} title={report.title} />
           ) : (
             <Card>
-              <CardContent className="grid gap-2">
+              <CardContent className="py-2">
                 {markdown ? (
-                  markdown.split('\n').map((line, index) =>
-                    /^(#{1,3} |Yesterday|Potential priorities|Blockers)/.test(line) ? (
-                      <h2 key={index} className="mt-3 text-base font-semibold tracking-tight first:mt-0">
-                        {line.replace(/^#+ /, '')}
-                      </h2>
-                    ) : /^[-*] /.test(line) ? (
-                      <p key={index} className="text-muted-foreground border-border border-l-2 pl-3 text-sm leading-relaxed">
-                        {line.slice(2)}
-                      </p>
-                    ) : (
-                      <p key={index} className="text-muted-foreground max-w-[74ch] text-sm leading-relaxed">
-                        {line || '\u00a0'}
-                      </p>
-                    )
-                  )
+                  <Prose markdown={markdown} />
                 ) : (
                   <p className="text-muted-foreground text-sm">
                     This revision contains structured data without a rendered report.
