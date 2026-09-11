@@ -53,9 +53,9 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Palette: graphite ground, green accent.
+   Palette: near-black ground, green accent.
 
-   The ground is a near-neutral graphite carrying about a 2% green bias, so the
+   The ground is a near-black neutral carrying a faint green bias, so the
    primary reads as native to the surface rather than pasted onto a pure grey.
    It is a decision, not a default: every step from --background to --input is
    the same hue, separated only by lightness.
@@ -72,20 +72,20 @@
 
 :root {
   /* surfaces — one hue, lightness only */
-  --background: #0b0c0c;
-  --card: #111312;
-  --popover: #161918;
-  --secondary: #1a1d1c;
-  --muted: #161918;
-  --accent: #212524;
+  --background: #070807;
+  --card: #0d0e0d;
+  --popover: #121413;
+  --secondary: #161817;
+  --muted: #121413;
+  --accent: #1d1f1e;
 
   /* text */
-  --foreground: #e9ecea;
-  --muted-foreground: #8b918e;
+  --foreground: #eceeec;
+  --muted-foreground: #8d918f;
 
   /* lines */
-  --border: #242827;
-  --input: #2e3331;
+  --border: #1f2120;
+  --input: #2a2d2b;
   --ring: #4fa57e;
 
   /* the meaning stop */
@@ -108,13 +108,13 @@
   --chart-5: #d66a5b;
 
   /* sidebar */
-  --sidebar: #0e100f;
-  --sidebar-foreground: #e9ecea;
+  --sidebar: #0a0b0a;
+  --sidebar-foreground: #eceeec;
   --sidebar-primary: #63bc93;
   --sidebar-primary-foreground: #04130c;
-  --sidebar-accent: #212524;
-  --sidebar-accent-foreground: #e9ecea;
-  --sidebar-border: #242827;
+  --sidebar-accent: #1d1f1e;
+  --sidebar-accent-foreground: #eceeec;
+  --sidebar-border: #1f2120;
   --sidebar-ring: #4fa57e;
 
   /* ONE KNOB — every corner in the app derives from this */

@@ -15,6 +15,13 @@ const badgeVariants = cva(
           "bg-destructive text-white focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40 [a&]:hover:bg-destructive/90",
         outline:
           "border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
+        warning: "bg-warning text-warning-foreground [a&]:hover:bg-warning/90",
+        info: "bg-info text-info-foreground [a&]:hover:bg-info/90",
+        // Soft tones read better inside dense rows, where a solid fill shouts.
+        soft: "bg-primary/15 text-primary border-primary/35",
+        "soft-destructive": "bg-destructive/15 text-destructive border-destructive/35",
+        "soft-warning": "bg-warning/15 text-warning border-warning/35",
+        "soft-info": "bg-info/15 text-info border-info/35",
         ghost: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         link: "text-primary underline-offset-4 [a&]:hover:underline",
       },
