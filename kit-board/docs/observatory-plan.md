@@ -266,18 +266,34 @@ Two honest qualifications on those invariants:
   0, and unpriced tokens are tracked explicitly. It does not hold in every monthly/connection view;
   a few absent counters still render as `0`. Worth a pass, not worth a phase.
 
-**Extensibility constraint, made concrete.** `('codex','claude')` is hard-coded in six places:
+**Extensibility constraint, made concrete.** `('codex','claude')` is hard-coded in **ten** places.
+Phase 0b found four beyond the six first recorded here, all in the routing subsystem:
 
 1. `scripts/telemetry/collect.py:260` — the connection gate
 2. `lib/telemetry-contract.ts:5` — `providerSchema`
-3. `lib/telemetry-store.ts:31` — the source type
+3. `lib/telemetry-store.ts:31` — the source type cast
 4. `app/(private)/usage/connections/page.tsx:31` — the provider picker
 5. `supabase/migrations/20260909184129…:2` — `CHECK(provider IN ('codex','claude'))` on `usage_accounts`
 6. `supabase/migrations/20260910193058…:5` — the same check on `agent_routing_events`
+7. `lib/routing-source.ts:3` — `RoutingSource.provider`
+8. `lib/routing-event-contract.ts:50` — `assertProviderMatchesSource`
+9. `lib/routing-contract/event.schema.json:370-371` — `route.decided` payload enum
+10. `lib/routing-contract/event.schema.json:475-476` — attempt payload enum
 
 Plus one provider-specific rule: `lib/telemetry-contract.ts:37` allows browser-mode connections for
-Claude only. A third provider is therefore a migration plus a contract change plus a UI change, not
-an adapter drop-in. This is the single most useful thing Phase 0b can hand Phase 2, and it is why
+Claude only. Sites 3 and 7–10 cost more than their count suggests: the cast at
+`lib/telemetry-store.ts:31` flows into `routingStore.append` and `routingStore.quotaState`, making a
+widening a typecheck cascade rather than a find-and-replace. Both database constraints are declared
+**inline, therefore unnamed**, so a migration altering them must guess Postgres' generated constraint
+names — get one wrong and it fails only on a fresh cluster. A third provider is not an adapter
+drop-in, and this is the most useful thing Phase 0b hands Phase 2.
+
+**Two CI facts that change what "done" costs.** `.github/workflows/kit-board.yml:32-34` runs
+`npm run collectors:bundle` and then `git diff --exit-code` over `lib/generated/report-ui.json` and
+`lib/generated/collector-bundles.json`, so any collector or browser-extension change **must** ship
+its regenerated artifacts or CI fails. And `npm run test:routing:db` is **not** in CI (`:26-29` runs
+only `npm test`, `test:collector`, `typecheck` and `build`), so a new migration's only validation is
+a manual run needing `initdb`/`pg_ctl`/`psql`/`createdb` on PATH.
 
 
 **The comparison-mode precedent.** Phase 2 must deliver "a comparison mode that never feeds canonical
@@ -461,8 +477,8 @@ confirmed 7 h/week is ~126 h, so the plan fits with roughly a third of the perio
 
 0b's gap should be chosen from the three candidates in §5, and the choice is now better informed
 than plan v4 allowed for: the parsers are not the gap, and Cursor is blocked behind a provider set
-hard-coded in six places including two database constraints — which makes it the larger of the
-coverage options and the one most likely to consume Phase 2's cap.
+hard-coded in ten places including two unnamed database constraints — which makes it the larger of
+the coverage options and the one most likely to consume Phase 2's cap.
 
 Sequencing rationale is unchanged: Phase 1 goes before the big Usage phase because it is small, uses
 only existing machinery, and produces the second real producer that Phase 5 needs. Phase 2 remains
@@ -539,7 +555,7 @@ observation tables.
 - **Downward corrections to canonical usage:** needs a reconciliation mechanism; not designed.
 - **Retention policy** for hourly history: nothing deleted until chosen.
 - **Additional providers/OS:** after the 0b matrix. Note Linux is unscheduled by
-  `install_schedule.py` today, and a third provider is blocked in six places (§5).
+  `install_schedule.py` today, and a third provider is blocked in ten places (§5).
 - **External usage-tool adapters:** Phase 7.
 - **Binary evidence assets** (PDF/PNG/ZIP): rejected by the UTF-8 decode; no demand established.
 - **Luumen debug-tool extraction:** tracked outside this repository.
