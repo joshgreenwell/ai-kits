@@ -280,6 +280,27 @@ Claude only. A third provider is therefore a migration plus a contract change pl
 an adapter drop-in. This is the single most useful thing Phase 0b can hand Phase 2, and it is why
 
 
+**The comparison-mode precedent.** Phase 2 must deliver "a comparison mode that never feeds canonical
+totals", and the repository already contains a working instance of exactly that shape — the paused
+cloud-estimate calibration path. It is worth copying rather than redesigning:
+
+- a **separate table** (`usage_calibrations`), never joined into canonical totals;
+- **revoke, never delete** — `revoked_at` with a column-scoped `GRANT UPDATE (revoked_at)`
+  (`supabase/migrations/20260909200659…:26`), consistent with the no-`DELETE` rule;
+- **provenance to the observation**: `start_sample_id` / `end_sample_id` reference the exact
+  `quota_samples` rows used;
+- **a pinned `method_version`**, enforced by a `CHECK`;
+- **server-side recomputation**: the client names two sample ids and confirms; `saveCalibration`
+  recomputes the value from stored data and returns 422 with a reason rather than trusting input
+  (`lib/cloud-estimate-store.ts:17-22`);
+- **an explicit human gate**: `confirm_local_only: z.literal(true)` (`lib/cloud-estimate.ts:20-23`);
+- **refusal over convenience**: conflicting simultaneous observations return `null` rather than a
+  chosen reading (`lib/cloud-estimate.ts:35-45`), and model-specific windows are never compared with
+  all-model totals (`allModelWindow`, `:26-29`).
+
+Phase 2's comparison mode should be that shape with a different calculation. This is the single
+largest de-risking fact 0b can hand Phase 2.
+
 **Known open mechanism — Decided.** Canonical selection cannot be regressed by appending a smaller
 record, and the grants enforce it rather than merely encouraging it: migration
 `20260909184129…:41-52` gives the app role `SELECT, INSERT` on `token_bucket_revisions` and
@@ -495,13 +516,17 @@ them.**
 only; the canonical read has no source predicate (§5). Quarantining what a bad adapter already wrote
 would be new work.
 
-*"Records source and calculation versions for corrections"* — `collector_version` is required by the
-contract (`lib/telemetry-contract.ts:27`), but it is stored only in `telemetry_sources.coverage`,
-which is **overwritten on every ingest** (`lib/telemetry-store.ts:45`).
-`token_bucket_revisions` carries `source_id`, `observed_at`, `received_at` and `content_hash` but
-**no version column** (`supabase/migrations/20260909184129…:11-21`). So an observation can be traced
-to a source, never to the collector version that produced it. A correction that needs to say "every
-bucket from collector 1.0.9 is wrong" cannot currently be expressed.
+*"Records source and calculation versions for corrections"* — half true, and the half that works is
+the template for fixing the other. For **observations**: `collector_version` is required by the
+contract (`lib/telemetry-contract.ts:27`) but stored only in `telemetry_sources.coverage`, which is
+**overwritten on every ingest** (`lib/telemetry-store.ts:45`). `token_bucket_revisions` carries
+`source_id`, `observed_at`, `received_at` and `content_hash` but **no version column**
+(`supabase/migrations/20260909184129…:11-21`), so an observation traces to a source, never to the
+collector version that produced it — "every bucket from collector 1.0.9 is wrong" is inexpressible.
+For **derived values**, by contrast, `usage_calibrations` pins `method_version` in a `CHECK`
+constraint and references the exact `quota_samples` rows it was computed from
+(`supabase/migrations/20260909200659…:12-14`). The pattern exists; it just was not applied to the
+observation tables.
 
 ---
 
