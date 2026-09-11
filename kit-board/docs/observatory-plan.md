@@ -193,9 +193,11 @@ Every line below was read at `373fdbb7`; nothing here is rebuilt.
 - **Claude dedup** — `sha256([provider, account_id, message.id])` (`:142`). There is no `requestId`
   component anywhere in the repo. Synthetic-model records are skipped.
 - **Codex cumulative diffing** — implemented and tested. `process_line` diffs
-  `info.total_token_usage` against the previous in-file snapshot, discards the delta if any
-  component went negative, and persists the snapshot in SQLite (`:118-133`); covered by
-  `test_codex_cumulative_duplicate_and_reset` in `tests/collector_test.py`. **Not an open gap.**
+  `info.total_token_usage` against the previous in-file snapshot and persists that snapshot in
+  SQLite (`:118-133`). Identical consecutive snapshots are skipped; if any component of the delta
+  would go negative — a counter reset — it **falls back to the event's own `last_token_usage`**
+  rather than dropping the event. Covered by `test_codex_cumulative_duplicate_and_reset` in
+  `tests/collector_test.py`. **Not an open gap.**
 - **Codex allowance** — `save_codex_quotas` (`:85`) reads the `rate_limits` snapshot embedded in
   `token_count` events. No network call. Only `primary` and `secondary` windows.
 - **Claude allowance** — `statusline.py` writes `five_hour` and `seven_day` readings into a
@@ -205,7 +207,10 @@ Every line below was read at `373fdbb7`; nothing here is rebuilt.
 - **Browser quota adapter** — `browser/claude-quota/`, documented as experimental. It runs inside a
   signed-in `claude.ai` tab and reads `/api/account`, `/api/organizations` and
   `/api/organizations/{id}/usage` with `credentials: 'same-origin'`, then posts to the Observatory
-  with `credentials: 'omit'`. Requires an explicitly pinned organization.
+  with `credentials: 'omit'`. Requires an explicitly pinned organization. Note it **hard-codes the
+  upload host** (`background.js:2`) and refuses to import any connection whose `url` is not that
+  exact string (`:77`) — so a different Observatory origin needs an extension change, not a config
+  change.
 - **No provider credential is ever read.** `collect.py` makes exactly two outbound requests, both to
   the Observatory's own origin: `/api/v1/telemetry` (`:236`) and `/api/reset-feeds` (`:307`). No
   file in this repository reads `~/.claude/.credentials.json` or `~/.codex/auth.json`.
@@ -219,6 +224,9 @@ Every line below was read at `373fdbb7`; nothing here is rebuilt.
   shells out to an operator-installed analyzer named by absolute path in the connection. The
   analyzers are **not in this repository**. It publishes to the same origin's `/api/reports` with a
   separate usage-publisher credential.
+- **Upload shape** — each body carries at most 400 buckets and 90 quota readings (`:225`), under
+  the server's caps of 500 and 100 (`lib/telemetry-contract.ts:21-22`), and a run with nothing to
+  report still sends one coverage-only body.
 - Plus: allowance history and forecasts (`quotaPace`), public reset feeds, and two Vercel crons —
   `/api/internal/sync-legacy-usage` at `0 18 * * *` and `/api/internal/sync-reset-feeds` at
   `15 13 * * *`, both requiring `CRON_SECRET`.
@@ -267,10 +275,23 @@ an adapter drop-in. This is the single most useful thing Phase 0b can hand Phase
 
 
 **Known open mechanism — Decided.** Canonical selection cannot be regressed by appending a smaller
-record: the app role holds `SELECT`/`INSERT` only, no `DELETE` is granted, and nothing rewrites an
-observation. Downward corrections are out of scope until deliberately designed. One edge worth
-recording: because call count outranks token total in the ordering, a record with a *higher* call
-count and a *lower* token total does lower the canonical total.
+record, and the grants enforce it rather than merely encouraging it: migration
+`20260909184129…:41-52` gives the app role `SELECT, INSERT` on `token_bucket_revisions` and
+`quota_samples` and nothing else, reserving `UPDATE` for `telemetry_sources` and `reset_feed_state`
+(source metadata and the feed lease, never observations). **No `DELETE` is granted on any table in
+any migration.** Downward corrections are therefore out of scope until deliberately designed.
+
+Two edges worth recording. Because call count outranks token total in the ordering, a record with a
+*higher* call count and a *lower* token total does lower the canonical total. And disabling a
+collector source does **not** retract what it already uploaded: the `disabled` flag is checked only
+when authenticating an upload (`lib/telemetry-store.ts:29`), while the canonical read selects from
+`token_bucket_revisions` with no source predicate at all (`:57-58`). Disabling stops new data; it
+does not quarantine old data. Any rollback that means to "block a failed adapter from canonical
+observations" (§8) needs a mechanism that does not exist yet.
+
+**Dashboard windows.** The canonical read is bounded to the last 35 days of buckets and 9 days of
+quota samples (`lib/telemetry-store.ts:58, 65`). Phase 3's per-subject history and any longer-range
+Usage view will need their own queries; they cannot reuse the dashboard load.
 
 ### Audit runs as a usage source — answered
 

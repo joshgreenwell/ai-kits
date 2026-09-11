@@ -17,10 +17,12 @@ guarantees. Do not treat this file as that decision.
 | `usage` | `POST /api/reports` | the monthly analyzer envelope, passed through unchanged | producer key scoped to `usage` |
 | `tasks`, `standup`, `readings`, `audit` | `POST /api/v1/reports/<kind>` | the envelope in §2 | producer key scoped to that kind |
 
-`app/api/v1/reports/[kind]/route.ts:10` explicitly refuses `usage` on the v1 route. The kind list
-is closed: `lib/contracts.ts:3` and `scripts/publish.mjs:11` both hard-code
-`['usage','tasks','standup','readings','audit']`. **A new report kind is a code change in both
-places plus a `lib/catalog.ts` section entry** — it is not a producer-side decision.
+`app/api/v1/reports/[kind]/route.ts:10` explicitly refuses `usage` on the v1 route. The kind list is
+closed in three places, one of them the database: `lib/contracts.ts:3`, `scripts/publish.mjs:11`,
+and `CHECK (kind IN ('usage','tasks','standup','readings','audit'))` on `report_revisions`
+(`supabase/migrations/20260908050538…:6`). **A new report kind is therefore a migration plus two
+code changes plus a `lib/catalog.ts` section entry** — never a producer-side decision. A new
+*producer* or *subject* on an existing kind needs none of that.
 
 ## 2. What the server validates
 
@@ -30,7 +32,7 @@ The validated fields are exactly:
 | Field | Rule | Source |
 | --- | --- | --- |
 | `schema_version` | literal `1` | contracts.ts:7 |
-| `period_key` | `YYYY-MM` or `YYYY-MM-DD`, and a real calendar date | contracts.ts:8, 23-26 |
+| `period_key` | `YYYY-MM` or `YYYY-MM-DD`, and a real calendar date | contracts.ts:8, 21-24 |
 | `subject_key` | 1–160 chars, `[a-zA-Z0-9._:@+-]` | contracts.ts:5, 9 |
 | `idempotency_key` | same charset as `subject_key` | contracts.ts:5, 10 |
 | `title` | trimmed, 1–200 chars | contracts.ts:11 |
@@ -98,7 +100,8 @@ There is no asynchronous accept step. A publish is resolved in one request:
 | rejected | 400 / 401 / 404 / 413 / 415 / 503 | validation, auth, unknown kind, size, content type, no database | contracts.ts, auth.ts, http.ts |
 
 Idempotency is `ON CONFLICT (producer_id, kind, idempotency_key) DO NOTHING`, then a content-hash
-comparison (`lib/db.ts:47-52`). Two consequences worth stating plainly:
+comparison (`lib/db.ts:47-52`), backed by the `UNIQUE(producer_id, kind, idempotency_key)`
+constraint on `report_revisions` (`supabase/migrations/20260908050538…:20`). Two consequences worth stating plainly:
 
 1. **Idempotency is scoped per producer.** Two producers may use identical keys without
    colliding. A second audit producer needs no key-namespace coordination.
