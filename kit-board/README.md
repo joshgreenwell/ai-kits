@@ -7,6 +7,8 @@ Private personal dashboard at https://personal-observatory-jg.vercel.app, hosted
 - [Architecture and data ownership](docs/architecture.md)
 - [Schedules, publishers, and migration status](docs/schedules.md)
 - [Agent handoff and operating map](docs/agent-handoff.md)
+- [Plan of record: priorities, phases, and open decisions](docs/observatory-plan.md)
+- [Published report contract v0, as the code enforces it](docs/report-contract.md)
 
 Run commands from `ai-kits/kit-board` (the runtime package name and `personal_hub` schema intentionally remain unchanged). Use `npm ci`, configure `.env.local`, then run `npm run dev`. Validate with `npm test`, `npm run typecheck`, and `npm run build`. Node 22 is the deployed runtime. Schema migrations are in `supabase/migrations/`, aligned with the applied Supabase versions. Apply them with an administrative connection; the app's database identity deliberately cannot change schema or update/delete report history. Set its database password through a protected administrative channel rather than a tracked migration.
 

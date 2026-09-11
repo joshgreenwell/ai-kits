@@ -2,11 +2,11 @@
 
 ## Layout
 
-* `kit-board/` — Personal Observatory, Node 22 and Python 3.10+. See its [startup and verification guide](kit-board/docs/startup-and-recovery.md).
+* `kit-board/` — Personal Observatory, Node 22 and Python 3.10+. Run `cd kit-board && npm ci && npm test && npm run test:collector && npm run typecheck && npm run build`. See its [startup and verification guide](kit-board/docs/startup-and-recovery.md) and its [plan of record](kit-board/docs/observatory-plan.md).
 * `agentlint/` — Kit 1, Python. Run `cd agentlint && uv run pytest`.
 * `agent-surface/` — Kit 2, TypeScript. Run `cd agent-surface && npm ci && npm test`.
 
-The directories never import from each other. Observatory runtime data and credentials stay outside Git. Fixtures, docs, and CI live inside each kit directory. Root-level files are limited to this file, the README, the license, and CI workflow definitions under `.github/`.
+The directories never import from each other. Observatory runtime data and credentials stay outside Git. Fixtures, docs, and CI live inside each kit directory. Root-level files are limited to this file, the README, the license, and CI workflow definitions under `.github/`. Each workflow in `.github/workflows/` triggers on its own top-level path prefix and runs with that directory as its working directory, so moving a project's files above its prefix silently stops its CI from running at all.
 
 ## Branches and pull requests
 

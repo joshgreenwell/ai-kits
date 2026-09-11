@@ -2,7 +2,7 @@
 
 Date: 2026-09-10. Source working-tree import into `joshgreenwell/ai-kits/kit-board`.
 
-Source base: `74abf3ed8db78edb3b6d12b4cdba03ef2a25d6b1`. Destination base: `bfb867ed03ad1b791862ec95390b9ff78775fb9a`. The source inventory contained **145 tracked/untracked nonignored files**. This import includes the source’s uncommitted routing API, schemas, migration, tests and package changes; those are not represented as previously deployed work.
+Source base: `74abf3ed8db78edb3b6d12b4cdba03ef2a25d6b1`. Destination base: `bfb867ed03ad1b791862ec95390b9ff78775fb9a`. The import landed as a single commit, `373fdbb714f1dbac365ad4e1829155136819723a` (“Move Personal Observatory into kit-board (#16)”, 2026-09-10, 150 files changed) — the post-move baseline ref for all later work. The source base is a provenance string only: that history was not imported, so it cannot be diffed, shown or bisected from this repository. The source inventory contained **145 tracked/untracked nonignored files**. This import includes the source’s uncommitted routing API, schemas, migration, tests and package changes; those are not represented as previously deployed work.
 
 **137 files match the captured source SHA-256 exactly; 7 differ; 1 omitted.** The entire source Git history and ignored private runtime remain in the operator’s separate local recovery archive, not public repository history.
 

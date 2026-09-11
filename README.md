@@ -5,7 +5,7 @@ Each directory has its own runtime and setup; there is no shared kit framework.
 
 | Kit | Directory | Runtime | What it does |
 | -- | -- | -- | -- |
-| Personal Observatory | [`kit-board/`](kit-board/) | Node 22 + Python 3.10+ collectors | Private dashboard for Usage and published workflow results. Start with its [recovery guide](kit-board/docs/startup-and-recovery.md). |
+| Personal Observatory | [`kit-board/`](kit-board/) | Node 22 + Python 3.10+ collectors | Private dashboard for Usage and published workflow results. Start with its [recovery guide](kit-board/docs/startup-and-recovery.md); its direction is in the [plan of record](kit-board/docs/observatory-plan.md). |
 | 1 — Agent Trace Linter | [`agentlint/`](agentlint/) | Python 3.11+, `uvx agentlint` | Joins an agent run's evidence from whatever the app already recorded into one ordered, coverage-annotated timeline, and runs small deterministic rules over it. |
 | 2 — Agent Control-Surface Diff | [`agent-surface/`](agent-surface/) | Node 20+, `npx agent-surface` | Tells reviewers when a repository change expands the control surface granted to Claude Code before it reaches developer machines. |
 

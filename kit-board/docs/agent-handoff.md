@@ -11,7 +11,7 @@ Updated September 10, 2026. Start with [startup and recovery](startup-and-recove
 - Data schema: unexposed `personal_hub`
 - Runtime: Next.js 16 App Router, React 19, Node 22, TypeScript, postgres.js, shadcn/Radix source components.
 
-This is an independent personal tool. It is not Luumen product code, even though it displays Luumen reports. Do not edit the surrounding `luumen-workspace` repository for application changes. Read `AGENTS.md`, then this file, `README.md`, `docs/architecture.md`, `docs/schedules.md`, and `docs/usage-collection.md` before changing behavior.
+This is an independent personal tool. It is not Luumen product code, even though it displays Luumen reports. The surrounding repository is `ai-kits`: do not edit `agentlint/` or `agent-surface/` for Observatory changes, and do not import between the three directories (see the root `CONTRIBUTING.md`). Read this file, `README.md`, `docs/observatory-plan.md`, `docs/report-contract.md`, `docs/architecture.md`, `docs/schedules.md`, and `docs/usage-collection.md` before changing behavior. `AGENTS.md` is a generated Next.js notice, not project guidance.
 
 ## What the site does
 
@@ -41,7 +41,8 @@ The global shell and usage views are native React. Stored report HTML is intenti
 | Local collectors and Claude browser adapter | `scripts/telemetry/`, `browser/claude-quota/`, `docs/usage-collection.md` |
 | Reset feeds | `lib/reset-feeds.ts`, `lib/reset-feed-store.ts`, `app/api/reset-feeds/route.ts` |
 | Generic report ingestion | `lib/contracts.ts`, `lib/db.ts`, `app/api/v1/reports/[kind]/route.ts`, `scripts/publish.mjs` |
-| HTML report isolation and assets | `lib/artifact.ts`, `lib/artifact-runtime.ts`, `components/report-frame.tsx`, `app/api/artifacts/`, `scripts/publish-assets.mjs` |
+| HTML report isolation and assets | `lib/artifact.ts`, `lib/artifact-runtime.ts`, `lib/assets.ts`, `lib/assets-store.ts`, `components/report-frame.tsx`, `app/api/artifacts/`, `scripts/publish-assets.mjs` |
+| Agent routing events and quota state | `lib/routing-event-contract.ts`, `lib/routing-quota.ts`, `lib/routing-source.ts`, `lib/routing-store.ts`, `lib/routing-contract/`, `app/api/v1/agent-events/route.ts`, `app/api/v1/quota-state/route.ts`, `docs/agent-routing.md`, `npm run test:routing:db` |
 | Migrations and database policies | `supabase/migrations/` |
 | Hosting cron schedules | `vercel.json`, `app/api/internal/` |
 | Tests | `tests/*.test.ts`, `tests/*_test.py` |
@@ -120,11 +121,15 @@ Deployment is separate from this source relocation. Set the Vercel project Root 
 
 ## Current baseline and open work
 
-The latest application commits are:
+The latest application commits, **named as pre-migration source-repository SHAs**, are:
 
 - `7462698 feat(usage): estimate uncollected cloud activity`
 - `2b4ce7f fix(db): prevent pooled query hangs`
 - `ce0816f feat(usage): add hourly telemetry and reset intelligence`
+
+None of those refs resolves in `ai-kits`: the source history was deliberately not imported. In this
+repository the whole import arrived as one commit, `373fdbb714f1dbac365ad4e1829155136819723a`
+("Move Personal Observatory into kit-board (#16)", 2026-09-10). Use that as the baseline ref.
 
 The site has a working shared shell, responsive report documents, full-depth audit selection, shadcn selects, authenticated assets, shared Supabase storage, hourly telemetry, reset intelligence, and a deployed cloud-estimate waiting state. Do not claim an estimate exists until Claude samples and a human-confirmed local-only baseline are present.
 
@@ -140,7 +145,7 @@ Likely next operational work:
 
 | Symptom | First places to inspect |
 | --- | --- |
-| Private page/API fails | `lib/auth.ts`, `app/proxy.ts` if present, Vercel env names, safe runtime logs |
+| Private page/API fails | `lib/auth.ts`, `proxy.ts` (package root — the auth and CSP boundary for every request), Vercel env names, safe runtime logs |
 | A report is missing or stale | `docs/schedules.md`, producer outbox/receipt under protected local config, `report_revisions`, producer scope |
 | Live usage is pending/503 | `lib/db.ts`, `lib/database-queue.ts`, `lib/read-cache.ts`, new-deployment logs, `/api/usage-live` Server-Timing |
 | Token totals disagree | `lib/telemetry-store.ts` canonical query, local collector SQLite state, account/source identity; never sum raw revisions |
