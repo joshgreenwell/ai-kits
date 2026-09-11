@@ -11,6 +11,7 @@ export function SparkBars({
   values,
   average,
   axis,
+  markIndex,
   formatValue = (n: number) => n.toLocaleString(),
   className,
   ...props
@@ -19,6 +20,8 @@ export function SparkBars({
   /** Baseline to draw as a dashed reference line, in the same unit as values. */
   average?: number
   axis?: string[]
+  /** A bucket still accumulating - drawn outlined so it is not read as final. */
+  markIndex?: number
   formatValue?: (n: number) => string
 }) {
   const max = Math.max(...values, average ?? 0) || 1
@@ -49,7 +52,11 @@ export function SparkBars({
             key={i}
             className={cn(
               "min-h-[2px] flex-1 rounded-t-xs",
-              i === peakIndex ? "bg-primary" : "bg-primary/45"
+              i === markIndex
+                ? "bg-primary/25 ring-primary ring-1 ring-inset"
+                : i === peakIndex
+                  ? "bg-primary"
+                  : "bg-primary/45"
             )}
             style={{ height: `${(v / max) * 100}%` }}
           />

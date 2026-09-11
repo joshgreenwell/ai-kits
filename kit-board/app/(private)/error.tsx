@@ -1,5 +1,16 @@
 'use client';
 import { Button } from '@/components/ui/button';
+import { Workspace } from '@/components/workspace';
+import { EmptyState } from '@/components/kit';
+
 export default function ErrorPage({ reset }: { reset: () => void }) {
-  return <div className="portal-empty"><h1>Reports are temporarily unavailable</h1><p>Your history is preserved. Try loading it again.</p><Button onClick={reset}>Try again</Button></div>;
+  return (
+    <Workspace>
+      <EmptyState
+        title="Reports are temporarily unavailable"
+        description="Your history is preserved. Try loading it again."
+        actions={<Button onClick={reset}>Try again</Button>}
+      />
+    </Workspace>
+  );
 }

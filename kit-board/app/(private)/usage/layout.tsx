@@ -1,5 +1,11 @@
 import { UsageNavigation } from '@/components/usage-navigation';
-import '../../telemetry.css';
 export default function Layout({ children }: { children: React.ReactNode }) {
-  return <><UsageNavigation />{children}</>;
+  return (
+    <>
+      <div className="mx-auto w-full max-w-[1200px] px-6 pt-6">
+        <UsageNavigation />
+      </div>
+      {children}
+    </>
+  );
 }

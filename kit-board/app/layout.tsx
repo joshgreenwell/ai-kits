@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import { Manrope, DM_Mono } from 'next/font/google';
-import './observatory.css';
-import './portal.css';
+import './base.css';
 import './theme.css';
 const manrope = Manrope({ variable: '--font-manrope', subsets: ['latin'] });
 const mono = DM_Mono({ variable: '--font-dm-mono', subsets: ['latin'], weight: ['400', '500'] });

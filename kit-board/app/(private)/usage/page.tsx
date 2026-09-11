@@ -4,6 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { MachineReporters } from "@/components/machine-reporters";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Workspace } from "@/components/workspace";
+import { EmptyState, SparkBars, Stat, StatGroup } from "@/components/kit";
 import { fetchPrivateJson } from "@/lib/fetch-private-json";
 import {
   Select,
@@ -13,7 +19,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import environmentalFactors from "./environmental-factors.json";
-import "@/app/usage-header.css";
 
 interface UsageRow { key: string; total_tokens: number; calls?: number }
 interface CostRow extends UsageRow {
@@ -414,21 +419,44 @@ export default function Home() {
   const maxDay = Math.max(...days.map((day) => day.tokens), 1);
   const selectedLabel = activeMonth ? formatMonth(activeMonth) : "No reports";
 
-  if (loading) return <main><section className="empty-state"><span className="kicker">Token Observatory</span><h1>Loading report history…</h1></section></main>;
-  if (error && !reports.length) return <main><section className="empty-state"><span className="kicker">Connection issue</span><h1>{error}</h1></section></main>;
-  if (!reports.length) return <main><section className="empty-state"><span className="kicker">Token Observatory</span><h1>Ready for the first monthly upload.</h1><p>The database is connected. Run the token skill with its upload configuration to populate this dashboard.</p></section></main>;
+  if (loading)
+    return (
+      <Workspace>
+        <EmptyState title="Loading report history…" description="Reading the uploaded monthly analyses." />
+      </Workspace>
+    );
+  if (error && !reports.length)
+    return (
+      <Workspace>
+        <Alert variant="destructive">
+          <AlertTitle>Connection issue</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      </Workspace>
+    );
+  if (!reports.length)
+    return (
+      <Workspace>
+        <EmptyState
+          title="Ready for the first monthly upload"
+          description="The database is connected. Run the token skill with its upload configuration to populate this dashboard."
+        />
+      </Workspace>
+    );
+
+  const composedTotal = rawTotal || 1;
 
   return (
-    <main className="usage-workspace">
+    <Workspace>
       <PageHeader
-        className="usage-page-header"
         eyebrow={selectedLabel}
         title="Monthly AI intelligence"
+        description={`${partialMonth ? "Month to date · full report detail" : "Full monthly report"} · ${hourlyMachines ? `${hourlyMachines} of ${visibleRows.length} selected machine reports refresh hourly` : "Scheduled and manual report snapshots"}.${partialMonth ? " Prior-month percentage comparisons resume after this month closes." : ""}`}
         actions={
           <>
             <MachineReporters machines={monthRows} />
             <Select value={activeMonth} onValueChange={(month) => { setSelectedMonth(month); setSelectedMachine("all"); }}>
-              <SelectTrigger className="usage-month-select" aria-label="Report month">
+              <SelectTrigger aria-label="Report month" className="w-[180px]">
                 <SelectValue placeholder="Report month" />
               </SelectTrigger>
               <SelectContent position="popper" align="end">
@@ -439,138 +467,460 @@ export default function Home() {
         }
       />
 
-      {error && <p role="alert" className="telemetry-notice">{error}</p>}
-      <p className="detailed-report-status">{partialMonth ? 'Month to date · full report detail' : 'Full monthly report'} · {hourlyMachines ? `${hourlyMachines} of ${visibleRows.length} selected machine reports refresh hourly` : 'Scheduled and manual report snapshots'}. {partialMonth && 'Prior-month percentage comparisons resume after this month closes.'}</p>
-      <section className="hero" id="top">
-        <div className="hero-grid">
-          <div className="headline-number"><div className="metric-label">{selectedMachine === "all" ? "Combined" : "Machine"} raw volume</div><strong>{formatTokens(rawTotal)}</strong>{partialMonth ? <div className="delta"><span>In progress · through each machine’s latest snapshot</span></div> : <div className={`delta ${monthChange >= 0 ? "up" : "down"}`}>{monthChange >= 0 ? "↑" : "↓"} {formatPercent(Math.abs(monthChange))} <span>from prior month</span></div>}</div>
-        </div>
-        <div className="quick-stats">
-          <div><span>Model calls</span><strong>{calls.toLocaleString()}</strong></div>
-          <div><span>Average / call</span><strong>{formatTokens(averagePerCall)}</strong></div>
-          <div><span>Threads</span><strong>{threads.toLocaleString()}</strong></div>
-          <div><span>Game design</span><strong>{formatPercent(rawTotal ? gameTokens / rawTotal : 0)}</strong></div>
-        </div>
-      </section>
+      {error && (
+        <Alert variant="destructive" role="alert">
+          <AlertTitle>Some data could not be refreshed</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
-      <section className="overview-grid" aria-label="Usage overview">
-        <article className="panel composition-panel">
-          <div className="panel-heading"><div><span className="kicker">Context composition</span><h2>Mostly reused, not newly generated.</h2></div><span className="quiet-pill">{formatPercent(cacheShare)} cached</span></div>
-          <div className="composition-bar" aria-label={`${formatPercent(cacheShare)} cached input`}><span className="cached" style={{ width: `${cacheShare * 100}%` }} /><span className="fresh" style={{ width: `${rawTotal ? composition.uncached / rawTotal * 100 : 0}%` }} /><span className="output" style={{ width: `${rawTotal ? composition.output / rawTotal * 100 : 0}%` }} /></div>
-          <div className="legend-row">
-            <div><i className="dot cached-dot" /><span>Cached input</span><strong>{formatTokens(composition.cached)}</strong></div>
-            <div><i className="dot fresh-dot" /><span>Uncached input</span><strong>{formatTokens(composition.uncached)}</strong></div>
-            <div><i className="dot output-dot" /><span>Output + other</span><strong>{formatTokens(composition.output)}</strong></div>
+      {/* Headline volume ---------------------------------------------------- */}
+      <Card className="gap-0 overflow-hidden py-0">
+        <CardHeader className="p-4">
+          <CardDescription>{selectedMachine === "all" ? "Combined" : "Machine"} raw volume</CardDescription>
+          <CardTitle className="font-mono text-4xl leading-none font-medium tracking-tight tabular-nums">
+            {formatTokens(rawTotal)}
+          </CardTitle>
+          <CardAction>
+            {partialMonth ? (
+              <Badge variant="outline">In progress · through each machine’s latest snapshot</Badge>
+            ) : (
+              <Badge variant={monthChange >= 0 ? "soft-warning" : "soft"}>
+                {monthChange >= 0 ? "↑" : "↓"} {formatPercent(Math.abs(monthChange))} from prior month
+              </Badge>
+            )}
+          </CardAction>
+        </CardHeader>
+        <StatGroup className="border-border border-t">
+          <Stat label="Model calls" value={calls.toLocaleString()} />
+          <Stat label="Average / call" value={formatTokens(averagePerCall)} />
+          <Stat label="Threads" value={threads.toLocaleString()} />
+          <Stat label="Game design" value={formatPercent(rawTotal ? gameTokens / rawTotal : 0)} />
+        </StatGroup>
+      </Card>
+
+      {/* Context composition -------------------------------------------------- */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Context composition</CardTitle>
+            <CardDescription>Mostly reused, not newly generated.</CardDescription>
+            <CardAction><Badge variant="soft">{formatPercent(cacheShare)} cached</Badge></CardAction>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div
+              className="border-border flex h-3 overflow-hidden rounded-sm border"
+              role="img"
+              aria-label={`${formatPercent(cacheShare)} cached input, ${formatTokens(composition.uncached)} uncached input, ${formatTokens(composition.output)} output`}
+            >
+              <span className="bg-primary" style={{ width: `${(composition.cached / composedTotal) * 100}%` }} />
+              <span className="bg-chart-2" style={{ width: `${(composition.uncached / composedTotal) * 100}%` }} />
+              <span className="bg-chart-4" style={{ width: `${(composition.output / composedTotal) * 100}%` }} />
+            </div>
+            <dl className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-4">
+              {[
+                ["Cached input", composition.cached, "bg-primary"],
+                ["Uncached input", composition.uncached, "bg-chart-2"],
+                ["Output + other", composition.output, "bg-chart-4"],
+              ].map(([label, value, tone]) => (
+                <div key={label as string}>
+                  <dt className="text-muted-foreground flex items-center gap-2 text-xs">
+                    <i className={`block size-2 rounded-xs ${tone as string}`} aria-hidden="true" />
+                    {label as string}
+                  </dt>
+                  <dd className="mt-1 font-mono text-lg font-medium tabular-nums">{formatTokens(value as number)}</dd>
+                </div>
+              ))}
+            </dl>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Fresh / non-cached</CardTitle>
+            <CardDescription>{formatPercent(rawTotal ? freshTotal / rawTotal : 0)} of total volume</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            <p className="text-primary font-mono text-3xl leading-none font-medium tracking-tight tabular-nums">
+              {formatTokens(freshTotal)}
+            </p>
+            <p className="text-muted-foreground text-sm leading-relaxed">
+              {partialMonth ? "Month-to-date activity; " : `Call count changed ${formatPercent(callChange, true)}; `}
+              average context was {formatTokens(averagePerCall)} per call.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Daily volume --------------------------------------------------------- */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Daily volume</CardTitle>
+          <CardDescription>When activity concentrated.</CardDescription>
+          <CardAction>
+            <div className="text-right">
+              <span className="text-muted-foreground block text-[10px] font-semibold tracking-wider uppercase">Peak</span>
+              <span className="block font-mono text-lg font-medium tabular-nums">{formatTokens(peakDay.tokens)}</span>
+              <span className="text-muted-foreground block font-mono text-[10px]">{peakDay.date}</span>
+            </div>
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          {days.length ? (
+            <SparkBars
+              values={days.map((day) => day.tokens)}
+              axis={[days.at(0)?.date ?? "—", days.at(Math.floor(days.length / 2))?.date ?? "—", days.at(-1)?.date ?? "—"]}
+              formatValue={formatTokens}
+            />
+          ) : (
+            <EmptyState title="No daily detail in this month’s upload" />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* API-equivalent cost --------------------------------------------------- */}
+      <Card className="gap-0 overflow-hidden py-0" aria-label="API-equivalent cost estimate">
+        <CardHeader className="p-4">
+          <CardTitle className="text-base">API-equivalent pricing</CardTitle>
+          <CardDescription>What this usage would cost through the API.</CardDescription>
+          <CardAction><Badge variant="outline">{formatPercent(pricingCoverage)} priced</Badge></CardAction>
+        </CardHeader>
+
+        <div className="border-border grid gap-4 border-t p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+          <div>
+            <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Estimated API cost</span>
+            <p className="text-primary mt-2 font-mono text-3xl leading-none font-medium tracking-tight tabular-nums">
+              {formatCurrency(estimatedCost)}
+            </p>
+            <p className="text-muted-foreground mt-2 max-w-[46ch] text-sm leading-relaxed">
+              This is a comparison estimate — not your Codex subscription bill or credit usage.
+            </p>
           </div>
-        </article>
-        <article className="panel fresh-panel"><span className="kicker">Fresh / non-cached</span><strong className="panel-number">{formatTokens(freshTotal)}</strong><p>{formatPercent(rawTotal ? freshTotal / rawTotal : 0)} of total volume</p><div className="mini-rule"><span /></div><p className="insight">{partialMonth ? "Month-to-date activity; " : `Call count changed ${formatPercent(callChange, true)}; `}average context was {formatTokens(averagePerCall)} per call.</p></article>
-      </section>
+          <StatGroup className="border-border rounded-lg border">
+            <Stat label="Priced coverage" value={formatPercent(pricingCoverage)} caption={`${formatTokens(unpricedTokens)} unpriced`} />
+            <Stat label="Fast / Priority" value={formatPercent(rawTotal ? fastTokens / rawTotal : 0)} caption={`${formatTokens(fastTokens)} raw tokens`} />
+            <Stat label="Reasoning output" value={formatCurrency(reasoningCost)} caption="charged at output rate" />
+            <Stat label="Tier assumed" value={assumedTierCalls.toLocaleString()} caption="calls treated as Standard" />
+          </StatGroup>
+        </div>
 
-      <section className="panel activity-panel">
-        <div className="panel-heading activity-heading"><div><span className="kicker">Daily volume</span><h2>When activity concentrated.</h2></div><div className="peak-note"><span>Peak</span><strong>{formatTokens(peakDay.tokens)}</strong><small>{peakDay.date}</small></div></div>
-        <div className="chart" aria-label={`Daily volume for ${selectedLabel}`}><div className="chart-grid"><span /><span /><span /><span /></div><div className="bars">{days.map((day) => <span key={day.date} title={`${day.date}: ${formatTokens(day.tokens)}`} style={{ height: `${Math.max(4, day.tokens / maxDay * 100)}%` }} className={day.date === peakDay.date ? "peak" : ""} />)}</div></div>
-        <div className="chart-axis"><span>{days.at(0)?.date ?? "—"}</span><span>{days.at(Math.floor(days.length / 2))?.date ?? "—"}</span><span>{days.at(-1)?.date ?? "—"}</span></div>
-      </section>
+        <div className="border-border grid gap-4 border-t p-4 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
+          <div>
+            <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Cost composition</span>
+            <dl className="mt-2 grid">
+              {[
+                ["Uncached input", inputCost],
+                ["Cached input", cachedCost],
+                ["Reasoning output", reasoningCost],
+                ["Other output", otherOutputCost],
+              ].map(([label, value]) => (
+                <div key={label as string} className="border-border flex items-baseline justify-between gap-4 border-b py-2 last:border-b-0">
+                  <dt className="text-muted-foreground text-sm">{label as string}</dt>
+                  <dd className="font-mono text-sm font-medium tabular-nums">{formatCurrency(value as number)}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
 
-      <section className="panel cost-panel" aria-label="API-equivalent cost estimate">
-        <div className="panel-heading cost-heading"><div><span className="kicker">API-equivalent pricing</span><h2>What this usage would cost through the API.</h2></div><span className="quiet-pill">{formatPercent(pricingCoverage)} priced</span></div>
-        <div className="cost-summary">
-          <div className="cost-total"><span>Estimated API cost</span><strong>{formatCurrency(estimatedCost)}</strong><p>This is a comparison estimate—not your Codex subscription bill or credit usage.</p></div>
-          <div className="cost-stat-grid">
-            <div><span>Priced coverage</span><strong>{formatPercent(pricingCoverage)}</strong><small>{formatTokens(unpricedTokens)} unpriced</small></div>
-            <div><span>Fast / Priority</span><strong>{formatPercent(rawTotal ? fastTokens / rawTotal : 0)}</strong><small>{formatTokens(fastTokens)} raw tokens</small></div>
-            <div><span>Reasoning output</span><strong>{formatCurrency(reasoningCost)}</strong><small>charged at output rate</small></div>
-            <div><span>Tier assumed</span><strong>{assumedTierCalls.toLocaleString()}</strong><small>calls treated as Standard</small></div>
+          <div className="border-border overflow-hidden rounded-lg border">
+            {costDimensions.length ? (
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="bg-card uppercase">Model</TableHead>
+                    <TableHead className="bg-card uppercase">Effort</TableHead>
+                    <TableHead className="bg-card uppercase">Speed</TableHead>
+                    <TableHead className="bg-card uppercase">Usage</TableHead>
+                    <TableHead className="bg-card text-right uppercase">Estimate</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {costDimensions.slice(0, 10).map((row) => (
+                    <TableRow key={row.key} className="even:bg-foreground/[0.03] border-b-0">
+                      <TableCell className="font-medium">{row.model}</TableCell>
+                      <TableCell className="text-muted-foreground">{row.reasoning_effort}</TableCell>
+                      <TableCell className="text-muted-foreground">{row.service_tier.replace("assumed_standard", "Standard*")}</TableCell>
+                      <TableCell className="text-muted-foreground font-mono text-xs">
+                        {formatTokens(row.total_tokens)} · {(row.calls ?? 0).toLocaleString()} calls
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">{formatCurrency(row.estimated_cost_usd)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <div className="p-4">
+                <EmptyState title="No model-level pricing in this upload" description="Re-run this month with the updated analyzer to add model, effort, and speed pricing." />
+              </div>
+            )}
           </div>
         </div>
-        <div className="cost-detail-grid">
-          <div className="cost-components"><span className="kicker">Cost composition</span>
-            <div><span>Uncached input</span><strong>{formatCurrency(inputCost)}</strong></div>
-            <div><span>Cached input</span><strong>{formatCurrency(cachedCost)}</strong></div>
-            <div><span>Reasoning output</span><strong>{formatCurrency(reasoningCost)}</strong></div>
-            <div><span>Other output</span><strong>{formatCurrency(otherOutputCost)}</strong></div>
-          </div>
-          <div className="cost-table-wrap"><div className="cost-table-head"><span>Model</span><span>Effort</span><span>Speed</span><span>Usage</span><span>Estimate</span></div>
-            {costDimensions.slice(0, 10).map((row) => <div className="cost-table-row" key={row.key}><strong>{row.model}</strong><span>{row.reasoning_effort}</span><span>{row.service_tier.replace("assumed_standard", "Standard*")}</span><small>{formatTokens(row.total_tokens)} · {(row.calls ?? 0).toLocaleString()} calls</small><b>{formatCurrency(row.estimated_cost_usd)}</b></div>)}
-            {!costDimensions.length && <p className="cost-empty">Re-run this month with the updated analyzer to add model, effort, and speed pricing.</p>}
-          </div>
-        </div>
-        <div className="cost-footnote"><span>Rates {pricingCatalogs.join(", ") || "not recorded"}</span><p>Reasoning effort changes token volume, not the per-token rate. Requests above 272K logged input use long-context pricing. Separate tool fees, images, regional processing, and subscription credits are excluded.</p></div>
-      </section>
 
-      <section className="panel environment-panel" aria-label="Environmental scenario estimate">
-        <div className="environment-heading">
-          <div><span className="kicker">Environmental scenarios</span><h2>A footprint estimate—with the uncertainty left on.</h2></div>
-          <span className="scenario-badge">Not metered · inference only</span>
+        <div className="bg-muted border-border border-t p-4">
+          <p className="text-muted-foreground text-xs leading-relaxed">
+            <span className="text-foreground font-mono">Rates {pricingCatalogs.join(", ") || "not recorded"}</span> — reasoning
+            effort changes token volume, not the per-token rate. Requests above 272K logged input use
+            long-context pricing. Separate tool fees, images, regional processing, and subscription
+            credits are excluded.
+          </p>
         </div>
-        <p className="environment-intro">Codex does not expose datacenter power, water, hardware, location, or grid telemetry. These are call-based analogues: an efficient production floor, a reasoning-heavy planning scenario for this long-context workload, and a long-prompt upper scenario.</p>
-        <div className="environment-grid">
-          <article className="environment-card energy-card">
-            <span className="environment-icon" aria-hidden="true">↯</span><span className="metric-label">Electricity · planning</span>
-            <strong>{formatEnergy(environment.energy.planning)}</strong>
-            <p>About <b>{formatQuantity(environment.equivalents.homeDays)}</b> U.S. home-days or <b>{formatQuantity(environment.equivalents.phoneCharges, 0)}</b> full smartphone charges.</p>
-            <small>{formatEnergy(environment.energy.low)} – {formatEnergy(environment.energy.high)} scenario range</small>
-          </article>
-          <article className="environment-card water-card">
-            <span className="environment-icon" aria-hidden="true">◌</span><span className="metric-label">Direct water · planning</span>
-            <strong>{formatWater(environment.water.planning)}</strong>
-            <p>Roughly <b>{formatQuantity(environment.equivalents.showers, 2)}</b> average eight-minute showers.</p>
-            <small>{formatWater(environment.water.low)} – {formatWater(environment.water.high)} scenario range</small>
-          </article>
-          <article className="environment-card carbon-card">
-            <span className="environment-icon" aria-hidden="true">◇</span><span className="metric-label">Operational CO2e · planning</span>
-            <strong>{formatCarbon(environment.carbon.planning)}</strong>
-            <p>Same emissions as driving an average gasoline-powered car about <b>{formatQuantity(environment.equivalents.gasolineCarMiles, 0)} miles</b>.</p>
-            <small>{formatCarbon(environment.carbon.low)} – {formatCarbon(environment.carbon.high)} scenario range</small>
-          </article>
-        </div>
-        <div className="scenario-track" aria-label="Per-call electricity scenarios">
-          <div><span>Efficient production</span><strong>0.24 Wh / call</strong><i style={{ width: "12%" }} /></div>
-          <div><span>Planning scenario</span><strong>4.32 Wh / call</strong><i style={{ width: "45%" }} /></div>
-          <div><span>Long-context upper</span><strong>33 Wh / call</strong><i style={{ width: "100%" }} /></div>
-        </div>
-        <div className="impact-actions">
-          <div><span className="kicker">A measurable reduction</span><h3>Cutting calls 10% saves about {formatEnergy(environment.reduction.energy)}.</h3><p>That also models {formatWater(environment.reduction.water)} of direct water and {formatCarbon(environment.reduction.carbon)} CO2e avoided. Phase handoffs, bounded agents, and fresh tasks target repeated calls while preserving the useful work.</p></div>
-          <div><span className="kicker">Tree planting example</span><h3>About {formatQuantity(environment.equivalents.treeSeedlings, 0)} urban tree seedlings, grown for 10 years.</h3><p>That EPA comparison matches the planning estimate after a decade of growth. It is delayed biological sequestration—not an immediate or verified offset.</p></div>
-        </div>
-        <details className="methodology-note">
-          <summary>Methodology, scope, and sources</summary>
-          <p>{environmentalFactors.scope}</p>
-          <p>Raw and cached tokens describe workload shape, but are not converted with an invented joules-per-token factor. Method {environment.methodologyVersions.join(", ")} uses observed call counts; an average context above 50K raw tokens per call selects the 4.32 Wh reasoning-heavy planning scenario.</p>
-          <div className="source-links">{environmentalFactors.sources.filter((source) => source.url).map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.label}<span>↗</span></a>)}</div>
-        </details>
-      </section>
+      </Card>
 
-      <section className="section-block">
-        <div className="section-title"><div><span className="kicker">Sources</span><h2>{monthRows.length} machine{monthRows.length === 1 ? "" : "s"}, distinct workflows.</h2></div><p>Each computer publishes the full local analysis. Hourly-enabled collectors refresh the current month; other machines keep their existing upload schedule. Choose a machine to inspect its snapshot.</p></div>
-        <div className="machine-grid">
-          {monthRows.map((machine, index) => {
+      {/* Environmental scenarios ------------------------------------------------ */}
+      <Card className="gap-0 overflow-hidden py-0" aria-label="Environmental scenario estimate">
+        <CardHeader className="p-4">
+          <CardTitle className="text-base">Environmental scenarios</CardTitle>
+          <CardDescription>A footprint estimate — with the uncertainty left on.</CardDescription>
+          <CardAction><Badge variant="soft-warning">Not metered · inference only</Badge></CardAction>
+        </CardHeader>
+
+        <div className="border-border border-t p-4">
+          <p className="text-muted-foreground max-w-[80ch] text-sm leading-relaxed">
+            Codex does not expose datacenter power, water, hardware, location, or grid telemetry.
+            These are call-based analogues: an efficient production floor, a reasoning-heavy planning
+            scenario for this long-context workload, and a long-prompt upper scenario.
+          </p>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            {[
+              { label: "Electricity · planning", value: formatEnergy(environment.energy.planning), range: `${formatEnergy(environment.energy.low)} – ${formatEnergy(environment.energy.high)}`, body: <>About <b className="text-foreground">{formatQuantity(environment.equivalents.homeDays)}</b> U.S. home-days or <b className="text-foreground">{formatQuantity(environment.equivalents.phoneCharges, 0)}</b> full smartphone charges.</> },
+              { label: "Direct water · planning", value: formatWater(environment.water.planning), range: `${formatWater(environment.water.low)} – ${formatWater(environment.water.high)}`, body: <>Roughly <b className="text-foreground">{formatQuantity(environment.equivalents.showers, 2)}</b> average eight-minute showers.</> },
+              { label: "Operational CO2e · planning", value: formatCarbon(environment.carbon.planning), range: `${formatCarbon(environment.carbon.low)} – ${formatCarbon(environment.carbon.high)}`, body: <>Same emissions as driving an average gasoline car about <b className="text-foreground">{formatQuantity(environment.equivalents.gasolineCarMiles, 0)} miles</b>.</> },
+            ].map((scenario) => (
+              <div key={scenario.label} className="border-border grid gap-2 rounded-lg border p-4">
+                <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">{scenario.label}</span>
+                <strong className="font-mono text-2xl leading-none font-medium tracking-tight tabular-nums">{scenario.value}</strong>
+                <p className="text-muted-foreground text-sm leading-relaxed">{scenario.body}</p>
+                <span className="text-muted-foreground font-mono text-[10px]">{scenario.range} scenario range</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-2" aria-label="Per-call electricity scenarios">
+            {[
+              ["Efficient production", "0.24 Wh / call", 12],
+              ["Planning scenario", "4.32 Wh / call", 45],
+              ["Long-context upper", "33 Wh / call", 100],
+            ].map(([label, value, width]) => (
+              <div key={label as string} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1">
+                <span className="text-sm">{label as string}</span>
+                <span className="font-mono text-sm tabular-nums">{value as string}</span>
+                <span className="bg-muted border-border col-span-2 h-1.5 overflow-hidden rounded-xs border">
+                  <span className="bg-primary/70 block h-full" style={{ width: `${width as number}%` }} />
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div className="border-border grid gap-2 rounded-lg border p-4">
+              <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">A measurable reduction</span>
+              <h3 className="text-sm font-semibold">Cutting calls 10% saves about {formatEnergy(environment.reduction.energy)}.</h3>
+              <p className="text-muted-foreground text-sm leading-relaxed">
+                That also models {formatWater(environment.reduction.water)} of direct water and {formatCarbon(environment.reduction.carbon)} CO2e
+                avoided. Phase handoffs, bounded agents, and fresh tasks target repeated calls while preserving the useful work.
+              </p>
+            </div>
+            <div className="border-border grid gap-2 rounded-lg border p-4">
+              <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Tree planting example</span>
+              <h3 className="text-sm font-semibold">About {formatQuantity(environment.equivalents.treeSeedlings, 0)} urban tree seedlings, grown for 10 years.</h3>
+              <p className="text-muted-foreground text-sm leading-relaxed">
+                That EPA comparison matches the planning estimate after a decade of growth. It is
+                delayed biological sequestration — not an immediate or verified offset.
+              </p>
+            </div>
+          </div>
+
+          <details className="border-border mt-4 rounded-lg border p-4">
+            <summary className="cursor-pointer text-sm font-semibold">Methodology, scope, and sources</summary>
+            <p className="text-muted-foreground mt-2 text-xs leading-relaxed">{environmentalFactors.scope}</p>
+            <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
+              Raw and cached tokens describe workload shape, but are not converted with an invented
+              joules-per-token factor. Method {environment.methodologyVersions.join(", ")} uses observed call counts; an average
+              context above 50K raw tokens per call selects the 4.32 Wh reasoning-heavy planning scenario.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {environmentalFactors.sources.filter((source) => source.url).map((source) => (
+                <Button key={source.url} variant="outline" size="xs" asChild>
+                  <a href={source.url} target="_blank" rel="noreferrer">{source.label}</a>
+                </Button>
+              ))}
+            </div>
+          </details>
+        </div>
+      </Card>
+
+      {/* Sources ---------------------------------------------------------------- */}
+      <section className="grid gap-4">
+        <div className="grid gap-1">
+          <h2 className="text-lg font-semibold tracking-tight">
+            {monthRows.length} machine{monthRows.length === 1 ? "" : "s"}, distinct workflows
+          </h2>
+          <p className="text-muted-foreground max-w-[80ch] text-sm leading-relaxed">
+            Each computer publishes the full local analysis. Hourly-enabled collectors refresh the
+            current month; other machines keep their existing upload schedule. Choose a machine to
+            inspect its snapshot.
+          </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {monthRows.map((machine) => {
             const share = monthRows.reduce((sum, row) => sum + row.raw_tokens, 0);
             const focused = selectedMachine === machine.machine_id;
-            return <article className={`machine-card ${index % 2 ? "mint" : "violet"} ${focused ? "selected" : ""}`} key={machine.machine_id}>
-              <div className="machine-top"><span className="machine-icon" aria-hidden="true">●</span><span className="machine-share">{formatPercent(share ? machine.raw_tokens / share : 0)} of month</span></div>
-              <h3>{machine.machine_name}</h3><p>{formatTokens(machine.game_design_tokens)} game-design · {machine.agent_spawns} agent spawns</p>
-              <p className="machine-snapshot-age">{machine.envelope.report.collection?.kind === 'hourly_detailed_report' ? 'Hourly detail · snapshot changed ' : 'Snapshot generated '}{new Date(machine.envelope.report.generated_at_local).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>
-              <details className="telemetry-details"><summary>Source coverage</summary><p>{machine.envelope.report.data_scope || 'This machine’s uploaded local analysis.'}</p>{machine.envelope.report.data_quality && <p>Data quality: {machine.envelope.report.data_quality.replaceAll('_', ' ')}</p>}<p>Unchanged analysis does not create another snapshot. Check Connections for collector health.</p></details>
-              <div className="machine-metrics"><div><span>Raw tokens</span><strong>{formatTokens(machine.raw_tokens)}</strong></div><div><span>Fresh volume</span><strong>{formatTokens(machine.fresh_tokens)}</strong></div></div>
-              <Button type="button" variant="outline" className="machine-focus-button" onClick={() => setSelectedMachine(focused ? "all" : machine.machine_id)}>{focused ? "Return to combined report" : "Focus machine report"} <span>→</span></Button>
-            </article>;
+            return (
+              <Card key={machine.machine_id} className={focused ? "border-primary" : undefined}>
+                <CardHeader>
+                  <CardDescription>{formatPercent(share ? machine.raw_tokens / share : 0)} of month</CardDescription>
+                  <CardTitle className="text-base">{machine.machine_name}</CardTitle>
+                  {focused ? <CardAction><Badge variant="soft">focused</Badge></CardAction> : null}
+                </CardHeader>
+                <CardContent className="grid gap-3">
+                  <p className="text-muted-foreground text-sm">
+                    {formatTokens(machine.game_design_tokens)} game-design · {machine.agent_spawns} agent spawns
+                  </p>
+                  <p className="text-muted-foreground font-mono text-[11px]">
+                    {machine.envelope.report.collection?.kind === "hourly_detailed_report" ? "Hourly detail · snapshot changed " : "Snapshot generated "}
+                    {new Date(machine.envelope.report.generated_at_local).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                  </p>
+                  <dl className="border-border flex flex-wrap gap-x-6 border-t pt-3">
+                    <div>
+                      <dt className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Raw tokens</dt>
+                      <dd className="mt-1 font-mono text-lg font-medium tabular-nums">{formatTokens(machine.raw_tokens)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Fresh volume</dt>
+                      <dd className="mt-1 font-mono text-lg font-medium tabular-nums">{formatTokens(machine.fresh_tokens)}</dd>
+                    </div>
+                  </dl>
+                  <details>
+                    <summary className="text-muted-foreground hover:text-foreground cursor-pointer font-mono text-[11px]">Source coverage</summary>
+                    <p className="text-muted-foreground mt-2 text-xs leading-relaxed">{machine.envelope.report.data_scope || "This machine’s uploaded local analysis."}</p>
+                    {machine.envelope.report.data_quality && (
+                      <p className="text-muted-foreground mt-1 text-xs leading-relaxed">Data quality: {machine.envelope.report.data_quality.replaceAll("_", " ")}</p>
+                    )}
+                    <p className="text-muted-foreground mt-1 text-xs leading-relaxed">Unchanged analysis does not create another snapshot. Check Connections for collector health.</p>
+                  </details>
+                  <Button type="button" variant={focused ? "secondary" : "outline"} size="sm" onClick={() => setSelectedMachine(focused ? "all" : machine.machine_id)}>
+                    {focused ? "Return to combined report" : "Focus machine report"}
+                  </Button>
+                </CardContent>
+              </Card>
+            );
           })}
         </div>
       </section>
 
-      <section className="bottom-grid">
-        <article className="panel driver-panel"><span className="kicker">Largest drivers</span><h2>Where the month went</h2><ol className="driver-list">{projects.slice(0, 5).map((project, index) => <li key={project.key}><span className="rank">{String(index + 1).padStart(2, "0")}</span><div><strong>{project.key}</strong><small>{formatTokens(project.total_tokens)} raw tokens</small></div><b>{formatPercent(rawTotal ? project.total_tokens / rawTotal : 0)}</b></li>)}</ol></article>
-        <article className="panel agent-panel"><span className="kicker">Orchestration</span><h2>{agentSpawns.toLocaleString()} agents spawned</h2><div className="agent-ring" style={{ "--agent-share": `${agentShare * 100}%` } as React.CSSProperties}><div><strong>{formatPercent(agentShare)}</strong><span>of volume</span></div></div><div className="agent-stats"><div><strong>{customSpawns}</strong><span>Custom spawns</span></div><div><strong>{directBrainCalls}</strong><span>Direct brain calls</span></div><div><strong>{indirectBrainCalls}</strong><span>Indirect signals</span></div></div></article>
-      </section>
+      {/* Drivers and orchestration ------------------------------------------------ */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="gap-0 overflow-hidden py-0">
+          <CardHeader className="p-4">
+            <CardTitle className="text-base">Largest drivers</CardTitle>
+            <CardDescription>Where the month went</CardDescription>
+          </CardHeader>
+          <ol className="border-border border-t">
+            {projects.slice(0, 5).map((project, index) => (
+              <li key={project.key} className="border-border flex items-center gap-3 border-b px-4 py-2.5 last:border-b-0">
+                <span className="text-muted-foreground w-6 font-mono text-xs tabular-nums">{String(index + 1).padStart(2, "0")}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold">{project.key}</span>
+                  <span className="text-muted-foreground block font-mono text-[11px]">{formatTokens(project.total_tokens)} raw tokens</span>
+                </span>
+                <span className="font-mono text-sm font-medium tabular-nums">{formatPercent(rawTotal ? project.total_tokens / rawTotal : 0)}</span>
+              </li>
+            ))}
+          </ol>
+        </Card>
 
-      <section className="details-grid">
-        <article className="panel detail-panel"><span className="kicker">Task families</span><h2>Largest long-running contexts</h2><div className="task-table">{tasks.slice(0, 8).map((task) => <div key={task.label}><span>{task.label}</span><small>{task.sessions} sessions</small><strong>{formatTokens(task.total_tokens)}</strong></div>)}</div></article>
-        <article className="panel detail-panel"><span className="kicker">Measured next actions</span><h2>Reduce volume, preserve quality</h2><ol className="recommendation-list">{recommendations.map((recommendation, index) => <li key={recommendation}><span>{String(index + 1).padStart(2, "0")}</span><p>{recommendation}</p></li>)}</ol><div className="brain-note"><span>Knowledge brain</span><strong>{directBrainCalls} confirmed calls</strong><small>{formatTokens(gameTokens)} game-design tokens</small></div></article>
-      </section>
+        <Card className="gap-0 overflow-hidden py-0">
+          <CardHeader className="p-4">
+            <CardTitle className="text-base">{agentSpawns.toLocaleString()} agents spawned</CardTitle>
+            <CardDescription>Orchestration</CardDescription>
+          </CardHeader>
+          <CardContent className="border-border border-t p-4">
+            <div className="flex items-baseline justify-between gap-4">
+              <span className="text-muted-foreground text-sm">Share of volume</span>
+              <span className="font-mono text-2xl leading-none font-medium tabular-nums">{formatPercent(agentShare)}</span>
+            </div>
+            <div className="bg-muted border-border mt-3 h-2 overflow-hidden rounded-sm border">
+              <span className="bg-primary block h-full" style={{ width: `${Math.min(100, agentShare * 100)}%` }} />
+            </div>
+          </CardContent>
+          <StatGroup className="border-border border-t">
+            <Stat label="Custom spawns" value={customSpawns} />
+            <Stat label="Direct brain calls" value={directBrainCalls} />
+            <Stat label="Indirect signals" value={indirectBrainCalls} />
+          </StatGroup>
+        </Card>
+      </div>
 
-      <section className="theme-strip"><span>Theme split</span>{themes.map((theme) => <div key={theme.key}><strong>{theme.key}</strong><small>{formatTokens(theme.total_tokens)} · {formatPercent(rawTotal ? theme.total_tokens / rawTotal : 0)}</small></div>)}</section>
-      <footer><span>Token Observatory</span><p>Local analysis · Authenticated uploads · Historical comparison</p></footer>
-    </main>
+      {/* Task families and next actions -------------------------------------------- */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="gap-0 overflow-hidden py-0">
+          <CardHeader className="p-4">
+            <CardTitle className="text-base">Task families</CardTitle>
+            <CardDescription>Largest long-running contexts</CardDescription>
+          </CardHeader>
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="bg-card uppercase">Task</TableHead>
+                <TableHead className="bg-card uppercase">Sessions</TableHead>
+                <TableHead className="bg-card text-right uppercase">Tokens</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {tasks.slice(0, 8).map((task) => (
+                <TableRow key={task.label} className="even:bg-foreground/[0.03] border-b-0">
+                  <TableCell className="max-w-[28ch] truncate font-medium">{task.label}</TableCell>
+                  <TableCell className="text-muted-foreground font-mono text-xs tabular-nums">{task.sessions}</TableCell>
+                  <TableCell className="text-right font-mono tabular-nums">{formatTokens(task.total_tokens)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+
+        <Card className="gap-0 overflow-hidden py-0">
+          <CardHeader className="p-4">
+            <CardTitle className="text-base">Measured next actions</CardTitle>
+            <CardDescription>Reduce volume, preserve quality</CardDescription>
+          </CardHeader>
+          <ol className="border-border border-t">
+            {recommendations.map((recommendation, index) => (
+              <li key={recommendation} className="border-border flex gap-3 border-b px-4 py-2.5 last:border-b-0">
+                <span className="text-muted-foreground w-6 shrink-0 font-mono text-xs tabular-nums">{String(index + 1).padStart(2, "0")}</span>
+                <p className="text-muted-foreground text-sm leading-relaxed">{recommendation}</p>
+              </li>
+            ))}
+          </ol>
+          <div className="bg-muted border-border flex flex-wrap items-baseline justify-between gap-3 border-t p-4">
+            <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Knowledge brain</span>
+            <span className="font-mono text-sm font-medium tabular-nums">{directBrainCalls} confirmed calls</span>
+            <span className="text-muted-foreground font-mono text-[11px]">{formatTokens(gameTokens)} game-design tokens</span>
+          </div>
+        </Card>
+      </div>
+
+      {/* Theme split ----------------------------------------------------------------- */}
+      <Card className="gap-0 overflow-hidden py-0">
+        <CardHeader className="p-4">
+          <CardTitle className="text-base">Theme split</CardTitle>
+        </CardHeader>
+        <StatGroup className="border-border border-t">
+          {themes.map((theme) => (
+            <Stat
+              key={theme.key}
+              label={theme.key}
+              value={formatTokens(theme.total_tokens)}
+              caption={formatPercent(rawTotal ? theme.total_tokens / rawTotal : 0)}
+            />
+          ))}
+        </StatGroup>
+      </Card>
+
+      <footer className="text-muted-foreground border-border border-t pt-4 font-mono text-[11px]">
+        Token Observatory · local analysis · authenticated uploads · historical comparison
+      </footer>
+    </Workspace>
   );
 }

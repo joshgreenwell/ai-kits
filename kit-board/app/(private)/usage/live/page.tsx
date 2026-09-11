@@ -2,9 +2,13 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { PageHeader } from '@/components/page-header';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Workspace } from '@/components/workspace';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { EmptyState, SparkBars, Stat, StatGroup } from '@/components/kit';
 import { Choice, tokens, useLiveData, when } from '@/components/telemetry-shared';
 import { isSparkWindow, quotaPace, tokenPace } from '@/lib/telemetry-contract';
 import { AllowanceCard } from '@/components/allowance-card';
@@ -29,32 +33,185 @@ export default function LiveUsage() {
   }) ?? [];
   const sparkCount = windows.filter(w => isSparkWindow(w.pace)).length;
   const visibleWindows = windows.filter(w => showSpark || !isSparkWindow(w.pace));
-  return <main className="telemetry-workspace">
-    <PageHeader eyebrow="Token Observatory · hourly collection" title="Usage & pace" actions={<Badge variant="outline">0 AI calls to collect</Badge>} />
-    <div className="telemetry-body">
-      {error && <div role="alert" className="telemetry-notice"><p>{error}</p><Button variant="outline" onClick={retry}>Retry loading</Button></div>}
-      {localSources.some(s => s.coverage?.unavailable_roots || s.coverage?.malformed_lines) && <p className="telemetry-notice">Some local logs could not be read. Collected totals remain visible; pace estimates are paused until collection is complete. <Link href="/usage/connections">Check collectors</Link></p>}
-      {!data ? (!error && <p className="telemetry-muted">Loading usage…</p>) : <>
-        <div className="telemetry-filters"><Choice label="Account" value={account} onChange={setAccount} options={[{ value: 'all', label: 'All connected accounts' }, ...data.accounts.map(a => ({ value: a.id, label: a.label }))]} />
-          <p className="telemetry-muted">Updated {when(data.as_of)} · <Link href="/usage/connections">{data.sources.filter(s => !s.disabled).length} collectors</Link></p></div>
-        <div className="telemetry-metrics">
-          <Card><CardHeader><CardDescription>Observed tokens · last 24 complete hours</CardDescription><CardTitle className="telemetry-number">{rows.length ? tokens(pace.tokensLast24Hours) : '—'}</CardTitle></CardHeader><CardContent>From connected local logs</CardContent></Card>
-          <Card><CardHeader><CardDescription>Recent burn · trailing 6 complete hours</CardDescription><CardTitle className="telemetry-number">{rows.length && recent ? tokens(pace.tokensPerHour) : '—'}<small> / hour</small></CardTitle></CardHeader><CardContent>{recent ? 'Idle hours are included in this rate' : 'Waiting for fresh local collection'}</CardContent></Card>
-          <Card><CardHeader><CardDescription>Next 24 hours · at the recent pace</CardDescription><CardTitle className="telemetry-number">{rows.length && recent ? tokens(projected) : '—'}</CardTitle></CardHeader><CardContent>Scenario estimate from collected activity</CardContent></Card>
-        </div>
-        <Card><CardHeader className="telemetry-card-heading"><div><CardTitle>Token activity</CardTitle><CardDescription>UTC buckets · current bucket is still accumulating</CardDescription></div><Choice label="View" value={granularity} onChange={setGranularity} options={[{ value: 'hour', label: 'Hourly · 48 hours' }, { value: 'day', label: 'Daily · 30 days' }]} /></CardHeader>
-          <CardContent>{rows.length ? <><div className="telemetry-chart" role="img" aria-label={`${granularity === 'hour' ? 'Hourly' : 'Daily'} collected token usage`}>
-            {bars.map(([at, n]) => <div className="telemetry-bar-slot" key={at} title={`${at.slice(0, 16).replace('T', ' ')} UTC: ${n.toLocaleString()} tokens`}><div style={{ height: `${Math.max(0.7, n / max * 100)}%` }} className={Date.parse(at) === end ? 'telemetry-bar current' : 'telemetry-bar'} /></div>)}
-          </div><div className="telemetry-chart-labels"><span>{bars[0]?.[0].slice(0, 16).replace('T', ' ')} UTC</span><span>{tokens(max)} peak</span><span>Now</span></div>
-          <details className="telemetry-details"><summary>View activity values</summary><div className="telemetry-table-wrap"><table><thead><tr><th>Bucket (UTC)</th><th>Tokens</th></tr></thead><tbody>{bars.map(([at, n]) => <tr key={at}><td>{at.slice(0, 16).replace('T', ' ')}</td><td>{n.toLocaleString()}</td></tr>)}</tbody></table></div></details></> : <p className="telemetry-muted">No token logs have been collected for this selection. Browser connections report allowance usage only.</p>}
-          <p className="telemetry-footnote">Empty buckets mean no recorded activity; they may include collection gaps. Local logs do not cover browser or cloud conversations. Monthly reports are excluded from this series.</p></CardContent></Card>
-        <div className="telemetry-section-heading"><div><h2>Allowance outlook</h2><span>How much of each subscription window you’ll use by reset, based on measured history.</span></div>
-          {sparkCount > 0 && <Button variant="outline" aria-pressed={showSpark} onClick={() => setShowSpark(v => !v)}>{showSpark ? 'Hide' : 'Show'} Codex Spark ({sparkCount})</Button>}</div>
-        {!visibleWindows.length && <Card><CardContent className="telemetry-empty">{windows.length ? 'Spark allowances are hidden. Use the toggle to show them.' : <>Allowance readings will appear after a Codex log update or a Claude browser/statusline collection. <Link href="/usage/connections">Connect an account</Link></>}</CardContent></Card>}
-        <div className="telemetry-quotas">{visibleWindows.map(({ account: a, pace: p }) => <AllowanceCard key={a.id + p.window_key} account={a} pace={p} now={now} />)}</div>
-        {data.accounts.filter(a => (account === 'all' || a.id === account) && !windows.some(w => w.account.id === a.id)).map(a => <Card key={a.id}><CardHeader><CardDescription>{a.label}</CardDescription><CardTitle>Waiting for allowance history</CardTitle></CardHeader><CardContent>No allowance readings collected yet. Connect this account’s quota collector to see its remaining allowance and projection. <Link href="/usage/connections">Check connection</Link></CardContent></Card>)}
-        <p className="telemetry-muted">Each account and allowance window is forecast independently. Open the full analysis in your <Link href="/usage">Monthly report</Link>.</p>
-      </>}
-    </div>
-  </main>;
+  const partialCoverage = localSources.some(s => s.coverage?.unavailable_roots || s.coverage?.malformed_lines);
+
+  return (
+    <Workspace>
+      <PageHeader
+        eyebrow="Token Observatory · hourly collection"
+        title="Usage & pace"
+        actions={<Badge variant="outline">0 AI calls to collect</Badge>}
+      />
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertTitle>Usage is temporarily unavailable</AlertTitle>
+          <AlertDescription>
+            <p>{error}</p>
+            <Button variant="outline" size="sm" className="mt-2" onClick={retry}>Retry loading</Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {partialCoverage && (
+        <Alert variant="warning">
+          <AlertTitle>Some local logs could not be read</AlertTitle>
+          <AlertDescription>
+            Collected totals remain visible; pace estimates are paused until collection is complete.{' '}
+            <Link href="/usage/connections" className="underline underline-offset-4">Check collectors</Link>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {!data ? (
+        !error && <p className="text-muted-foreground text-sm">Loading usage…</p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <Choice
+              label="Account"
+              value={account}
+              onChange={setAccount}
+              options={[{ value: 'all', label: 'All connected accounts' }, ...data.accounts.map(a => ({ value: a.id, label: a.label }))]}
+            />
+            <p className="text-muted-foreground font-mono text-[11px]">
+              Updated {when(data.as_of)} ·{' '}
+              <Link href="/usage/connections" className="underline underline-offset-4">
+                {data.sources.filter(s => !s.disabled).length} collectors
+              </Link>
+            </p>
+          </div>
+
+          <Card className="gap-0 overflow-hidden py-0">
+            <StatGroup>
+              <Stat
+                label="Observed tokens"
+                value={rows.length ? tokens(pace.tokensLast24Hours) : '—'}
+                caption="last 24 complete hours · from connected local logs"
+              />
+              <Stat
+                label="Recent burn"
+                value={rows.length && recent ? `${tokens(pace.tokensPerHour)}/h` : '—'}
+                caption={recent ? 'trailing 6 complete hours · idle hours included' : 'waiting for fresh local collection'}
+              />
+              <Stat
+                label="Next 24 hours"
+                value={rows.length && recent ? tokens(projected) : '—'}
+                caption="scenario estimate at the recent pace"
+              />
+            </StatGroup>
+          </Card>
+
+          <Card className="gap-0 overflow-hidden py-0">
+            <CardHeader className="p-4">
+              <CardTitle className="text-base">Token activity</CardTitle>
+              <CardDescription>UTC buckets · the current bucket is still accumulating</CardDescription>
+              <CardAction>
+                <Choice
+                  label="View"
+                  value={granularity}
+                  onChange={setGranularity}
+                  options={[{ value: 'hour', label: 'Hourly · 48 hours' }, { value: 'day', label: 'Daily · 30 days' }]}
+                />
+              </CardAction>
+            </CardHeader>
+
+            <CardContent className="grid gap-4 p-4">
+              {rows.length ? (
+                <>
+                  <SparkBars
+                    values={bars.map(([, n]) => n)}
+                    markIndex={bars.length - 1}
+                    axis={[bars[0]?.[0].slice(0, 16).replace('T', ' ') + ' UTC', `${tokens(max)} peak`, 'Now']}
+                    formatValue={tokens}
+                  />
+                  <details>
+                    <summary className="text-muted-foreground hover:text-foreground cursor-pointer font-mono text-[11px]">
+                      View activity values
+                    </summary>
+                    <div className="border-border mt-3 max-h-72 overflow-auto rounded-lg border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="hover:bg-transparent">
+                            <TableHead className="bg-card uppercase">Bucket (UTC)</TableHead>
+                            <TableHead className="bg-card text-right uppercase">Tokens</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {bars.map(([at, n]) => (
+                            <TableRow key={at} className="even:bg-foreground/[0.03] border-b-0">
+                              <TableCell className="font-mono text-xs">{at.slice(0, 16).replace('T', ' ')}</TableCell>
+                              <TableCell className="text-right font-mono text-xs tabular-nums">{n.toLocaleString()}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </details>
+                </>
+              ) : (
+                <EmptyState
+                  title="No token logs for this selection"
+                  description="Browser connections report allowance usage only. Connect a local collector to see token-level activity."
+                  actions={<Button size="sm" variant="outline" asChild><Link href="/usage/connections">Check connections</Link></Button>}
+                />
+              )}
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                Empty buckets mean no recorded activity; they may include collection gaps. Local logs
+                do not cover browser or cloud conversations. Monthly reports are excluded from this series.
+              </p>
+            </CardContent>
+          </Card>
+
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div className="grid gap-1">
+              <h2 className="text-lg font-semibold tracking-tight">Allowance outlook</h2>
+              <p className="text-muted-foreground max-w-[70ch] text-sm">
+                How much of each subscription window you’ll use by reset, based on measured history.
+              </p>
+            </div>
+            {sparkCount > 0 && (
+              <Button variant="outline" size="sm" aria-pressed={showSpark} onClick={() => setShowSpark(v => !v)}>
+                {showSpark ? 'Hide' : 'Show'} Codex Spark ({sparkCount})
+              </Button>
+            )}
+          </div>
+
+          {!visibleWindows.length && (
+            <EmptyState
+              title={windows.length ? 'Spark allowances are hidden' : 'No allowance readings yet'}
+              description={
+                windows.length
+                  ? 'Use the toggle above to show them.'
+                  : 'Allowance readings will appear after a Codex log update or a Claude browser/statusline collection.'
+              }
+              actions={!windows.length && <Button size="sm" asChild><Link href="/usage/connections">Connect an account</Link></Button>}
+            />
+          )}
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            {visibleWindows.map(({ account: a, pace: p }) => (
+              <AllowanceCard key={a.id + p.window_key} account={a} pace={p} now={now} />
+            ))}
+          </div>
+
+          {data.accounts
+            .filter(a => (account === 'all' || a.id === account) && !windows.some(w => w.account.id === a.id))
+            .map(a => (
+              <EmptyState
+                key={a.id}
+                title={`${a.label} — waiting for allowance history`}
+                description="No allowance readings collected yet. Connect this account’s quota collector to see its remaining allowance and projection."
+                actions={<Button size="sm" variant="outline" asChild><Link href="/usage/connections">Check connection</Link></Button>}
+              />
+            ))}
+
+          <p className="text-muted-foreground text-sm">
+            Each account and allowance window is forecast independently. Open the full analysis in your{' '}
+            <Link href="/usage" className="underline underline-offset-4">Monthly report</Link>.
+          </p>
+        </>
+      )}
+    </Workspace>
+  );
 }

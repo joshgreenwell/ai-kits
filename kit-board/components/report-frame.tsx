@@ -11,7 +11,7 @@ export function ReportFrame({ id, title }: { id: string; title: string }) {
       pending = requestAnimationFrame(() => {
         const element = frame.current;
         if (!element) return;
-        const header = document.querySelector('.portal-header')?.getBoundingClientRect().bottom ?? 0;
+        const header = document.querySelector('[data-app-header]')?.getBoundingClientRect().bottom ?? 0;
         element.contentWindow?.postMessage({ type: 'observatory:viewport', top: Math.max(0, header - element.getBoundingClientRect().top), height: window.innerHeight - header }, '*');
       });
     };
@@ -27,7 +27,7 @@ export function ReportFrame({ id, title }: { id: string; title: string }) {
       if (data.type === 'observatory:scroll' && Number.isFinite(data.top) && data.top >= 0 && data.top <= 2_000_000) {
         const element = frame.current;
         if (!element) return;
-        const header = document.querySelector('.portal-header')?.getBoundingClientRect().bottom ?? 0;
+        const header = document.querySelector('[data-app-header]')?.getBoundingClientRect().bottom ?? 0;
         window.scrollTo({ top: window.scrollY + element.getBoundingClientRect().top + data.top - header, behavior: 'instant' });
       }
     };

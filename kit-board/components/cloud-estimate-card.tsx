@@ -1,7 +1,9 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
+import { Card, CardAction, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
+import { Alert, AlertDescription } from './ui/alert';
+import { ListRow, ListRows } from './kit';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Choice, tokens, when, type LiveData } from './telemetry-shared';
@@ -37,39 +39,116 @@ export function CloudEstimateCard({ data, accountId, now, refresh }: { data: Liv
     } catch (e) { setMessage(e instanceof Error && e.name !== 'TimeoutError' ? e.message : 'The request timed out. Refresh to check whether it saved before trying again.'); }
     finally { setBusy(false); }
   }
-  return <Card>
-    <CardHeader><div className="telemetry-card-heading"><div><CardDescription>{account.label}</CardDescription><CardTitle>Cloud &amp; uncollected estimate</CardTitle></div><Badge variant="outline">Experimental · low confidence</Badge></div>
-      <CardDescription>Local-equivalent tokens inferred from account allowance changes. Separate from measured token totals.</CardDescription></CardHeader>
-    <CardContent>
-      {estimate.ok ? <>
-        <div className="telemetry-quota-number">≈ {tokens(estimate.value.estimated_unobserved_tokens)}<small>uncollected token-equivalent</small></div>
-        <dl className="telemetry-facts">
-          <div><dt>Observed local · same intervals</dt><dd>{tokens(estimate.value.local_tokens)}</dd></div>
-          <div><dt>Estimated local + uncollected</dt><dd>≈ {tokens(estimate.value.estimated_total_tokens)}</dd></div>
-          <div><dt>Coverage within the last 24 hours</dt><dd>{estimate.value.covered_hours.toFixed(1)}h · {estimate.value.interval_count} sampled intervals</dd></div>
-          <div><dt>Allowance used for this estimate</dt><dd>{estimate.value.window_key === 'five_hour' ? '5-hour · all models' : 'Weekly · all models'} · {estimate.value.points.toFixed(1)} points</dd></div>
-          <div><dt>Calibration</dt><dd>{tokens(estimate.value.tokens_per_point)} tokens/point · {estimate.value.baseline_count} baseline{estimate.value.baseline_count === 1 ? '' : 's'}</dd></div>
-        </dl>
-        <p className="telemetry-footnote">Covered {when(estimate.value.started_at)}–{when(estimate.value.ended_at)}. Gaps and reset crossings are excluded. This is not a complete daily total.</p>
-      </> : <p className="telemetry-muted" role="status">{estimate.reason} <Link href="/usage/connections">Usage connections</Link></p>}
-      <p className="telemetry-footnote">Different models, caching, quota rounding, and missing machine logs can change this estimate substantially. “Uncollected” may include browser chats, cloud tasks, and local activity we did not collect. Boundary-hour tokens are prorated by time; no exact cloud timing is known.</p>
-      <details className="telemetry-details"><summary>Calibrate from a local-only period</summary>
-        <p>Pick a period when this account used <strong>only local sessions covered by your collectors</strong>, with no browser, cloud, or uncollected machine activity. Use at least two hours, three readings, and three allowance percentage points within one reset.</p>
-        {readings.length ? <>
-          <div className="telemetry-filters">
-            <Choice label={`${account.label} calibration allowance`} value={scope} onChange={v => { setWindowKey(v); setStartId(''); setEndId(''); }} options={keys.map(key => ({ value: key, label: key === 'five_hour' ? '5-hour · all models' : 'Weekly · all models' }))} />
-            <Choice label={`${account.label} baseline start`} value={start?.id ?? 'none'} onChange={setStartId} options={starts.length ? starts.map(q => ({ value: q.id, label: `${when(q.observed_at)} · ${q.used_percent}% used` })) : [{ value: 'none', label: 'Need earlier readings' }]} />
-            <Choice label={`${account.label} baseline end`} value={end?.id ?? 'none'} onChange={setEndId} options={complete.length ? complete.map(q => ({ value: q.id, label: `${when(q.observed_at)} · ${q.used_percent}% used` })) : [{ value: 'none', label: 'Waiting for a complete hour' }]} />
-          </div>
-          <p className="telemetry-muted">{preview.ok ? `${tokens(preview.value.local_tokens)} local tokens ÷ ${preview.value.percent_delta.toFixed(1)} allowance points = ${tokens(preview.value.tokens_per_point)} tokens per point. ${preview.samples} readings.` : preview.reason}</p>
-          <Button className="telemetry-wrap-button" disabled={busy || !preview.ok || alreadySaved} onClick={() => void mutate({ account_id: accountId, start_sample_id: start?.id, end_sample_id: end?.id, confirm_local_only: true }, 'POST')}>
-            {alreadySaved ? 'This baseline is saved' : busy ? 'Saving…' : 'Confirm local-only use & save baseline'}
-          </Button>
-        </> : <p className="telemetry-muted">Waiting for allowance readings on this account. The second account needs its own local-only baseline; another account’s quota capacity is not assumed.</p>}
-        <p className="telemetry-footnote">Up to five non-overlapping baselines use their median conversion. The most recently saved allowance scope is used; 5-hour and weekly estimates are never added. Baselines expire after 30 days. Recalibrate after a plan, model, or workload change.</p>
-      </details>
-      {saved.length > 0 && <details className="telemetry-details"><summary>Saved baselines ({saved.length})</summary><div className="telemetry-source-list">{saved.map(c => <div key={c.id}><div><strong>{c.window_key === 'five_hour' ? '5-hour' : 'Weekly'} · {tokens(c.tokens_per_point)} tokens/point</strong><small>{when(c.started_at)}–{when(c.ended_at)}</small></div><Button variant="outline" disabled={busy} onClick={() => void mutate({ id: c.id }, 'DELETE')}>Remove baseline</Button></div>)}</div></details>}
-      {message && <p className="telemetry-notice" role="status">{message}</p>}
-    </CardContent>
-  </Card>;
+  return (
+    <Card className="gap-4">
+      <CardHeader>
+        <CardDescription>{account.label}</CardDescription>
+        <CardTitle className="text-base">Cloud &amp; uncollected estimate</CardTitle>
+        <CardAction><Badge variant="soft-warning">Experimental · low confidence</Badge></CardAction>
+      </CardHeader>
+
+      <CardContent className="grid gap-4">
+        <p className="text-muted-foreground text-sm leading-relaxed">
+          Local-equivalent tokens inferred from account allowance changes. Separate from measured
+          token totals.
+        </p>
+
+        {estimate.ok ? (
+          <>
+            <p className="font-mono text-3xl leading-none font-medium tracking-tight tabular-nums">
+              ≈ {tokens(estimate.value.estimated_unobserved_tokens)}
+              <span className="text-muted-foreground ml-2 text-sm font-normal">uncollected token-equivalent</span>
+            </p>
+            <dl className="border-border grid rounded-lg border">
+              {[
+                ['Observed local · same intervals', tokens(estimate.value.local_tokens)],
+                ['Estimated local + uncollected', `≈ ${tokens(estimate.value.estimated_total_tokens)}`],
+                ['Coverage within the last 24 hours', `${estimate.value.covered_hours.toFixed(1)}h · ${estimate.value.interval_count} sampled intervals`],
+                ['Allowance used for this estimate', `${estimate.value.window_key === 'five_hour' ? '5-hour · all models' : 'Weekly · all models'} · ${estimate.value.points.toFixed(1)} points`],
+                ['Calibration', `${tokens(estimate.value.tokens_per_point)} tokens/point · ${estimate.value.baseline_count} baseline${estimate.value.baseline_count === 1 ? '' : 's'}`],
+              ].map(([term, value]) => (
+                <div key={term} className="border-border flex flex-wrap items-baseline justify-between gap-3 border-b px-3 py-2 last:border-b-0">
+                  <dt className="text-muted-foreground text-sm">{term}</dt>
+                  <dd className="font-mono text-sm tabular-nums">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="text-muted-foreground text-xs leading-relaxed">
+              Covered {when(estimate.value.started_at)}–{when(estimate.value.ended_at)}. Gaps and reset
+              crossings are excluded. This is not a complete daily total.
+            </p>
+          </>
+        ) : (
+          <p className="text-muted-foreground text-sm" role="status">
+            {estimate.reason}{' '}
+            <Link href="/usage/connections" className="text-primary underline underline-offset-4">Usage connections</Link>
+          </p>
+        )}
+
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          Different models, caching, quota rounding, and missing machine logs can change this
+          estimate substantially. “Uncollected” may include browser chats, cloud tasks, and local
+          activity we did not collect. Boundary-hour tokens are prorated by time; no exact cloud
+          timing is known.
+        </p>
+
+        <details className="border-border rounded-lg border p-3">
+          <summary className="cursor-pointer text-sm font-semibold">Calibrate from a local-only period</summary>
+          <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
+            Pick a period when this account used{' '}
+            <strong className="text-foreground">only local sessions covered by your collectors</strong>,
+            with no browser, cloud, or uncollected machine activity. Use at least two hours, three
+            readings, and three allowance percentage points within one reset.
+          </p>
+          {readings.length ? (
+            <>
+              <div className="mt-3 grid gap-3">
+                <Choice label={`${account.label} calibration allowance`} value={scope} onChange={v => { setWindowKey(v); setStartId(''); setEndId(''); }} options={keys.map(key => ({ value: key, label: key === 'five_hour' ? '5-hour · all models' : 'Weekly · all models' }))} />
+                <Choice label={`${account.label} baseline start`} value={start?.id ?? 'none'} onChange={setStartId} options={starts.length ? starts.map(q => ({ value: q.id, label: `${when(q.observed_at)} · ${q.used_percent}% used` })) : [{ value: 'none', label: 'Need earlier readings' }]} />
+                <Choice label={`${account.label} baseline end`} value={end?.id ?? 'none'} onChange={setEndId} options={complete.length ? complete.map(q => ({ value: q.id, label: `${when(q.observed_at)} · ${q.used_percent}% used` })) : [{ value: 'none', label: 'Waiting for a complete hour' }]} />
+              </div>
+              <p className="text-muted-foreground mt-3 text-sm leading-relaxed">
+                {preview.ok ? `${tokens(preview.value.local_tokens)} local tokens ÷ ${preview.value.percent_delta.toFixed(1)} allowance points = ${tokens(preview.value.tokens_per_point)} tokens per point. ${preview.samples} readings.` : preview.reason}
+              </p>
+              <Button className="mt-3 h-auto py-2 whitespace-normal" disabled={busy || !preview.ok || alreadySaved} onClick={() => void mutate({ account_id: accountId, start_sample_id: start?.id, end_sample_id: end?.id, confirm_local_only: true }, 'POST')}>
+                {alreadySaved ? 'This baseline is saved' : busy ? 'Saving…' : 'Confirm local-only use & save baseline'}
+              </Button>
+            </>
+          ) : (
+            <p className="text-muted-foreground mt-3 text-sm leading-relaxed">
+              Waiting for allowance readings on this account. The second account needs its own
+              local-only baseline; another account’s quota capacity is not assumed.
+            </p>
+          )}
+          <p className="text-muted-foreground mt-3 text-xs leading-relaxed">
+            Up to five non-overlapping baselines use their median conversion. The most recently saved
+            allowance scope is used; 5-hour and weekly estimates are never added. Baselines expire
+            after 30 days. Recalibrate after a plan, model, or workload change.
+          </p>
+        </details>
+
+        {saved.length > 0 && (
+          <details className="border-border rounded-lg border p-3">
+            <summary className="cursor-pointer text-sm font-semibold">Saved baselines ({saved.length})</summary>
+            <ListRows className="mt-3">
+              {saved.map(c => (
+                <ListRow
+                  key={c.id}
+                  title={`${c.window_key === 'five_hour' ? '5-hour' : 'Weekly'} · ${tokens(c.tokens_per_point)} tokens/point`}
+                  detail={`${when(c.started_at)}–${when(c.ended_at)}`}
+                  aside={<Button variant="outline" size="sm" disabled={busy} onClick={() => void mutate({ id: c.id }, 'DELETE')}>Remove baseline</Button>}
+                />
+              ))}
+            </ListRows>
+          </details>
+        )}
+
+        {message && (
+          <Alert role="status">
+            <AlertDescription>{message}</AlertDescription>
+          </Alert>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
