@@ -50,6 +50,29 @@ packages; may ship local tools and scripts. It performs bounded deterministic in
 calculation (existing cron jobs stay). It does not run models, orchestrate agents, hold provider
 login credentials, or invoke user applications unattended.
 
+**Scoped exception — usage-API read tokens (owner, 2026-09-11).** The "no provider login
+credentials" line stands, with one carve-out: the Observatory *may* hold a **token whose only purpose
+is reading a provider's usage API**. That is the whole of the exception. It is not a login, not a
+session cookie, and not a credential that can send a prompt, spend money, or change account state.
+Security design — where the token lives, how it is scoped, rotated and revoked, and what happens when
+it leaks — is deliberately deferred to implementation; what is settled now is that this route is **on
+the table** and should be documented as an option wherever it closes a gap.
+
+"A token for reading the usage API" resolves to three materially different things, and any design
+must say which it means:
+
+| Shape | What it is | Friction | Risk posture |
+| --- | --- | --- | --- |
+| **Borrowed** | An OAuth token another application already wrote to disk on this machine (e.g. a CLI's own credential file) | Lowest — nothing to set up | Reads another app's secret; breaks when that app rotates or relocates it; the user never consented per-use |
+| **Provisioned** | A token the owner creates for this purpose and hands to the Observatory | One-time setup | Cleanest: purpose-scoped, independently revocable, no other app's secret touched |
+| **Org/admin** | An organisation-level administrative key | One-time setup, higher privilege | Covers billed API usage only, not subscription consumption — different data, and the widest blast radius |
+
+**Provisioned** is the shape this exception is written for. **Borrowed** is the lowest-friction route
+and is allowed under the exception, but it is the one whose security review at implementation is most
+likely to add conditions. **Org/admin** is out of scope unless billed API cost becomes a goal, and
+`docs/usage-collection.md` already records a standing decision against treating it as a subscription
+ledger.
+
 Priorities: **1. Usage** (environmental estimates as a sub-item) · **2. Audits** · 3. Assistant
 (design after 1–2) · 4. News (unscheduled) · 5. AI Kits / Trace Linter / Control-Surface Diff
 (rethink; Luumen debug-tool decomposition is exploration only).
@@ -601,6 +624,9 @@ Still open:
    actual run before relying on it.
 2. **What `personal-brain` contains**, and whether any Usage or audit data should be read from it.
    Not inspected.
+2b. ~~Whether the Observatory may hold a provider credential~~ — **resolved 2026-09-11**: yes, scoped
+   to a usage-API read token (§1). Security design deferred to implementation. This reopens 0b's
+   reuse decision and puts API-first acquisition in scope.
 3. **Whether the AI Kits freeze is real** and should be written into the repository (§9).
 
 ---

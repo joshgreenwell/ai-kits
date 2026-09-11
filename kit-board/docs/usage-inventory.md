@@ -223,9 +223,10 @@ Three further blocks, each verified:
 - **`scripts/telemetry/detailed_report.py` raises on an unknown provider** — five branches at
   `:63, :71, :81, :87` and an explicit `raise ValueError('Unsupported report provider')` at `:75`.
   It is absent from any provider-widening checklist because nothing fails until it runs.
-- **Collection would need a provider credential**, which plan §1 lists as **Decided**: the
-  Observatory "does not … hold provider login credentials". That is a product line, not an
-  engineering cost, and Phase 2 cannot spend it.
+- **Collection would need a provider credential.** Partly unblocked by the scoped usage-API-token
+  exception (plan §1, owner 2026-09-11) — but only partly, because Cursor's dashboard API is not a
+  usage API the exception was written for, and the decisive blocker was never the credential. It is
+  the schema fit above. A token does not make per-request dollar cost fit `bucketSchema`.
 
 Cursor is therefore a schema-and-product question to answer deliberately, not a gap to close in a
 budgeted phase. The one cheap fact that would move it is a machine-side check: does Cursor write any
@@ -257,8 +258,11 @@ Two latent defects widening the iteration would expose, both verified: `collect.
 
 Of the three routes, only one is affordable:
 
-- **(a) Read Claude's OAuth credential from `collect.py`.** Blocked by the same Decided product line
-  as Cursor. This would also be the first provider network call the collector ever makes.
+- **(a) Read Claude's usage endpoint from `collect.py` with a token.** **Now in scope** under the
+  scoped exception (plan §1). It remains the first provider network call the collector would ever
+  make, and the "Borrowed" token shape — reading a credential file another application wrote — is the
+  one most likely to acquire conditions at implementation review. The "Provisioned" shape avoids that
+  and costs one-time setup.
 - **(b) Move the browser adapter's read from an open tab into its service worker.** ~6–10 h for the
   source change, leaving room for the rest of Phase 2. **Its premise is unverifiable here**: whether
   an MV3 service-worker fetch to `claude.ai` carries the profile's session. That is a two-hour spike,
@@ -546,17 +550,19 @@ Plus three pass/fail assertions for Half A, each decidable by a component test o
 hourly for seven days *before* any code changes. Without it the criterion is unfalsifiable, and an
 unfalsifiable criterion fails the 0b gate.
 
-### Reuse decision: no reuse
+### Reuse decision: reopened
 
-The plan permits inspecting at most one upstream routine, and only if it fills the named gap. **It
-does not.** The four surveyed projects are about acquiring *channels*; the named gap is the
-Observatory's own freshness correctness plus one browser-extension change. The single upstream
-routine that would have been relevant — UsageAtlas's Claude OAuth provider — maps onto option (a),
-which is blocked by a product decision rather than by effort.
+This section originally recorded **no reuse**, on the reasoning that the one relevant upstream
+routine mapped onto option (a), which was blocked by product decision rather than by effort. **That
+reasoning is void as of 2026-09-11**: the owner's scoped usage-API-token exception (plan §1) puts
+option (a) in scope.
 
-So: **no upstream code is inspected or imported for Phase 2.** The plan lists "no reuse" as an
-acceptable outcome, and this is that outcome, recorded with its reason. If option (a) is ever
-unblocked by the owner, this decision should be revisited — not before.
+The condition this document set for revisiting — "if option (a) is ever unblocked by the owner" — has
+been met, so the decision is reopened rather than left standing on a premise that no longer holds. It
+is superseded by the collection architecture work, which evaluates API-first acquisition across every
+surface. Any reuse that follows still owes the plan's terms: source and ref recorded, notices,
+dependency review, tests, local changes, an update owner, a maintenance allowance, and quarantine for
+any adapter that could silently double-count.
 
 ### Revised estimates
 
