@@ -27,7 +27,7 @@ and it is cheaper than any API work:
 
 | Want | Where it already is | What it costs to get |
 | --- | --- | --- |
-| Per-model tokens, hourly | collected, stored, canonical | **nothing** — already there |
+| Per-model tokens, hourly | collected, stored, canonical, **and served to the browser** — then discarded in the render: `live/page.tsx:23` sums every model into one bucket and no page anywhere renders a model name from the hourly ledger | **a client-side group-by** |
 | Work mode, theme, root task, orchestration depth, knowledge-brain tool counts | **already shipped to the browser** and discarded in the render (`app/api/reports/route.ts:16` sends `envelope: payload` whole) | **one file** |
 | Which machine an hour or a reading came from | stored on every row, dropped in the read (`lib/telemetry-store.ts:57-63`) | **one query** |
 | Per-attempt model/effort/latency/outcome | fully contracted, migrated, authenticated — and **empty** | a producer |
@@ -106,7 +106,13 @@ arbitrarily.
 
 **Precedence is inferred from values, not declared.** `calls DESC, total_tokens DESC, …` is a safe
 monotonic rule for one channel of one grain. With N channels of differing scope it means *whichever
-channel reports the bigger number wins*, even when it is the known-worse one.
+channel reports the bigger number wins*, even when it is the known-worse one. Worse, **`calls` is not
+comparable across channels**: it is `count(*)` over the collector's local event table, where a Codex
+row is a `token_count` line and a Claude row is a message. The tiebreak compares different units.
+
+**Two Claude accounts can share one quota inbox.** `statusline.py` has no account identity at all —
+it reads `rate_limits` from stdin and writes one file per UTC hour named only by time. Point a work
+and a personal Claude at the same inbox and their readings interleave into one account.
 
 **A disabled source still renders.** `disabled` is consulted on exactly one path — upload
 authentication. Deleting a connection in the UI sets it, and the readings stay on the dashboard.
@@ -131,6 +137,13 @@ and dropped inside the canonical CTE.
 8. **Precedence is declared per family**, and differs by family. Allowance is a *level*: the
    highest-authority fresh reading wins outright. Tokens are a *sum*: channels must be partitioned
    so they cannot overlap, never merged by picking a winner.
+
+**How expensive is declared precedence?** For tokens, surgical: `DISTINCT ON` only requires its
+`ORDER BY` to *lead* with the distinct expressions, which it already does — everything after that
+prefix is free. So the disabled-source join (copyable verbatim from `lib/routing-store.ts:88-89`)
+plus a channel-rank expression inserted before `calls DESC` is one query change, not a rewrite. For
+allowance there is no equivalent selection to amend: the dashboard returns raw samples and the
+client groups them, so that half is new code.
 
 ---
 
@@ -178,20 +191,30 @@ re-downloads it. Every collector step must therefore leave older collectors work
 
 | # | Step | Hours | Notes |
 | --- | --- | --- | --- |
-| 1 | Baseline + machine-side checks | 2–4 | **Start first — it is the only step that expires** |
-| 2 | Name the three unnamed inline `CHECK` constraints, changing no predicate | 2–3 | Turns every later widening from a guess into a one-line `ALTER` |
-| 3 | Per-observation provenance (`collector_version`, `channel`); stop rendering disabled sources | 4–6 | Nullable columns; no collector change |
-| 4 | Adapter seam, **no behaviour change** | 4–6 | Pure refactor; bundle regeneration required |
-| 5 | Widen what the two existing channels already capture | 6–10 | Gated on step 1 — may correctly surface nothing |
-| 6 | Server accepts a detail sidecar that nothing yet sends | 5–8 | Optional array; every existing body still validates |
-| 7 | Collector emits per-tool detail | 5–8 | Strictly after 6, never alongside |
-| 8 | **Half A** — make the instrument tell the truth | 8–12 | Adopts the stricter model the routing subsystem already has |
-| 9 | **Half B** — browser read into the service worker | 14–20 | **Does not need the credential exception**; gated on the spike |
-| 10 | Credentialed unattended read from the local script | 6–10 | **The first step that uses the exception** — late and small |
-| 11 | Widen the provider enum, mechanically | 6–9 | Only once there is something to put in it |
+| 1 | Baseline, machine-side checks, **and the credential/endpoint feasibility spikes** | 4–6 | **Start first — the only step that expires** |
+| 2 | Name the unnamed inline `CHECK` constraints, changing no predicate | 3–5 | Discovery must not match on `IN (` — Postgres normalises to `= ANY (ARRAY[…])` |
+| 3 | Make `telemetry-store` testable on the routing-store pattern; put migration validation in CI | 3–5 | `test:routing:db` is not in CI today |
+| 4 | Per-observation provenance — **columns only** | 3–4 | The disabled-source fix moves out of here; see below |
+| 5 | Render the detail that **already reaches the browser**, and attribute hours per source | 4–6 | Cheapest real detail in the path |
+| 6 | **Half A** — make the instrument tell the truth, including the disabled-source join | 8–12 | |
+| 7 | Adapter seam, no behaviour change, plus a bundle-membership guard | 5–7 | |
+| 8 | Make the collector survive a rejected body instead of wedging forever | 3–5 | One bad reading currently poisons the outbox permanently |
+| 9 | Widen what the two existing channels already capture | 8–12 | Gated on step 1 — may correctly surface nothing |
+| 10 | Server accepts a detail sidecar that nothing yet sends | 5–8 | Optional; every existing body still validates |
+| 11 | Collector emits per-tool detail | 7–10 | Only after the sidecar is **deployed**, not merely merged |
+| 12 | **Half B** — browser read into the service worker | 14–20 | **Does not need the credential exception** |
+| 13 | Credentialed unattended read from the local script | 6–10 | **The first and only step that spends the exception** |
+| 14 | Widen the provider enum, mechanically | 10–16 | Only once there is something to put in it |
 
-Steps 1–4 unblock everything and need no product decision. The credential exception is not spent
-until step 10, and step 9 delivers real freshness without it.
+**One ordering trap worth stating on its own.** Adding the disabled-source join to the dashboard
+quota read would change what the seven-day baseline is measuring *while it is being captured* —
+`/api/usage-live` is what check 9 reads. That is why provenance columns (step 4) and the disabled fix
+(step 6) are separated, and why nothing may touch that query until the baseline completes.
+
+**Everything through step 12 needs no product decision.** The credential exception is spent exactly
+once, at step 13, and step 12 delivers a real freshness improvement without touching it. Steps 1–6
+are the ones worth starting from: they need no collector change, reach no user machine, and each
+leaves the system better on its own.
 
 ### Deliberately not doing
 
@@ -207,3 +230,8 @@ until step 10, and step 9 delivers real freshness without it.
   changing them requires a new connection.
 - **Not shipping a collector or docs change without regenerating the bundle.** CI diff-gates it, and
   `usage-collection.md` is embedded inside both ZIPs.
+- **Not putting the seam in a subdirectory or a sibling module.** A `channels/` package ships nothing
+  (the bundler is non-recursive and suffix-filtered) and CI stays green; a sibling import breaks all
+  five existing tests, which load `collect.py` by spec without adding its directory to `sys.path`.
+- **Not moving `send` behind the adapter table.** Existing tests monkeypatch it on the module object.
+- **Not touching the dashboard quota query while the baseline capture is running.**
