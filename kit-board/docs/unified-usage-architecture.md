@@ -1,6 +1,8 @@
 # Unified usage system architecture
 
-Designed 2026-09-12 against `f713f74` on `feat/epic-hypatia-0j03mx`. This is the implementation
+Designed 2026-09-12 against `f713f74` on `feat/epic-hypatia-0j03mx`; revised the same day to change
+the companion language from Python to Go after the owner asked for the best tool rather than the
+easiest (section 3 records the correction). This is the implementation
 architecture for collecting AI usage across Claude, Codex/ChatGPT, Cursor, and the two direct API
 billing families into one Observatory, using the September 11 collection research as the option
 catalog (its `C*`, `O*`, `U*` option identifiers are reused below). **Browser-based collection is out
@@ -24,9 +26,10 @@ the companion discovered, and then does nothing recurring.
 
 | Decision | Choice | Why |
 | --- | --- | --- |
-| Companion language | **Python 3.10+ standard library only**, shipped as a single `zipapp` (`observatory-companion.pyz`) | Python is already a hard requirement on every collecting machine (the detailed analyzers are Python), the v1 collector and its tests are Python, and the stdlib covers every acquisition mechanism needed: `sqlite3`, `json`, `subprocess`, `urllib`, `plistlib`, `zipapp`. See section 3. |
+| Companion language | **Go**, one static binary named `observatory`, no runtime dependency, pure-Go SQLite | The hook paths (statusline, tool hooks) run hundreds of times per session and block the agent while they run; a compiled binary costs milliseconds where an interpreter costs tens of milliseconds. Windows needs no Python. See section 3. |
+| Companion distribution | **goreleaser** from tags `companion-v*` to GitHub Releases with checksums and cosign signatures; **Homebrew tap** (macOS, Linux), **Scoop bucket** (Windows), `.deb`/`.rpm` for servers | Package-manager installs avoid the browser-download quarantine and Gatekeeper path, give the user `brew upgrade` / `scoop update`, and keep a stable binary path for the scheduler. |
 | Server language | **TypeScript** (Next.js 16 App Router, zod 4, postgres.js), unchanged | Existing app, auth, ingestion, and database queue. |
-| Cross-language contract | **JSON Schema generated from the zod contract** with `z.toJSONSchema`, vendored into the companion, byte-parity checked in CI | The v1 wire is `.strict()` in four places; a companion that sends a field the server rejects is an outage on every machine. A shared schema makes that a CI failure instead. |
+| Cross-language contract | **JSON Schema generated from the zod contract** with `z.toJSONSchema`, compiled into **generated Go types**, byte-parity and fixture checked in CI | The v1 wire is `.strict()` in four places; a companion that sends a field the server rejects is an outage on every machine. Generated types make drift a build failure, not a runtime 400. |
 | Ledgers | Request activity, account usage, allowance, money: **four tables, never summed together** | Different denominators, grains, and provenance. A quota percentage is not tokens; a provider aggregate is not extra sessions. |
 | Hourly partition | **Keep the v1 `token_bucket_revisions` ledger and `bucketSchema` exactly as they are**; the companion emits v1-compatible buckets plus richer request records | The live dashboard and its canonical query keep working; v1 collectors and the companion dedupe naturally because both compute the same `session_hash`. |
 | Identity | Observation identity (which collector saw it) is separate from **semantic identity** (which provider request it was) | Two channels observing one request must dedupe; channel-prefixed keys make that impossible. |
@@ -59,45 +62,93 @@ count toward coverage.
 
 ---
 
-## 3. Language and packaging recommendation
+## 3. Language and distribution recommendation
 
-### Alternatives considered
+### The efficiency question, answered per workload
 
-| Option | Distribution | Fit for the acquisition mechanisms | Cost in this repository | Verdict |
-| --- | --- | --- | --- | --- |
-| **Python 3.10+ stdlib, zipapp** | One `.pyz` file run with the installed interpreter | `sqlite3` (own state, Cursor `state.vscdb`), `subprocess` (Codex app-server JSON-RPC over stdio, macOS `security`), `urllib` (provider and Observatory HTTPS), `plistlib` (LaunchAgent), `zipapp` (packaging), `unittest` (tests) all built in | Reuses v1 collector code, 12 passing collector tests, the bundle pipeline, CI, and operator knowledge. Python is already required for the detailed analyzers. | **Recommended** |
-| Go | Single static binary per OS | Excellent; this is how OpenUsage is built | Third language in a two-language repo; new CI matrix; unsigned downloaded binaries hit Gatekeeper quarantine and SmartScreen, so real code signing and notarization become a prerequisite; rewrites and re-verifies all parser semantics | Revisit only if interpreter installation becomes the dominant support problem |
-| Rust | Single binary | Excellent (ccusage's adapters) | Same distribution and signing costs as Go with higher implementation cost | No |
-| Node/TypeScript | Needs Node on each machine, or a Single Executable Application (large, still signing-bound) | `node:sqlite` only became unflagged in Node 22.13; otherwise fine | Would let the companion import the zod contract directly, which is attractive, but Node is not present on collecting machines today and the SEA path reintroduces signing | No; the JSON Schema export gives most of the contract benefit without it |
+"Efficient enough" has two different answers depending on what the companion is doing at the time.
+Figures are estimates from the v1 measurements in `schedules.md` and typical interpreter start-up
+costs; phase 1 measures them on the owner's machines (section 12).
 
-### Packaging
+| Workload | Python (stdlib, zipapp) | Go (static binary) | Does it decide anything? |
+| --- | --- | --- | --- |
+| First backfill of a month of JSONL (hundreds of MB to a few GB for a heavy Claude Code user) | Tens of seconds. A byte prefilter plus the C JSON parser keeps it close to I/O bound; v1 measured 4 s for Codex and 1 s for Claude on one Mac. | A few seconds with the same strategy. | No. Once per machine. |
+| Hourly incremental run | Well under a second (v1: 0.5 to 0.6 s scan). | Under 0.1 s. | No. |
+| Statusline hook, invoked on every Claude Code redraw, debounced at roughly 300 ms, hundreds to thousands of times per session | 50 to 100 ms of interpreter start per invocation, 25 to 40 MB resident each time. | 2 to 5 ms, about 10 MB. | **Yes.** Measurable CPU and battery cost on a laptop and visible lag in the status bar. |
+| Tool hooks (Claude Code `PreToolUse`/`PostToolUse`, Cursor hooks), which run synchronously and block the tool call until the hook exits | Adds 50 to 100 ms to every tool call. | Adds 2 to 5 ms. | **Yes.** This is user-visible latency inside the agent. |
+| Live daemon (`serve`) holding a Codex app-server subscription | Fine; 30 to 40 MB resident. | Fine; 10 to 15 MB resident. | Minor. |
+| Eight adapters with independent deadlines, in parallel | Threads and hand-rolled deadlines. | Goroutines with `context` deadlines. | Quality, not speed. |
+| Windows machines | Requires a Python install and interpreter path pinning; the v1 guide spends a page on it. | One `.exe`, no runtime. | **Yes.** Setup friction and support load. |
 
-- Source is a real Python package at `kit-board/collector/`. Subdirectories and sibling imports are
-  allowed because the artifact is a zipapp, not a flat folder. The v1 constraint that "a subdirectory
-  ships nothing" disappears with the bundler change below.
-- `scripts/build-collector-bundles.py` additionally builds `observatory-companion.pyz` from that
-  package with fixed ZIP timestamps (same reproducibility rule as the existing bundles) and writes it
-  into `lib/generated/collector-bundles.json` under `companion`. CI keeps diff-gating that file.
-- Entry point: `python3 observatory-companion.pyz <command>` (`py -3` on Windows). Commands: `setup`,
-  `run`, `serve` (later phase), `statusline`, `status`, `upgrade`, `uninstall`, `doctor`.
-- The interpreter path is pinned into the scheduler at setup time, as `install_schedule.py` does today.
-- Startup cost of a zipapp is tens of milliseconds, which is acceptable for the statusline hook, the
-  only latency-sensitive entry point. The statusline subcommand imports nothing beyond `json` and
-  `pathlib` so that a defect elsewhere in the package cannot break a Claude Code session.
-- No third-party dependency, no network at import time, no remote code loading. `upgrade` is an
-  explicit user command that downloads the next `.pyz` from the Observatory and verifies its SHA-256
-  against the value the server returns in the companion config; there is no automatic self-update.
+Python is efficient enough for batch collection and is the wrong tool for the hook paths. The hook
+paths are exactly where a usage collector touches the user's agent session, so they decide.
+
+### A correction to the earlier draft
+
+The first draft rejected a compiled binary on distribution grounds: an unsigned binary downloaded by a
+browser is quarantined and Gatekeeper blocks it. That is true for browser downloads and irrelevant
+for package managers. Homebrew formulae and curl-based installers do not set the quarantine attribute,
+Scoop and winget installs never go through the browser-download path, and command-line binaries
+launched by Task Scheduler or a terminal do not get the SmartScreen dialog that Explorer shows. With
+a tap and a bucket, the distribution cost that tipped the first draft toward Python disappears.
+Code signing (Apple Developer ID, Authenticode) stays optional and can be added later.
+
+### Alternatives, re-scored
+
+| Option | Distribution | Hook latency | Fit for the acquisition mechanisms | Cost in this repository | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| **Go** | Static binary per OS and architecture; goreleaser publishes releases, Homebrew formula, Scoop manifest, `.deb`/`.rpm` | 2 to 5 ms | `net/http`, `encoding/json`, `os/exec` (Codex app-server, macOS `security`), `modernc.org/sqlite` (pure Go, no cgo, so cross-compilation stays trivial), `context` deadlines, goroutines | Third language in the repository, its own CI job and release tags on the existing `<kit>-v*` convention; v1 parser semantics ported against the same fixtures | **Recommended** |
+| Rust | Same as Go | Same as Go | Excellent (ccusage's adapters are Rust) | Same distribution story; slower to implement for an HTTP/JSON/subprocess/SQLite tool; no capability Go lacks here | Equal on the product axis, higher on cost; keep as the alternative if the team prefers it |
+| Python 3.10+ stdlib, zipapp | One `.pyz` run by an installed interpreter | 50 to 100 ms | Everything needed is in the stdlib | Lowest; reuses v1 code and tests | Efficient for batch work, wrong for hooks, adds a runtime on Windows. Fallback only |
+| Node/TypeScript | Needs Node on each machine or a Single Executable Application | 40 to 80 ms | Fine; could import the zod contract directly | Node is not present on collecting machines; SEA binaries are large | No |
+
+### Recommendation
+
+- **Go 1.23+**, module at `kit-board/companion/`, binary name `observatory`, built with `CGO_ENABLED=0`
+  for `darwin/arm64`, `darwin/amd64`, `windows/amd64`, `windows/arm64`, `linux/amd64`, `linux/arm64`.
+- **Releases** from tags `companion-v<version>` by goreleaser: GitHub Release with SHA-256 checksums,
+  cosign signatures, an SBOM, a Homebrew formula pushed to `joshgreenwell/homebrew-tap`, a Scoop
+  manifest pushed to `joshgreenwell/scoop-bucket`, and `.deb`/`.rpm` packages. A winget manifest is an
+  optional later channel because it requires community-repository review.
+- **Install commands**: `brew install joshgreenwell/tap/observatory` on macOS and Linux;
+  `scoop bucket add joshgreenwell https://github.com/joshgreenwell/scoop-bucket` then
+  `scoop install observatory` on Windows; the release tarball with checksum for CI runners and
+  containers.
+- **Upgrades** are the package manager's job: `brew upgrade observatory`, `scoop update observatory`.
+  Homebrew and Scoop keep a stable binary path (`/opt/homebrew/bin/observatory`, the Scoop shim), so
+  the installed scheduler entry never breaks. The Observatory shows "update available" when an
+  install's reported version is behind the latest release. There is no self-update code in the binary.
+- **Python remains only for the optional detailed monthly analyzers**, which the companion runs as
+  subprocesses when that setting is on. Python stops being a requirement for the core.
+
+### Command surface
+
+`observatory connect` (pair this machine with a one-time code), `setup` (discovery, bindings,
+confirmations, first run, scheduler), `run` (one collection cycle), `serve` (later phase), `service
+install|uninstall|status` (LaunchAgent, Task Scheduler, systemd user timer), `statusline` (Claude Code
+statusline command), `hook claude|cursor` (tool hook receivers), `status`, `doctor`, `settings show`,
+`version`. The statusline and hook subcommands do no network I/O and no SQLite writes beyond an
+append to the local inbox; they exit in single-digit milliseconds so a defect elsewhere cannot slow an
+agent session.
 
 ### Contract sharing
 
 `lib/usage-contract.ts` is the single authority. A build step exports it with `z.toJSONSchema` to
-`lib/generated/usage-v2.schema.json`; the same bytes are vendored at
-`collector/contracts/usage-v2.schema.json`. A TypeScript test asserts byte parity of both copies with a
-fresh export; a Python test validates every envelope the companion can emit against the vendored
-schema with a small stdlib validator (the same approach as `lib/routing-contract/validate.mjs`).
-Refinements that JSON Schema cannot express (the exclusive token sum, future timestamps, reset after
-observation) are re-implemented as explicit Python checks and exercised by committed fixtures that
-`npm test` also feeds to the zod schema. Same fixture, both languages, both verdicts.
+`lib/generated/usage-v2.schema.json`. In the companion, `go-jsonschema` generates
+`internal/contract/usage_v2.gen.go` from that file, and CI diff-gates the generated Go the same way it
+diff-gates `lib/generated/`. A Go test validates every envelope the companion can emit against the same
+schema at runtime with `santhosh-tekuri/jsonschema/v6`; a TypeScript test asserts the exported schema is
+current. Refinements that JSON Schema cannot express (the exclusive token sum, future timestamps,
+reset after observation) are re-implemented in Go and exercised by committed fixtures that `npm test`
+also feeds to the zod schema. Same fixture, both languages, both verdicts.
+
+### CI and release
+
+A new workflow `.github/workflows/companion.yml`, path-filtered to `kit-board/companion/**`, runs
+`go vet`, `golangci-lint`, and `go test` on an ubuntu/macos/windows matrix and cross-builds all six
+targets on every push; on a `companion-v*` tag it runs goreleaser with a token scoped to the tap and
+bucket repositories. This mirrors the `agentlint-v*` and `agent-surface-v*` release conventions
+already in the repository.
 
 ---
 
@@ -105,7 +156,7 @@ observation) are re-implemented as explicit Python checks and exercised by commi
 
 ```
 ┌────────────────────────── user machines ───────────────────────────┐
-│  observatory-companion.pyz  (LaunchAgent / Task Scheduler / systemd) │
+│  observatory (Go binary)  · LaunchAgent / Task Scheduler / systemd   │
 │  ├─ core: config · settings · discovery · credentials · state(SQLite)│
 │  │        sink · outbox · receipts · lock · http · schedule          │
 │  └─ adapters (one module each, enabled by settings)                  │
@@ -137,30 +188,35 @@ observation) are re-implemented as explicit Python checks and exercised by commi
 
 | Path | Role | Status |
 | --- | --- | --- |
-| `kit-board/collector/__main__.py` | CLI entry: `setup`, `run`, `serve`, `statusline`, `status`, `upgrade`, `uninstall`, `doctor` | New |
-| `kit-board/collector/core/` | `config.py` (local file), `settings.py` (fetch, cache, merge, deny), `discovery.py` (find installed products and stores), `credentials.py` (read-only access to existing sign-ins), `state.py` (SQLite), `sink.py` (validation, identity, isolation), `outbox.py`, `http.py`, `lock.py`, `schedule.py` (LaunchAgent, Task Scheduler, systemd user timer) | New; `state`, `outbox`, `lock`, `schedule` are ports of v1 code |
-| `kit-board/collector/adapters/` | `base.py` plus one module per adapter in section 5 | New; `claude_execution` and `codex_execution` port `collect.py` parsing with its tests |
-| `kit-board/collector/contracts/usage-v2.schema.json` | Vendored generated contract | Generated |
+| `kit-board/companion/` | Go module; `go.mod`, `.goreleaser.yaml`, `README.md` | New |
+| `kit-board/companion/cmd/observatory/main.go` | CLI entry: `connect`, `setup`, `run`, `serve`, `service`, `statusline`, `hook`, `status`, `doctor`, `settings`, `version` | New |
+| `kit-board/companion/internal/core/` | `config` (local file, deny list), `settings` (fetch, cache, merge), `discovery` (installed products and stores), `credentials` (read-only access to existing sign-ins), `state` (SQLite), `sink` (validation, identity, isolation), `outbox`, `httpclient`, `lock`, `service` (LaunchAgent, Task Scheduler, systemd user timer) | New; `state`, `outbox`, `lock`, `service` port v1 behavior |
+| `kit-board/companion/internal/adapters/` | One package per adapter in section 5 behind a common interface | New; `claudeexec` and `codexexec` port `collect.py` parsing against its fixtures |
+| `kit-board/companion/internal/contract/` | `usage-v2.schema.json` (vendored) and `usage_v2.gen.go` (generated types) | Generated, diff-gated |
+| `kit-board/companion/testdata/` | Synthetic JSONL, SQLite, app-server transcripts, provider responses, and the shared wire fixtures | New |
+| `.github/workflows/companion.yml` | Test matrix, cross-build, goreleaser on `companion-v*` tags | New |
+| `joshgreenwell/homebrew-tap`, `joshgreenwell/scoop-bucket` | Formula and manifest repositories written by goreleaser | New, outside this repository |
 | `kit-board/scripts/telemetry/` | v1 collector | Frozen; removed after every install is on the companion |
-| `kit-board/scripts/build-collector-bundles.py` | Builds `companion` `.pyz` in addition to existing bundles | Changed |
+| `kit-board/scripts/build-collector-bundles.py` | Unchanged until retirement; the companion is not a download bundle | Unchanged |
 | `kit-board/lib/usage-contract.ts` | Envelope v2, record schemas, coverage schema, JSON Schema export | New |
 | `kit-board/lib/companion-settings.ts` | Settings schema, defaults, merge rules | New |
 | `kit-board/lib/usage-store.ts` | Install/binding management, ingestion, canonical reads, reconciliation | New |
 | `kit-board/lib/telemetry-contract.ts`, `lib/telemetry-store.ts` | v1 contract and store | Unchanged apart from reading `disabled` on the dashboard query (section 10) |
 | `kit-board/app/api/v1/usage/route.ts` | Envelope ingestion | New |
 | `kit-board/app/api/v1/companion/config/route.ts` | Effective settings and bindings for one install | New |
+| `kit-board/app/api/v1/companion/pair/route.ts` | Exchanges a one-time pairing code for an install key | New |
 | `kit-board/app/api/companion-installs/route.ts`, `app/api/collection-settings/route.ts` | Session-authenticated, same-origin UI mutations | New |
-| `kit-board/app/api/collector-download/route.ts` | Adds `kind=companion` | Changed |
 | `kit-board/app/(private)/usage/settings/page.tsx` | Collection mode matrix | New |
 | `kit-board/app/(private)/usage/connections/page.tsx` | Companion installs, bindings, per-adapter coverage, pause | Changed |
 | `kit-board/supabase/migrations/<timestamp>_unified_usage.sql` | Section 6 DDL, constraint widening, grants, policies | New |
-| `kit-board/tests/collector/` (Python), `tests/usage-contract.test.ts`, `tests/usage-store.integration.test.ts` | Adapter fixtures, contract parity, disposable-Postgres integration on the `test:routing:db` pattern | New |
+| `kit-board/companion/**/*_test.go`, `tests/usage-contract.test.ts`, `tests/usage-store.integration.test.ts` | Adapter fixtures, contract parity, disposable-Postgres integration on the `test:routing:db` pattern | New |
 
 ### Runtime locations on user machines
 
 | Item | macOS | Windows | Linux |
 | --- | --- | --- | --- |
-| Companion, config, state, logs | `~/.config/personal-hub/companion/` | `%LOCALAPPDATA%\PersonalObservatory\` | `~/.config/personal-hub/companion/` |
+| Binary | `/opt/homebrew/bin/observatory` (Homebrew) | Scoop shim `%USERPROFILE%\scoop\shims\observatory.exe` | Homebrew on Linux, or `/usr/bin/observatory` from `.deb`/`.rpm` |
+| Config, install key, state, logs | `~/.config/personal-hub/companion/` | `%LOCALAPPDATA%\PersonalObservatory\` | `~/.config/personal-hub/companion/` |
 | Scheduler | LaunchAgent `com.personal-observatory.companion.<install-id>` | Task Scheduler `Personal Observatory Companion <install-id>` | systemd user timer `personal-observatory-companion.timer` |
 | Claude Code stores read | `~/.claude/projects/**`, Keychain item `Claude Code-credentials` | `%USERPROFILE%\.claude\projects`, `.claude\.credentials.json` | `~/.claude/projects`, `~/.claude/.credentials.json` |
 | Codex stores read | `~/.codex/sessions`, `~/.codex/archived_sessions`, `~/.codex/auth.json`, `codex` executable | same under `%USERPROFILE%` | same |
@@ -182,9 +238,9 @@ uploaded. The server knows a binding's account and provider, not its paths.
 3. Compute the effective mode for every adapter: `server setting` AND `not in local deny list` AND
    `prerequisite present` (store found, executable found, credential readable). Record the reason
    when an adapter does not run.
-4. Run each enabled adapter in isolation with its own timeout. An adapter returns normalized
-   records, coverage, and an updated cursor. An adapter failure is a coverage entry, not a run
-   failure.
+4. Run the enabled adapters concurrently, each in its own goroutine with its own `context`
+   deadline. An adapter returns normalized records, coverage, and an updated cursor. An adapter
+   failure or timeout is a coverage entry, not a run failure.
 5. The sink validates each record against the vendored schema, assigns observation identity and
    semantic identity, stores the normalized record and (bounded) raw observation in SQLite, and
    isolates anything invalid so that it can never poison a batch.
@@ -337,7 +393,7 @@ export const adapterCoverageSchema = z.object({
 export const usageEnvelopeSchema = z.object({
   schema_version: z.literal(2),
   run: z.object({ run_id: uuid, started_at: stamp, finished_at: stamp, companion_version: z.string().max(30),
-    python_version: z.string().max(20), platform: z.enum(['darwin','win32','linux']), settings_version: counter }).strict(),
+    platform: z.enum(['darwin','windows','linux']), arch: z.enum(['arm64','amd64']), settings_version: counter }).strict(),
   buckets: z.array(z.object({ binding_id: uuid, bucket: bucketSchema }).strict()).max(500).default([]),
   records: z.array(z.discriminatedUnion('record_type',
     [activityRequestSchema, accountUsageBucketSchema, allowanceReadingSchema, moneyEntrySchema])).max(2000).default([]),
@@ -367,12 +423,20 @@ record. Body limit 2 MB, measured while streaming as in `readJson`.
     { "binding_id": "…", "account_id": "codex-primary",  "provider": "codex",  "enabled": true, "identity_hash": "…" },
     { "binding_id": "…", "account_id": "cursor-primary", "provider": "cursor", "enabled": true, "identity_hash": "…" } ],
   "settings": { "…effective settings document from section 7…" },
-  "companion": { "latest_version": "2.0.0", "sha256": "…" } }
+  "companion": { "latest_version": "2.0.0" } }
 ```
 
 `ETag`/`If-None-Match` avoid re-downloading an unchanged document. The companion treats the document
 as data: a setting can only turn an adapter on or off within the modes defined in section 7; it cannot
 name paths, endpoints, or commands.
+
+### 6.2a Pairing (`POST /api/v1/companion/pair`)
+
+The Connections page issues a one-time code (eight characters, ten-minute expiry, stored as a hash).
+`observatory connect --url <observatory> --code <code>` posts the code with the machine label,
+platform, and architecture and receives the install id and key, which the companion writes to its
+config directory with `0600` permissions. The code is single-use; the endpoint is rate-limited through
+the existing `login_limits` pattern. This replaces downloading and moving a connection JSON file.
 
 ### 6.3 Database tables
 
@@ -398,12 +462,19 @@ CREATE TABLE personal_hub.collection_settings (
 
 CREATE TABLE personal_hub.companion_installs (
   id uuid PRIMARY KEY, machine_label text NOT NULL,
-  platform text NOT NULL CHECK (platform IN ('darwin','win32','linux')),
+  platform text NOT NULL CHECK (platform IN ('darwin','windows','linux')),
+  arch text NOT NULL CHECK (arch IN ('arm64','amd64')),
   key_hash text NOT NULL UNIQUE,
   settings jsonb NOT NULL DEFAULT '{}'::jsonb,          -- partial override of collection_settings.settings
   paused boolean NOT NULL DEFAULT false, disabled boolean NOT NULL DEFAULT false,
-  companion_version text, python_version text,
+  companion_version text,
   created_at timestamptz NOT NULL DEFAULT now(), last_seen_at timestamptz, last_config_fetch_at timestamptz
+);
+
+CREATE TABLE personal_hub.companion_pairing_codes (
+  code_hash text PRIMARY KEY, machine_label text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL,
+  used_at timestamptz, install_id uuid REFERENCES personal_hub.companion_installs(id)
 );
 
 CREATE TABLE personal_hub.companion_bindings (
@@ -520,7 +591,8 @@ CREATE INDEX money_period ON personal_hub.money_entries (account_id, period_star
 
 -- Grants and policies follow the existing pattern: RLS on, public grants revoked, SELECT/INSERT for
 -- personal_hub_app on every table and SELECT on the view; UPDATE only on collection_settings,
--- companion_installs, companion_bindings. Ledgers are append-only for the application role.
+-- companion_installs, companion_bindings, companion_pairing_codes. Ledgers are append-only for the
+-- application role.
 ```
 
 ### 6.4 Companion local state (SQLite, one database per install)
@@ -536,9 +608,10 @@ CREATE INDEX money_period ON personal_hub.money_entries (account_id, period_star
 | `allowance_slots` | one reading per meter per UTC hour, freshest wins (v1 `quotas` generalized) | yes |
 | `outbox`, `receipts`, `runs` | exact bodies awaiting upload, server receipts, run summaries | yes |
 
-`open_state` keeps `CREATE TABLE IF NOT EXISTS`; a v2 state database is a new file (`<install-id>.sqlite3`),
-so no v1 state is migrated in place. Hourly buckets are a projection of `records` grouped by
-`(session_hash, hour, model)` and are recomputed every run, exactly as `bucket_rows` does today.
+Schema creation is `CREATE TABLE IF NOT EXISTS` with a `meta.schema_version` for forward migrations; a
+companion state database is a new file (`<install-id>.sqlite3`), so no v1 state is migrated in place.
+Hourly buckets are a projection of `records` grouped by `(session_hash, hour, model)` and are
+recomputed every run, exactly as v1's `bucket_rows` does today.
 
 ### 6.5 Identity, precedence, and deduplication
 
@@ -632,7 +705,7 @@ export const installOverrideSchema = collectionSettingsSchema.partial().strict()
 | Reports | `detailed_monthly_report` | `false` | Requires the installed analyzers and a separate publisher key, as today. |
 | Runtime | `live_mode` | `false` | |
 | Runtime | `local_raw_retention_days` | `14` | Raw provider payloads stay on the machine for reparsing; never uploaded. |
-| Runtime | `update_notice` | `notify` | The Connections page shows "update available"; `upgrade` is a manual command. |
+| Runtime | `update_notice` | `notify` | The Connections page shows "update available" when an install is behind the latest release; upgrading is `brew upgrade observatory` or `scoop update observatory`. |
 
 ### 7.3 Precedence
 
@@ -674,27 +747,35 @@ effective(adapter, mode) =
 
 ### One-time, per machine
 
-1. Have Python 3.10+ installed (Homebrew or Xcode Command Line Tools on macOS; python.org or Store
-   build on Windows; distribution package on Linux). This is the same prerequisite as today.
-2. In Observatory → Usage → Connections, choose **Add companion**, give the machine a label, and
-   download two files: `observatory-companion.pyz` and `companion.json` (the install key).
-3. Put both in the private companion directory for the platform (section 4). Do not put them in a
-   synced or source-controlled folder.
-4. Run setup:
+1. Install the companion with the platform's package manager. No other runtime is required.
 
    ```bash
-   python3 observatory-companion.pyz setup --config companion.json
+   # macOS and Linux
+   brew install joshgreenwell/tap/observatory
+   # Windows (PowerShell)
+   scoop bucket add joshgreenwell https://github.com/joshgreenwell/scoop-bucket
+   scoop install observatory
    ```
 
-   Setup discovers installed products and stores, reads the signed-in identity of each (display only),
-   and proposes account bindings using existing account ids when the Observatory already has them.
-   It asks, one question each, whether to enable the private-interface readers (Claude OAuth usage,
-   Cursor usage summary), whether to install the Claude Code statusline hook (preserving any existing
-   statusline command), and confirms the schedule. It then runs a dry run, a first publish, and installs
-   the scheduler. Every answer becomes this install's settings on the server and can be changed later in
-   the UI. `setup --yes --bind claude=claude-primary --bind codex=codex-primary` is the
+2. In Observatory → Usage → Connections, choose **Add companion**, give the machine a label, and copy
+   the one-time pairing code it shows (valid for ten minutes).
+3. Pair the machine, then run setup:
+
+   ```bash
+   observatory connect --url https://<your-observatory> --code XXXX-XXXX
+   observatory setup
+   ```
+
+   `connect` stores the install key in the private config directory (section 4) with `0600`
+   permissions. `setup` discovers installed products and stores, reads the signed-in identity of each
+   (display only), and proposes account bindings using existing account ids when the Observatory already
+   has them. It asks, one question each, whether to enable the private-interface readers (Claude OAuth
+   usage, Cursor usage summary), whether to install the Claude Code statusline hook (preserving any
+   existing statusline command), and confirms the schedule. It then runs a dry run, a first publish, and
+   `service install`. Every answer becomes this install's settings on the server and can be changed later
+   in the UI. `observatory setup --yes --bind claude=claude-primary --bind codex=codex-primary` is the
    non-interactive form for a second machine.
-5. If a v1 collector schedule exists on the same machine, setup offers to uninstall it so the machine
+4. If a v1 collector schedule exists on the same machine, setup offers to uninstall it so the machine
    does not report the same logs twice. Declining is allowed; the server still deduplicates the hourly
    buckets, and the Connections page flags the overlap.
 
@@ -706,19 +787,20 @@ its outbox, and follows settings changes made in the UI. The three situations th
 - **A provider sign-in expired or changed.** Sign in again in Claude Code, Codex, or Cursor as usual.
   The Connections page shows `credential_unavailable` or `identity_changed` for that binding until
   then; passive fallbacks keep running. The companion never asks for a pasted token.
-- **An update is available.** Run `python3 observatory-companion.pyz upgrade --config companion.json`
-  when the Connections page says so. Older companions keep working until then.
-- **Enabling API billing.** Paste an Anthropic or OpenAI Admin key once into `secrets.json` (the
-  `setup --secrets` prompt creates the file with `0600`) and turn the billing setting on.
+- **An update is available.** Run `brew upgrade observatory` or `scoop update observatory` when the
+  Connections page says so. Older companions keep working until then.
+- **Enabling API billing.** Paste an Anthropic or OpenAI Admin key once into `secrets.json`
+  (`observatory setup --secrets` creates the file with `0600`) and turn the billing setting on.
 
 ### Other cases
 
 - **Another machine or account:** repeat the one-time steps with the same account ids.
 - **Remote hosts, containers, CI:** install the companion there with its own install key, or the
   activity is uncollected and coverage says so. A laptop install cannot see a cloud runner.
-- **Removing a machine:** `python3 observatory-companion.pyz uninstall --config companion.json`
-  removes the schedule and hooks it installed and leaves state for the user to delete; disabling the
-  install in the UI revokes its key and removes its rows from dashboards while retaining history.
+- **Removing a machine:** `observatory service uninstall` removes the schedule and hooks it
+  installed and leaves state for the user to delete; `brew uninstall` or `scoop uninstall` removes the
+  binary; disabling the install in the UI revokes its key and removes its rows from dashboards while
+  retaining history.
 
 ---
 
@@ -737,8 +819,10 @@ its outbox, and follows settings changes made in the UI. The three situations th
   and codes. These match the v1 posture.
 - All ledgers are append-only for the application role; the read side chooses canonical rows.
   Settings, installs, and bindings are the only updatable tables.
-- The companion never executes code it downloads; `upgrade` replaces the `.pyz` only after a hash
-  match with the value the authenticated config endpoint returned, and only when the user runs it.
+- The companion never downloads or executes code. Upgrades arrive through the package manager,
+  which verifies the release checksum; releases are cosign-signed and carry an SBOM.
+- Pairing codes are single-use, expire in ten minutes, and are stored hashed; the install key they
+  produce is shown to nobody and written only to the companion's `0600` config file.
 
 ---
 
@@ -749,12 +833,13 @@ its outbox, and follows settings changes made in the UI. The three situations th
 - **v1 keeps working.** `POST /api/v1/telemetry`, `quota_samples`, browser connections, and installed
   v1 schedules are untouched. The two widened `CHECK` constraints change no existing predicate.
 - **Dedupe across v1 and v2** relies on identical `session_hash` derivation; a parity test runs the v1
-  parser and the companion's ported parser over the same fixtures and asserts identical bucket rows.
+  Python parser and the companion's Go parser over the same fixtures and asserts identical bucket rows.
 - **The one change to an existing read:** the dashboard query in `lib/telemetry-store.ts` joins
   `telemetry_sources.disabled` so that disabling a connection removes its readings from the dashboard,
   which v1 does not do today. This is a correctness fix and lands with the migration phase.
 - **Old downloads:** the `local` bundle remains downloadable until every install has moved; then the
-  download is removed and `scripts/telemetry/` is deleted in a separate commit.
+  download, `scripts/telemetry/`, and the `local` branch of `build-collector-bundles.py` are removed in
+  a separate commit. The browser bundle is untouched.
 
 ---
 
@@ -764,8 +849,8 @@ Each phase leaves the system working and older collectors valid.
 
 | Phase | Delivers | Done when |
 | --- | --- | --- |
-| 0. Contract and storage | `lib/usage-contract.ts`, generated JSON Schema and parity test, `lib/companion-settings.ts`, migration, `lib/usage-store.ts` ingestion, `POST /api/v1/usage`, `GET /api/v1/companion/config`, settings and installs APIs and pages, disabled-source join | Disposable-Postgres integration test passes; fixtures accepted and rejected as labeled; deployed; no collector change |
-| 1. Companion core | `collector/` package, `.pyz` build, setup/run/status/uninstall, settings fetch and deny list, state, sink, outbox, schedulers for three platforms, ported `claude_execution` and `codex_execution` with v1 parity tests, statusline subcommand | Same fixtures yield identical buckets in v1 and companion; one Mac and one Windows install publish with receipts; v1 schedule removed on those machines |
+| 0. Contract and storage | `lib/usage-contract.ts`, generated JSON Schema and parity test, `lib/companion-settings.ts`, migration, `lib/usage-store.ts` ingestion, `POST /api/v1/usage`, `GET /api/v1/companion/config`, `POST /api/v1/companion/pair`, settings and installs APIs and pages, disabled-source join | Disposable-Postgres integration test passes; fixtures accepted and rejected as labeled; deployed; no collector change |
+| 1. Companion core | Go module, generated contract types, goreleaser pipeline, tap and bucket repositories, `connect`/`setup`/`run`/`service`/`status`/`doctor`, settings fetch and deny list, state, sink, outbox, schedulers for three platforms, ported `claudeexec` and `codexexec` with v1 parity fixtures, `statusline` subcommand, benchmark fixtures | Same fixtures yield identical buckets in v1 and companion; `brew install` on a Mac and `scoop install` on Windows publish with receipts; statusline under 10 ms and 1 GB backfill under 10 s on the owner's Mac; v1 schedule removed on those machines |
 | 2. Allowance | `codex_account` app-server reader; `claude_account` OAuth reader behind setup confirmation; embedded and statusline readers write `allowance_readings`; dashboard reads `allowance_percent_view` and shows non-percent meters | Readings appear within one cadence after a real Codex or Claude response; reader ranking verified with both readers on |
 | 3. Cursor | `cursor_execution`, `cursor_account` behind setup confirmation, usage events with `chargedCents`/`totalCents` kept separate, Cursor in every dashboard selector | Controlled Cursor workload reconciles account events against local conversation rows; charges never summed with estimates |
 | 4. Detail | `detail_level` `requests` and `requests_with_tools`, tool allowlist, project hashing, dashboard per-model/per-tool/per-source views, reconciliation view | Request rows dedupe across channels; unattributed remainder displayed as such |
@@ -800,7 +885,9 @@ an archived session, a resumed session, a duplicated file, and a second machine.
 Feasibility checks that decide optional adapters and must run first on the owner's machines: Keychain
 access to the Claude Code item from a LaunchAgent context; the installed Codex storage version and
 app-server method set; the Cursor `state.vscdb` key names and session cookie format on the installed
-version; Admin key scopes for the two billing APIs.
+version; Admin key scopes for the two billing APIs. Performance checks in the same pass: statusline
+and hook invocation latency, 1 GB synthetic JSONL backfill time, and resident memory of `serve`, on
+both the Mac and the Windows machine.
 
 ---
 
@@ -814,3 +901,7 @@ version; Admin key scopes for the two billing APIs.
   thousands of rows, which Postgres handles, but a 13-month rolling window is proposed.
 - Whether to commit the September 11 research report into `docs/` so the option identifiers used
   here resolve inside the repository.
+- Rust instead of Go. Equal on distribution and hook latency; the architecture does not change.
+- When to add Apple Developer ID and Authenticode signing. Not required for Homebrew or Scoop
+  installs; required before offering a browser download.
+- Whether to submit a winget manifest once the Scoop bucket has been exercised.
