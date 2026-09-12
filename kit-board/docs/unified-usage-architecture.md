@@ -1,8 +1,9 @@
 # Unified usage system architecture
 
-Designed 2026-09-12 against `f713f74` on `feat/epic-hypatia-0j03mx`; revised the same day to change
-the companion language from Python to Go after the owner asked for the best tool rather than the
-easiest (section 3 records the correction). This is the implementation
+Designed 2026-09-12 against `f713f74` on `feat/epic-hypatia-0j03mx`; revised the same day, first from
+Python to a compiled binary after the owner asked for the best tool rather than the easiest, then from
+Go to Rust after the owner decided the companion will be maintained by agents (section 3 records both
+decisions). This is the implementation
 architecture for collecting AI usage across Claude, Codex/ChatGPT, Cursor, and the two direct API
 billing families into one Observatory, using the September 11 collection research as the option
 catalog (its `C*`, `O*`, `U*` option identifiers are reused below). **Browser-based collection is out
@@ -26,10 +27,10 @@ the companion discovered, and then does nothing recurring.
 
 | Decision | Choice | Why |
 | --- | --- | --- |
-| Companion language | **Go**, one static binary named `observatory`, no runtime dependency, pure-Go SQLite | The hook paths (statusline, tool hooks) run hundreds of times per session and block the agent while they run; a compiled binary costs milliseconds where an interpreter costs tens of milliseconds. Windows needs no Python. See section 3. |
-| Companion distribution | **goreleaser** from tags `companion-v*` to GitHub Releases with checksums and cosign signatures; **Homebrew tap** (macOS, Linux), **Scoop bucket** (Windows), `.deb`/`.rpm` for servers | Package-manager installs avoid the browser-download quarantine and Gatekeeper path, give the user `brew upgrade` / `scoop update`, and keep a stable binary path for the scheduler. |
+| Companion language | **Rust**, one static binary named `observatory`, no runtime dependency, real SQLite statically linked | The hook paths (statusline, tool hooks) run hundreds of times per session and block the agent while they run; a compiled binary costs a millisecond where an interpreter costs tens. The code will be maintained by agents, so the compiler must catch the two mistakes this contract cannot tolerate: a missing counter read as zero, and an unhandled enum case. See section 3. |
+| Companion distribution | **cargo-dist** from tags `observatory-v*` to GitHub Releases with checksums and Sigstore provenance; **Homebrew tap** (macOS, Linux), **Scoop bucket** (Windows), shell and PowerShell installers for hosts without a package manager | Package-manager installs avoid the browser-download quarantine and Gatekeeper path, give the user `brew upgrade` / `scoop update`, and keep a stable binary path for the scheduler. |
 | Server language | **TypeScript** (Next.js 16 App Router, zod 4, postgres.js), unchanged | Existing app, auth, ingestion, and database queue. |
-| Cross-language contract | **JSON Schema generated from the zod contract** with `z.toJSONSchema`, compiled into **generated Go types**, byte-parity and fixture checked in CI | The v1 wire is `.strict()` in four places; a companion that sends a field the server rejects is an outage on every machine. Generated types make drift a build failure, not a runtime 400. |
+| Cross-language contract | **JSON Schema generated from the zod contract** with `z.toJSONSchema`, vendored into the companion, enforced against **serde wire types** by fixture and schema-validation tests in CI | The v1 wire is `.strict()` in four places; a companion that sends a field the server rejects is an outage on every machine. Shared fixtures make drift a CI failure on both sides. |
 | Ledgers | Request activity, account usage, allowance, money: **four tables, never summed together** | Different denominators, grains, and provenance. A quota percentage is not tokens; a provider aggregate is not extra sessions. |
 | Hourly partition | **Keep the v1 `token_bucket_revisions` ledger and `bucketSchema` exactly as they are**; the companion emits v1-compatible buckets plus richer request records | The live dashboard and its canonical query keep working; v1 collectors and the companion dedupe naturally because both compute the same `session_hash`. |
 | Identity | Observation identity (which collector saw it) is separate from **semantic identity** (which provider request it was) | Two channels observing one request must dedupe; channel-prefixed keys make that impossible. |
@@ -67,23 +68,23 @@ count toward coverage.
 ### The efficiency question, answered per workload
 
 "Efficient enough" has two different answers depending on what the companion is doing at the time.
-Figures are estimates from the v1 measurements in `schedules.md` and typical interpreter start-up
-costs; phase 1 measures them on the owner's machines (section 12).
+Figures are estimates from the v1 measurements in `schedules.md` and typical process start-up costs;
+phase 1 measures them on the owner's machines (section 12).
 
-| Workload | Python (stdlib, zipapp) | Go (static binary) | Does it decide anything? |
+| Workload | Python (stdlib, zipapp) | Compiled binary (Rust) | Does it decide anything? |
 | --- | --- | --- | --- |
 | First backfill of a month of JSONL (hundreds of MB to a few GB for a heavy Claude Code user) | Tens of seconds. A byte prefilter plus the C JSON parser keeps it close to I/O bound; v1 measured 4 s for Codex and 1 s for Claude on one Mac. | A few seconds with the same strategy. | No. Once per machine. |
 | Hourly incremental run | Well under a second (v1: 0.5 to 0.6 s scan). | Under 0.1 s. | No. |
-| Statusline hook, invoked on every Claude Code redraw, debounced at roughly 300 ms, hundreds to thousands of times per session | 50 to 100 ms of interpreter start per invocation, 25 to 40 MB resident each time. | 2 to 5 ms, about 10 MB. | **Yes.** Measurable CPU and battery cost on a laptop and visible lag in the status bar. |
-| Tool hooks (Claude Code `PreToolUse`/`PostToolUse`, Cursor hooks), which run synchronously and block the tool call until the hook exits | Adds 50 to 100 ms to every tool call. | Adds 2 to 5 ms. | **Yes.** This is user-visible latency inside the agent. |
-| Live daemon (`serve`) holding a Codex app-server subscription | Fine; 30 to 40 MB resident. | Fine; 10 to 15 MB resident. | Minor. |
-| Eight adapters with independent deadlines, in parallel | Threads and hand-rolled deadlines. | Goroutines with `context` deadlines. | Quality, not speed. |
+| Statusline hook, invoked on every Claude Code redraw, debounced at roughly 300 ms, hundreds to thousands of times per session | 50 to 100 ms of interpreter start per invocation, 25 to 40 MB resident each time. | About 1 ms, a few MB. | **Yes.** Measurable CPU and battery cost on a laptop and visible lag in the status bar. |
+| Tool hooks (Claude Code `PreToolUse`/`PostToolUse`, Cursor hooks), which run synchronously and block the tool call until the hook exits | Adds 50 to 100 ms to every tool call. | Adds about 1 ms. | **Yes.** This is user-visible latency inside the agent. |
+| Live daemon (`serve`) holding a Codex app-server subscription | Fine; 30 to 40 MB resident. | Fine; 3 to 6 MB resident. | Minor. |
+| Eight adapters with independent deadlines, in parallel | Threads and hand-rolled deadlines. | Scoped threads with per-adapter deadlines; no async runtime needed. | Quality, not speed. |
 | Windows machines | Requires a Python install and interpreter path pinning; the v1 guide spends a page on it. | One `.exe`, no runtime. | **Yes.** Setup friction and support load. |
 
 Python is efficient enough for batch collection and is the wrong tool for the hook paths. The hook
 paths are exactly where a usage collector touches the user's agent session, so they decide.
 
-### A correction to the earlier draft
+### Two corrections to earlier drafts
 
 The first draft rejected a compiled binary on distribution grounds: an unsigned binary downloaded by a
 browser is quarantined and Gatekeeper blocks it. That is true for browser downloads and irrelevant
@@ -93,33 +94,85 @@ launched by Task Scheduler or a terminal do not get the SmartScreen dialog that 
 a tap and a bucket, the distribution cost that tipped the first draft toward Python disappears.
 Code signing (Apple Developer ID, Authenticode) stays optional and can be added later.
 
-### Alternatives, re-scored
+The second draft chose Go over Rust on a smaller dependency tree, a simpler daemon, and trivial
+cross-builds, judging that Rust's compile-time advantages could be closed in Go by review discipline.
+The owner then decided the companion will be written and maintained by agents. That changes the
+weighting: review discipline is exactly what cannot be assumed, and the compiler is the reviewer that
+is always present. Rust is the choice.
 
-| Option | Distribution | Hook latency | Fit for the acquisition mechanisms | Cost in this repository | Verdict |
-| --- | --- | --- | --- | --- | --- |
-| **Go** | Static binary per OS and architecture; goreleaser publishes releases, Homebrew formula, Scoop manifest, `.deb`/`.rpm` | 2 to 5 ms | `net/http`, `encoding/json`, `os/exec` (Codex app-server, macOS `security`), `modernc.org/sqlite` (pure Go, no cgo, so cross-compilation stays trivial), `context` deadlines, goroutines | Third language in the repository, its own CI job and release tags on the existing `<kit>-v*` convention; v1 parser semantics ported against the same fixtures | **Recommended** |
-| Rust | Same as Go | Same as Go | Excellent (ccusage's adapters are Rust) | Same distribution story; slower to implement for an HTTP/JSON/subprocess/SQLite tool; no capability Go lacks here | Equal on the product axis, higher on cost; keep as the alternative if the team prefers it |
-| Python 3.10+ stdlib, zipapp | One `.pyz` run by an installed interpreter | 50 to 100 ms | Everything needed is in the stdlib | Lowest; reuses v1 code and tests | Efficient for batch work, wrong for hooks, adds a runtime on Windows. Fallback only |
-| Node/TypeScript | Needs Node on each machine or a Single Executable Application | 40 to 80 ms | Fine; could import the zod contract directly | Node is not present on collecting machines; SEA binaries are large | No |
+### Why Rust for an agent-maintained collector
+
+| Factor | Rust | Go | Weight once agents maintain the code |
+| --- | --- | --- | --- |
+| "Null, never zero", the rule behind every counter in the contract | `Option<u64>` through serde round-trips `null` exactly; a missing field and a zero cannot be confused | `encoding/json` decodes a missing field to `0` unless every nullable is a pointer or custom type | Decisive. This is the single most likely agent mistake and the one the ledgers cannot tolerate |
+| Exhaustive handling of the nine coverage states, six meter kinds, four record types, seven money kinds | `match` must cover every variant or the build fails | A linter can warn; the language does not | Decisive. An added variant cannot be silently ignored |
+| Unknown fields on the wire | `#[serde(deny_unknown_fields)]` mirrors the server's `.strict()` | Silently dropped by default | High |
+| Error handling | `Result` and `?`; an ignored error is a compiler warning promoted to an error in CI | `if err != nil` by convention; an ignored error compiles cleanly | High |
+| Data races in the parallel adapter run | Rejected at compile time | Detected only when the race detector happens to observe them | Medium |
+| SQLite engine | `rusqlite` links the real SQLite amalgamation | A transpile of SQLite to Go; correct, slower, very large | Medium; Cursor's `state.vscdb` can be hundreds of MB |
+| Hook start-up, resident memory, binary size | About 1 ms, 3 to 6 MB resident, 6 to 10 MB binary | 2 to 5 ms, 8 to 15 MB, 15 to 25 MB | Low; both are far better than an interpreter |
+| Dependency tree for a binary that reads sign-in tokens | Larger (TLS, serde, SQLite, CLI); mitigated below | Standard library covers HTTP, TLS, JSON | Real, and answered by `cargo deny`, a committed lockfile, no async runtime, and OS trust-store verification |
+| Daemon concurrency (`serve`) | Scoped threads and channels; no tokio | Goroutines and `context` | Low; the daemon is a later phase and the thread model is sufficient |
+| Cross-building six targets | Native runner per OS through cargo-dist | One runner, `GOOS`/`GOARCH` | Low; cargo-dist owns it |
+| Build time | 1 to 3 min clean, seconds incremental | Seconds | Low; agents wait, people do not |
+
+Python is kept as the fallback in the record, not as an option: efficient for batch work, wrong for
+hooks, and a runtime to install on Windows. Node needs a runtime on collecting machines and was never
+a candidate.
 
 ### Recommendation
 
-- **Go 1.23+**, module at `kit-board/companion/`, binary name `observatory`, built with `CGO_ENABLED=0`
-  for `darwin/arm64`, `darwin/amd64`, `windows/amd64`, `windows/arm64`, `linux/amd64`, `linux/arm64`.
-- **Releases** from tags `companion-v<version>` by goreleaser: GitHub Release with SHA-256 checksums,
-  cosign signatures, an SBOM, a Homebrew formula pushed to `joshgreenwell/homebrew-tap`, a Scoop
-  manifest pushed to `joshgreenwell/scoop-bucket`, and `.deb`/`.rpm` packages. A winget manifest is an
-  optional later channel because it requires community-repository review.
+- **Rust stable**, edition 2024, MSRV pinned in `rust-toolchain.toml`, workspace at
+  `kit-board/companion/`, binary name `observatory`, `#![forbid(unsafe_code)]` in every crate.
+- **Crates, deliberately few**: `clap` (CLI), `serde` and `serde_json` (wire and provider payloads),
+  `rusqlite` with the `bundled` feature (own state, Cursor databases), `ureq` with `rustls` and the
+  platform trust-store verifier (provider and Observatory HTTPS; blocking, no async runtime), `jiff`
+  (RFC 3339 and time zones), `sha2` and `uuid` (identity), `plist` (LaunchAgent), `thiserror` (typed
+  errors), `tracing` (structured logs of codes and counters only), `jsonschema` (contract validation in
+  tests), `insta` (golden tests for parser output). `Cargo.lock` is committed; `cargo deny` enforces
+  the advisory database, a license allowlist, and duplicate-version bans in CI.
+- **Targets**: `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-pc-windows-msvc`,
+  `aarch64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, each built on a
+  native runner by cargo-dist so the bundled SQLite compiles with the target's own toolchain.
+- **Releases** from tags `observatory-v<version>` by cargo-dist: GitHub Release with per-target
+  archives and SHA-256 checksums, GitHub artifact attestations (Sigstore provenance), a Homebrew
+  formula pushed to `joshgreenwell/homebrew-tap`, and shell and PowerShell installers for hosts
+  without a package manager. The Scoop manifest in `joshgreenwell/scoop-bucket` carries `checkver` and
+  `autoupdate` entries, so the bucket's scheduled action tracks each release without a manual step. A
+  winget manifest is an optional later channel because it requires community-repository review.
 - **Install commands**: `brew install joshgreenwell/tap/observatory` on macOS and Linux;
   `scoop bucket add joshgreenwell https://github.com/joshgreenwell/scoop-bucket` then
-  `scoop install observatory` on Windows; the release tarball with checksum for CI runners and
+  `scoop install observatory` on Windows; the release archive with checksum for CI runners and
   containers.
 - **Upgrades** are the package manager's job: `brew upgrade observatory`, `scoop update observatory`.
   Homebrew and Scoop keep a stable binary path (`/opt/homebrew/bin/observatory`, the Scoop shim), so
   the installed scheduler entry never breaks. The Observatory shows "update available" when an
   install's reported version is behind the latest release. There is no self-update code in the binary.
+- **Keychain access stays a subprocess.** The Claude Code credential item was created through the
+  `security` command, so `/usr/bin/security` is already in its access list. Reading it through the
+  Security framework from our own binary would trigger an access prompt on every new build and fail
+  silently under a LaunchAgent; `security find-generic-password` does not.
 - **Python remains only for the optional detailed monthly analyzers**, which the companion runs as
   subprocesses when that setting is on. Python stops being a requirement for the core.
+
+### Workspace layout
+
+| Crate | Contents |
+| --- | --- |
+| `observatory` (binary) | `clap` command tree; each subcommand is a thin function over the library crates |
+| `observatory-contract` | Wire types for the v2 envelope as serde structs and one tagged enum on `record_type`, `deny_unknown_fields` everywhere, newtypes for SHA-256, UUID, and timestamps; the vendored `usage-v2.schema.json`; validation helpers used by tests |
+| `observatory-core` | `config` (local file, deny list), `settings` (fetch, cache, merge), `discovery`, `credentials`, `state` (rusqlite), `sink` (validation, identity, isolation), `outbox`, `http`, `lock`, `service` (LaunchAgent, Task Scheduler, systemd user timer) |
+| `observatory-adapters` | One module per adapter in section 5 behind the `Adapter` trait |
+
+```rust
+pub trait Adapter: Send + Sync {
+    fn id(&self) -> AdapterId;
+    /// Prerequisites and credentials, reported as a coverage state; never performs collection.
+    fn preflight(&self, ctx: &RunContext) -> Preflight;
+    /// Emits normalized records into the sink and returns coverage plus the next cursor.
+    fn collect(&self, ctx: &RunContext, cursor: Option<Cursor>, sink: &mut dyn Sink) -> Result<Outcome, AdapterError>;
+}
+```
 
 ### Command surface
 
@@ -128,27 +181,32 @@ confirmations, first run, scheduler), `run` (one collection cycle), `serve` (lat
 install|uninstall|status` (LaunchAgent, Task Scheduler, systemd user timer), `statusline` (Claude Code
 statusline command), `hook claude|cursor` (tool hook receivers), `status`, `doctor`, `settings show`,
 `version`. The statusline and hook subcommands do no network I/O and no SQLite writes beyond an
-append to the local inbox; they exit in single-digit milliseconds so a defect elsewhere cannot slow an
+append to the local inbox; they exit in about a millisecond so a defect elsewhere cannot slow an
 agent session.
 
 ### Contract sharing
 
 `lib/usage-contract.ts` is the single authority. A build step exports it with `z.toJSONSchema` to
-`lib/generated/usage-v2.schema.json`. In the companion, `go-jsonschema` generates
-`internal/contract/usage_v2.gen.go` from that file, and CI diff-gates the generated Go the same way it
-diff-gates `lib/generated/`. A Go test validates every envelope the companion can emit against the same
-schema at runtime with `santhosh-tekuri/jsonschema/v6`; a TypeScript test asserts the exported schema is
-current. Refinements that JSON Schema cannot express (the exclusive token sum, future timestamps,
-reset after observation) are re-implemented in Go and exercised by committed fixtures that `npm test`
-also feeds to the zod schema. Same fixture, both languages, both verdicts.
+`lib/generated/usage-v2.schema.json`; the same bytes are vendored at
+`companion/crates/observatory-contract/schema/usage-v2.schema.json`, and a CI step fails when the two
+differ. The Rust wire types are written by hand as serde structs, because that is the code agents will
+read and edit, and the schema is enforced against them three ways in `cargo test`: every fixture in the
+shared corpus deserializes into the types and re-serializes byte-stable; every envelope the companion
+can build validates against the vendored schema with the `jsonschema` crate; every fixture labeled
+invalid is rejected by both the Rust types and the schema. Refinements that JSON Schema cannot express
+(the exclusive token sum, future timestamps, reset after observation) are implemented as constructor
+checks on the Rust types and exercised by the same fixtures that `npm test` feeds to the zod schema.
+Same fixture, both languages, both verdicts. `cargo typify` may be used once to scaffold the types, but
+the generated output is not the source of truth.
 
 ### CI and release
 
 A new workflow `.github/workflows/companion.yml`, path-filtered to `kit-board/companion/**`, runs
-`go vet`, `golangci-lint`, and `go test` on an ubuntu/macos/windows matrix and cross-builds all six
-targets on every push; on a `companion-v*` tag it runs goreleaser with a token scoped to the tap and
-bucket repositories. This mirrors the `agentlint-v*` and `agent-surface-v*` release conventions
-already in the repository.
+`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and `cargo deny check`
+on an ubuntu/macos/windows matrix, and compares the vendored schema with `lib/generated/` on every
+push. cargo-dist generates and owns the release workflow, triggered by `observatory-v*` tags, with a
+token scoped to the tap repository. This mirrors the `agentlint-v*` and `agent-surface-v*` release
+conventions already in the repository. Dependabot watches `Cargo.lock`.
 
 ---
 
@@ -156,7 +214,7 @@ already in the repository.
 
 ```
 ┌────────────────────────── user machines ───────────────────────────┐
-│  observatory (Go binary)  · LaunchAgent / Task Scheduler / systemd   │
+│  observatory (Rust binary) · LaunchAgent / Task Scheduler / systemd  │
 │  ├─ core: config · settings · discovery · credentials · state(SQLite)│
 │  │        sink · outbox · receipts · lock · http · schedule          │
 │  └─ adapters (one module each, enabled by settings)                  │
@@ -188,14 +246,14 @@ already in the repository.
 
 | Path | Role | Status |
 | --- | --- | --- |
-| `kit-board/companion/` | Go module; `go.mod`, `.goreleaser.yaml`, `README.md` | New |
-| `kit-board/companion/cmd/observatory/main.go` | CLI entry: `connect`, `setup`, `run`, `serve`, `service`, `statusline`, `hook`, `status`, `doctor`, `settings`, `version` | New |
-| `kit-board/companion/internal/core/` | `config` (local file, deny list), `settings` (fetch, cache, merge), `discovery` (installed products and stores), `credentials` (read-only access to existing sign-ins), `state` (SQLite), `sink` (validation, identity, isolation), `outbox`, `httpclient`, `lock`, `service` (LaunchAgent, Task Scheduler, systemd user timer) | New; `state`, `outbox`, `lock`, `service` port v1 behavior |
-| `kit-board/companion/internal/adapters/` | One package per adapter in section 5 behind a common interface | New; `claudeexec` and `codexexec` port `collect.py` parsing against its fixtures |
-| `kit-board/companion/internal/contract/` | `usage-v2.schema.json` (vendored) and `usage_v2.gen.go` (generated types) | Generated, diff-gated |
-| `kit-board/companion/testdata/` | Synthetic JSONL, SQLite, app-server transcripts, provider responses, and the shared wire fixtures | New |
-| `.github/workflows/companion.yml` | Test matrix, cross-build, goreleaser on `companion-v*` tags | New |
-| `joshgreenwell/homebrew-tap`, `joshgreenwell/scoop-bucket` | Formula and manifest repositories written by goreleaser | New, outside this repository |
+| `kit-board/companion/` | Cargo workspace; `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`, `dist-workspace.toml`, `README.md` | New |
+| `kit-board/companion/crates/observatory/` | Binary crate: `clap` command tree for `connect`, `setup`, `run`, `serve`, `service`, `statusline`, `hook`, `status`, `doctor`, `settings`, `version` | New |
+| `kit-board/companion/crates/observatory-contract/` | serde wire types, vendored `schema/usage-v2.schema.json`, validation helpers | New; schema copy diff-gated against `lib/generated/` |
+| `kit-board/companion/crates/observatory-core/` | `config`, `settings`, `discovery`, `credentials`, `state` (rusqlite), `sink`, `outbox`, `http`, `lock`, `service` | New; `state`, `outbox`, `lock`, `service` port v1 behavior |
+| `kit-board/companion/crates/observatory-adapters/` | One module per adapter in section 5 behind the `Adapter` trait | New; `claude_execution` and `codex_execution` port `collect.py` parsing against its fixtures |
+| `kit-board/companion/testdata/` | Synthetic JSONL, SQLite, app-server transcripts, provider responses, the shared wire fixtures, and `insta` snapshots | New |
+| `.github/workflows/companion.yml`, `.github/workflows/release.yml` | Test matrix and checks; cargo-dist's generated release workflow on `observatory-v*` tags | New |
+| `joshgreenwell/homebrew-tap`, `joshgreenwell/scoop-bucket` | Formula written by cargo-dist; Scoop manifest with `autoupdate` | New, outside this repository |
 | `kit-board/scripts/telemetry/` | v1 collector | Frozen; removed after every install is on the companion |
 | `kit-board/scripts/build-collector-bundles.py` | Unchanged until retirement; the companion is not a download bundle | Unchanged |
 | `kit-board/lib/usage-contract.ts` | Envelope v2, record schemas, coverage schema, JSON Schema export | New |
@@ -209,7 +267,7 @@ already in the repository.
 | `kit-board/app/(private)/usage/settings/page.tsx` | Collection mode matrix | New |
 | `kit-board/app/(private)/usage/connections/page.tsx` | Companion installs, bindings, per-adapter coverage, pause | Changed |
 | `kit-board/supabase/migrations/<timestamp>_unified_usage.sql` | Section 6 DDL, constraint widening, grants, policies | New |
-| `kit-board/companion/**/*_test.go`, `tests/usage-contract.test.ts`, `tests/usage-store.integration.test.ts` | Adapter fixtures, contract parity, disposable-Postgres integration on the `test:routing:db` pattern | New |
+| `kit-board/companion/**` unit and snapshot tests, `tests/usage-contract.test.ts`, `tests/usage-store.integration.test.ts` | Adapter fixtures, contract parity, disposable-Postgres integration on the `test:routing:db` pattern | New |
 
 ### Runtime locations on user machines
 
@@ -238,9 +296,10 @@ uploaded. The server knows a binding's account and provider, not its paths.
 3. Compute the effective mode for every adapter: `server setting` AND `not in local deny list` AND
    `prerequisite present` (store found, executable found, credential readable). Record the reason
    when an adapter does not run.
-4. Run the enabled adapters concurrently, each in its own goroutine with its own `context`
-   deadline. An adapter returns normalized records, coverage, and an updated cursor. An adapter
-   failure or timeout is a coverage entry, not a run failure.
+4. Run the enabled adapters concurrently on scoped threads, each with its own deadline (HTTP
+   timeouts, subprocess kill-on-timeout, and a cancellation flag checked between files). An adapter
+   returns normalized records, coverage, and an updated cursor. An adapter failure or timeout is a
+   coverage entry, not a run failure.
 5. The sink validates each record against the vendored schema, assigns observation identity and
    semantic identity, stores the normalized record and (bounded) raw observation in SQLite, and
    isolates anything invalid so that it can never poison a batch.
@@ -833,7 +892,7 @@ its outbox, and follows settings changes made in the UI. The three situations th
 - **v1 keeps working.** `POST /api/v1/telemetry`, `quota_samples`, browser connections, and installed
   v1 schedules are untouched. The two widened `CHECK` constraints change no existing predicate.
 - **Dedupe across v1 and v2** relies on identical `session_hash` derivation; a parity test runs the v1
-  Python parser and the companion's Go parser over the same fixtures and asserts identical bucket rows.
+  Python parser and the companion's Rust parser over the same fixtures and asserts identical bucket rows.
 - **The one change to an existing read:** the dashboard query in `lib/telemetry-store.ts` joins
   `telemetry_sources.disabled` so that disabling a connection removes its readings from the dashboard,
   which v1 does not do today. This is a correctness fix and lands with the migration phase.
@@ -850,7 +909,7 @@ Each phase leaves the system working and older collectors valid.
 | Phase | Delivers | Done when |
 | --- | --- | --- |
 | 0. Contract and storage | `lib/usage-contract.ts`, generated JSON Schema and parity test, `lib/companion-settings.ts`, migration, `lib/usage-store.ts` ingestion, `POST /api/v1/usage`, `GET /api/v1/companion/config`, `POST /api/v1/companion/pair`, settings and installs APIs and pages, disabled-source join | Disposable-Postgres integration test passes; fixtures accepted and rejected as labeled; deployed; no collector change |
-| 1. Companion core | Go module, generated contract types, goreleaser pipeline, tap and bucket repositories, `connect`/`setup`/`run`/`service`/`status`/`doctor`, settings fetch and deny list, state, sink, outbox, schedulers for three platforms, ported `claudeexec` and `codexexec` with v1 parity fixtures, `statusline` subcommand, benchmark fixtures | Same fixtures yield identical buckets in v1 and companion; `brew install` on a Mac and `scoop install` on Windows publish with receipts; statusline under 10 ms and 1 GB backfill under 10 s on the owner's Mac; v1 schedule removed on those machines |
+| 1. Companion core | Cargo workspace, contract crate with schema parity tests, cargo-dist pipeline, tap and bucket repositories, `connect`/`setup`/`run`/`service`/`status`/`doctor`, settings fetch and deny list, state, sink, outbox, schedulers for three platforms, ported `claude_execution` and `codex_execution` with v1 parity fixtures and `insta` snapshots, `statusline` subcommand, benchmark fixtures, `cargo deny` policy | Same fixtures yield identical buckets in v1 and companion; `brew install` on a Mac and `scoop install` on Windows publish with receipts; statusline under 5 ms and 1 GB backfill under 10 s on the owner's Mac; v1 schedule removed on those machines |
 | 2. Allowance | `codex_account` app-server reader; `claude_account` OAuth reader behind setup confirmation; embedded and statusline readers write `allowance_readings`; dashboard reads `allowance_percent_view` and shows non-percent meters | Readings appear within one cadence after a real Codex or Claude response; reader ranking verified with both readers on |
 | 3. Cursor | `cursor_execution`, `cursor_account` behind setup confirmation, usage events with `chargedCents`/`totalCents` kept separate, Cursor in every dashboard selector | Controlled Cursor workload reconciles account events against local conversation rows; charges never summed with estimates |
 | 4. Detail | `detail_level` `requests` and `requests_with_tools`, tool allowlist, project hashing, dashboard per-model/per-tool/per-source views, reconciliation view | Request rows dedupe across channels; unattributed remainder displayed as such |
@@ -901,7 +960,7 @@ both the Mac and the Windows machine.
   thousands of rows, which Postgres handles, but a 13-month rolling window is proposed.
 - Whether to commit the September 11 research report into `docs/` so the option identifiers used
   here resolve inside the repository.
-- Rust instead of Go. Equal on distribution and hook latency; the architecture does not change.
+- Linux targets: `gnu` (chosen above) or `musl` for a fully static binary on older distributions.
 - When to add Apple Developer ID and Authenticode signing. Not required for Homebrew or Scoop
   installs; required before offering a browser download.
 - Whether to submit a winget manifest once the Scoop bucket has been exercised.
