@@ -5,6 +5,7 @@ Private personal dashboard at https://personal-observatory-jg.vercel.app, hosted
 - **[Startup, recovery, external scripts, and Obsidian locations](docs/startup-and-recovery.md)**
 - [Migration provenance and exclusions](docs/repository-migration.md)
 - [Architecture and data ownership](docs/architecture.md)
+- [Reset-safe usage and burn-rate history design](docs/usage-burn-rate-history.md)
 - [Schedules, publishers, and migration status](docs/schedules.md)
 - [Agent handoff and operating map](docs/agent-handoff.md)
 

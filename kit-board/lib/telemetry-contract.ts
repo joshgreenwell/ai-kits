@@ -36,6 +36,87 @@ export const connectionSchema = z.object({
   machine_label: z.string().trim().min(1).max(100), mode: z.enum(['local', 'browser']),
 }).strict().refine(v => v.mode !== 'browser' || v.provider === 'claude', 'Browser connections support Claude');
 
+const HOUR = 3_600_000;
+const RESET_TOLERANCE = 2 * 60_000;
+const MAX_QUOTA_GAP = 3 * HOUR;
+
+export type QuotaCycle = {
+  key: string;
+  resetAt: string;
+  windowStartedAt: string;
+  windowMinutes: number;
+  samples: QuotaSample[];
+  completed: boolean;
+  discontinuous: boolean;
+  measuredHours: number;
+  usedPoints: number;
+  pointsPerHour: number | null;
+};
+
+/** Group quota readings into reset-bounded cycles while tolerating small reset timestamp jitter. */
+export function quotaCycles(samples: QuotaSample[], now = Date.now()): QuotaCycle[] {
+  const ordered = [...samples].sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
+  const groups: { anchor: number; reset: number; windowMinutes: number; samples: QuotaSample[] }[] = [];
+  for (const sample of ordered) {
+    const reset = Date.parse(sample.resets_at);
+    const group = groups.findLast(candidate => candidate.windowMinutes === sample.window_minutes && Math.abs(candidate.anchor - reset) <= RESET_TOLERANCE);
+    if (group) {
+      group.samples.push(sample);
+      // The newest observation supplies the most recent provider estimate of this boundary.
+      group.reset = reset;
+    } else {
+      groups.push({ anchor: reset, reset, windowMinutes: sample.window_minutes, samples: [sample] });
+    }
+  }
+
+  return groups
+    .sort((a, b) => a.reset - b.reset)
+    .map(group => {
+      const rows = group.samples.sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
+      let discontinuous = false;
+      for (let i = 1; i < rows.length; i++) {
+        const previous = rows[i - 1], current = rows[i];
+        const gap = Date.parse(current.observed_at) - Date.parse(previous.observed_at);
+        if (current.used_percent < previous.used_percent || gap <= 0 || gap > MAX_QUOTA_GAP) discontinuous = true;
+      }
+      const first = rows[0], last = rows.at(-1)!;
+      const measuredHours = (Date.parse(last.observed_at) - Date.parse(first.observed_at)) / HOUR;
+      const usedPoints = Math.max(0, last.used_percent - first.used_percent);
+      const resetAt = new Date(group.reset).toISOString();
+      return {
+        key: `${group.windowMinutes}:${resetAt}`,
+        resetAt,
+        windowStartedAt: new Date(group.reset - group.windowMinutes * 60_000).toISOString(),
+        windowMinutes: group.windowMinutes,
+        samples: rows.map(row => ({ ...row, resets_at: resetAt })),
+        completed: group.reset <= now,
+        discontinuous,
+        measuredHours,
+        usedPoints,
+        pointsPerHour: !discontinuous && measuredHours >= 0.5 ? usedPoints / measuredHours : null,
+      };
+    });
+}
+
+function weightedMedian(values: number[]) {
+  if (!values.length) return null;
+  const weighted = values.map((value, index) => ({ value, weight: 0.8 ** (values.length - index - 1) }))
+    .sort((a, b) => a.value - b.value);
+  const midpoint = weighted.reduce((sum, item) => sum + item.weight, 0) / 2;
+  let cumulative = 0;
+  for (const item of weighted) {
+    cumulative += item.weight;
+    if (cumulative >= midpoint) return item.value;
+  }
+  return weighted.at(-1)!.value;
+}
+
+function percentile(values: number[], fraction: number) {
+  if (!values.length) return null;
+  const ordered = [...values].sort((a, b) => a - b);
+  return ordered[Math.round((ordered.length - 1) * fraction)];
+}
+
 /** Provider allowance forecasts stay in percentage points, never inferred from token counts. */
 export function quotaPace(samples: QuotaSample[], now = Date.now()) {
   const ordered = [...samples].sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
@@ -67,13 +148,73 @@ export function quotaPace(samples: QuotaSample[], now = Date.now()) {
     lastsUntilReset: rate === null ? null : rate === 0 || (exhaustion ?? Infinity) >= reset };
 }
 
+/** Seed a new reset window with recent completed-cycle pace, then yield to live evidence. */
+export function quotaOutlook(samples: QuotaSample[], now = Date.now()) {
+  const cycles = quotaCycles(samples, now);
+  const active = [...cycles].reverse().find(cycle => !cycle.completed) ?? cycles.at(-1);
+  if (!active) return null;
+  const current = quotaPace(active.samples, now);
+  if (!current) return null;
+
+  const comparable = cycles
+    .filter(cycle => cycle.key !== active.key && cycle.completed && cycle.pointsPerHour !== null)
+    .slice(-8);
+  const historicalRates = comparable.map(cycle => cycle.pointsPerHour!);
+  const historicalPointsPerHour = weightedMedian(historicalRates);
+  const currentPointsPerHour = current.pointsPerHour;
+  const warmupHours = Math.min(6, Math.max(1, active.windowMinutes / 60 * 0.1));
+  const liveWeight = currentPointsPerHour === null ? 0 : Math.min(1, current.measuredHours / warmupHours);
+
+  let forecastSource: 'historical' | 'blended' | 'current_window' | 'stale' | 'unavailable';
+  let effectiveRate: number | null;
+  if (current.stale) {
+    forecastSource = 'stale';
+    effectiveRate = null;
+  } else if (currentPointsPerHour === null && historicalPointsPerHour === null) {
+    forecastSource = 'unavailable';
+    effectiveRate = null;
+  } else if (currentPointsPerHour === null) {
+    forecastSource = 'historical';
+    effectiveRate = historicalPointsPerHour;
+  } else if (historicalPointsPerHour !== null && liveWeight < 1) {
+    forecastSource = 'blended';
+    effectiveRate = currentPointsPerHour * liveWeight + historicalPointsPerHour * (1 - liveWeight);
+  } else {
+    forecastSource = 'current_window';
+    effectiveRate = currentPointsPerHour;
+  }
+
+  const observed = Date.parse(current.observed_at), reset = Date.parse(current.resets_at);
+  const hoursLeft = (reset - observed) / HOUR;
+  const projectedUsedPercent = effectiveRate === null ? null : current.used_percent + effectiveRate * hoursLeft;
+  const exhaustion = effectiveRate !== null && effectiveRate > 0
+    ? observed + current.remaining / effectiveRate * HOUR
+    : null;
+  return {
+    ...current,
+    cycles,
+    completedCycles: cycles.filter(cycle => cycle.completed).length,
+    comparableCycles: comparable.length,
+    currentPointsPerHour,
+    historicalPointsPerHour,
+    historicalLowPointsPerHour: percentile(historicalRates, 0.25),
+    historicalHighPointsPerHour: percentile(historicalRates, 0.75),
+    liveWeight,
+    forecastSource,
+    pointsPerHour: effectiveRate,
+    projectedUsedPercent,
+    exhaustionAt: exhaustion ? new Date(exhaustion).toISOString() : null,
+    lastsUntilReset: effectiveRate === null ? null : effectiveRate === 0 || (exhaustion ?? Infinity) >= reset,
+  };
+}
+
 export function isSparkWindow(sample: Pick<QuotaSample, 'window_key' | 'label'>) {
   return /spark/i.test(`${sample.window_key} ${sample.label}`);
 }
 
 export function tokenPace(rows: { hour: string; total_tokens: number }[], now = Date.now()) {
-  const end = Math.floor(now / 3_600_000) * 3_600_000;
-  const sum = (hours: number) => rows.filter(r => Date.parse(r.hour) >= end - hours * 3_600_000 && Date.parse(r.hour) < end)
+  const end = Math.floor(now / HOUR) * HOUR;
+  const sum = (hours: number) => rows.filter(r => Date.parse(r.hour) >= end - hours * HOUR && Date.parse(r.hour) < end)
     .reduce((n, r) => n + Number(r.total_tokens), 0);
   return { tokensLast24Hours: sum(24), tokensPerHour: sum(6) / 6, completeThrough: new Date(end).toISOString() };
 }

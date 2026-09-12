@@ -2,10 +2,18 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardAction }
 import { Badge } from '@/components/ui/badge';
 import { countdown, when } from '@/components/telemetry-shared';
 import { Stat, StatGroup } from '@/components/kit';
-import { quotaPace } from '@/lib/telemetry-contract';
+import { quotaOutlook } from '@/lib/telemetry-contract';
 import { cn } from 'cn';
 
-type Pace = NonNullable<ReturnType<typeof quotaPace>>;
+type Pace = NonNullable<ReturnType<typeof quotaOutlook>>;
+
+const sourceLabel: Record<Pace['forecastSource'], string> = {
+  historical: 'historical seed',
+  blended: 'blended forecast',
+  current_window: 'current pace',
+  stale: 'stale reading',
+  unavailable: 'learning pace',
+};
 
 /**
  * Recorded usage against the even-pace guide, with the projection continuing
@@ -15,7 +23,12 @@ type Pace = NonNullable<ReturnType<typeof quotaPace>>;
 function BurnChart({ pace: p }: { pace: Pace }) {
   const reset = Date.parse(p.resets_at);
   const start = reset - p.window_minutes * 60_000;
-  const ceiling = Math.max(100, Math.ceil((p.projectedUsedPercent ?? 100) / 25) * 25);
+  const hoursLeft = (reset - Date.parse(p.observed_at)) / 3_600_000;
+  const historicalProjection = p.historicalPointsPerHour === null ? null : p.used_percent + p.historicalPointsPerHour * hoursLeft;
+  const historicalLow = p.historicalLowPointsPerHour === null ? null : p.used_percent + p.historicalLowPointsPerHour * hoursLeft;
+  const historicalHigh = p.historicalHighPointsPerHour === null ? null : p.used_percent + p.historicalHighPointsPerHour * hoursLeft;
+  const chartMax = Math.max(100, p.projectedUsedPercent ?? 0, historicalHigh ?? 0);
+  const ceiling = Math.ceil(chartMax / 25) * 25;
   const x = (at: string) => 34 + Math.max(0, Math.min(1, (Date.parse(at) - start) / (reset - start))) * 292;
   const y = (used: number) => 154 - (used / ceiling) * 130;
   const points = p.history.map(row => `${x(row.observed_at)},${y(row.used_percent)}`).join(' ');
@@ -42,6 +55,19 @@ function BurnChart({ pace: p }: { pace: Pace }) {
           <text x="326" y="14" textAnchor="end" fill="var(--warning)" fontSize="10" fontFamily="var(--font-mono)">{ceiling}% demand</text>
         )}
         <line x1="34" y1={y(0)} x2="326" y2={y(100)} stroke="var(--border)" strokeDasharray="2 4" />
+        {historicalLow !== null && historicalHigh !== null && (
+          <polygon
+            points={`${x(p.observed_at)},${y(p.used_percent)} 326,${y(historicalLow)} 326,${y(historicalHigh)}`}
+            fill="var(--primary)"
+            opacity="0.1"
+          />
+        )}
+        {historicalProjection !== null && (
+          <line
+            x1={x(p.observed_at)} y1={y(p.used_percent)} x2="326" y2={y(historicalProjection)}
+            stroke="var(--primary)" strokeWidth="1.5" strokeDasharray="2 3" opacity="0.65"
+          />
+        )}
         <polyline points={points} fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinejoin="round" />
         {p.projectedUsedPercent !== null && (
           <line
@@ -60,6 +86,7 @@ function BurnChart({ pace: p }: { pace: Pace }) {
       </div>
       <div className="text-muted-foreground flex flex-wrap gap-4 font-mono text-[10px]">
         <span className="flex items-center gap-1.5"><i className="bg-primary block h-0.5 w-3" />Recorded</span>
+        {historicalProjection !== null && <span className="flex items-center gap-1.5"><i className="border-primary block h-0 w-3 border-t border-dashed" />Recent cycles</span>}
         <span className="flex items-center gap-1.5"><i className="bg-warning block h-0.5 w-3" />Projected</span>
         <span className="flex items-center gap-1.5"><i className="bg-border block h-0.5 w-3" />Even pace</span>
       </div>
@@ -81,16 +108,18 @@ export function AllowanceCard({ account, pace: p, now }: { account: { label: str
       : p.remaining === 0
         ? 'This allowance is fully used. Waiting for the next reset.'
         : over
-          ? `Allowance runs out ${when(p.exhaustionAt)} at this pace.`
-          : 'Your allowance lasts through this reset at the measured pace.';
+          ? `Allowance runs out ${when(p.exhaustionAt)} at this forecast pace.`
+          : 'Your allowance lasts through this reset at the forecast pace.';
 
   return (
     <Card className={cn('gap-4 overflow-hidden py-0', over && 'border-destructive/45')}>
       <CardHeader className="p-4">
-        <CardDescription>{account.label}</CardDescription>
+        <CardDescription>{account.label} · {p.completedCycles} completed {p.completedCycles === 1 ? 'cycle' : 'cycles'} in view</CardDescription>
         <CardTitle className="text-base">{p.label}</CardTitle>
         <CardAction>
-          <Badge variant={p.stale ? 'soft-warning' : 'soft'}>{p.stale ? 'stale reading' : 'observed'}</Badge>
+          <Badge variant={p.stale ? 'soft-warning' : p.forecastSource === 'historical' ? 'soft-info' : 'soft'}>
+            {sourceLabel[p.forecastSource]}
+          </Badge>
         </CardAction>
       </CardHeader>
 
@@ -138,9 +167,17 @@ export function AllowanceCard({ account, pace: p, now }: { account: { label: str
           }
         />
         <Stat
-          label={`Your burn / ${rateUnit}`}
+          label={`Forecast burn / ${rateUnit}`}
           value={p.pointsPerHour === null ? '—' : `${(p.pointsPerHour * (hourly ? 1 : 24)).toFixed(1)}`}
-          caption="pts"
+          caption={
+            p.forecastSource === 'historical'
+              ? `${p.comparableCycles} prior ${p.comparableCycles === 1 ? 'cycle' : 'cycles'} · pts`
+              : p.forecastSource === 'blended'
+                ? `${Math.round(p.liveWeight * 100)}% current evidence · pts`
+                : p.forecastSource === 'current_window'
+                  ? 'measured this window · pts'
+                  : 'waiting for usable evidence'
+          }
         />
         <Stat
           label={`Available pace / ${rateUnit}`}
@@ -157,10 +194,17 @@ export function AllowanceCard({ account, pace: p, now }: { account: { label: str
           </summary>
           <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
             {p.samples} readings over {p.measuredHours.toFixed(1)}h, ending {when(p.observed_at)}.
-            Recorded usage + measured hourly burn × hours from that reading to reset. Up to 24h of
-            continuous history in this window; resets, decreases and gaps over 3h restart the
-            history. Above 100% shows demand beyond the allowance. The dotted guide spreads 100%
-            evenly across the cycle.
+            {' '}{p.forecastSource === 'historical'
+              ? `The forecast is seeded by the recent median from ${p.comparableCycles} completed ${p.comparableCycles === 1 ? 'cycle' : 'cycles'} until this window has enough evidence.`
+              : p.forecastSource === 'blended'
+                ? `Current-window pace is blended with ${p.comparableCycles} completed ${p.comparableCycles === 1 ? 'cycle' : 'cycles'}; current evidence now has ${Math.round(p.liveWeight * 100)}% weight.`
+                : p.forecastSource === 'current_window'
+                  ? 'The forecast uses continuous history from this window.'
+                  : p.forecastSource === 'stale'
+                    ? 'The latest reading is stale, so the active projection is paused.'
+                    : 'No comparable completed cycle or usable live segment is available yet.'}
+            {' '}Resets, decreases and gaps over 3h restart live history. Above 100% shows demand
+            beyond the allowance. The dotted diagonal guide spreads 100% evenly across the cycle.
           </p>
         </details>
       </div>

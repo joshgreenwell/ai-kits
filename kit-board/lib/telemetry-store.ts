@@ -62,7 +62,7 @@ async function loadTelemetryDashboard() {
         sum(total_tokens)::float8 AS total_tokens, sum(calls)::float8 AS calls
       FROM canonical GROUP BY account_id, hour, model ORDER BY hour`,
     sql`SELECT id, account_id, window_key, label, observed_at, used_percent, resets_at, window_minutes
-      FROM personal_hub.quota_samples WHERE observed_at >= now() - interval '9 days' ORDER BY observed_at`,
+      FROM personal_hub.quota_samples WHERE observed_at >= now() - interval '35 days' ORDER BY observed_at`,
     // Project only the baseline fields; the full reports include large detail arrays.
     sql`SELECT DISTINCT ON (period_key, subject_key)
       payload->>'machine_id' AS machine_id, payload->>'machine_name' AS machine_name,
