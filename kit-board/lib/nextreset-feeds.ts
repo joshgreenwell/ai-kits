@@ -1,6 +1,5 @@
-import { feedSources, RESET_NORMALIZATION_VERSION, type FeedSource, type ResetDocument, type ResetItem } from './reset-feeds';
+import { RESET_NORMALIZATION_VERSION, type ResetDocument, type ResetItem } from './reset-feeds';
 
-export const nextResetUrls = { archive: 'https://nextreset.net/api/resets', status: 'https://nextreset.net/api/status' } as const;
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => v && typeof v === 'object' && !Array.isArray(v) ? v as Obj : {};
 const str = (v: unknown, max = 1200) => typeof v === 'string' ? v.trim().slice(0, max) : '';
@@ -28,11 +27,11 @@ function record(value: unknown, announcement: boolean, pending = false): ResetIt
 }
 
 /** Documented public archive + status; original source links and dates are retained. */
-export function normalizeNextReset(source: 'codex-timeline' | 'codex-announcements', archive: unknown, status: unknown): ResetDocument {
+export function normalizeNextReset(source: 'nextreset-timeline' | 'nextreset-announcements', archive: unknown, status: unknown): ResetDocument {
   const data = obj(archive), current = obj(status), meta = obj(data.meta), statusMeta = obj(current.meta);
   const checked = date(meta.checked_at), statusChecked = date(statusMeta.checked_at);
   if (!Array.isArray(data.data) || !checked || !statusChecked || !('scheduled' in current)) throw new Error('Feed schema changed');
-  const announcements = source === 'codex-announcements';
+  const announcements = source === 'nextreset-announcements';
   const items = new Map<string, ResetItem>();
   for (const value of [...data.data.slice(0, 1000), current.latest_update].filter(Boolean)) {
     if (announcements && obj(value).sourceKind === 'observed') continue;
@@ -53,14 +52,6 @@ export function normalizeNextReset(source: 'codex-timeline' | 'codex-announcemen
     coverage: { checked_at: checked < statusChecked ? checked : statusChecked,
       direct_checked_at: directChecks.every(Boolean) ? (directChecks as string[]).sort()[0] : null,
       direct_complete: complete(direct) && complete(statusDirect), pending_unavailable: current.scheduled != null && !pending } };
-}
-
-export function resetFeedDefinition(source: FeedSource, payload?: ResetDocument | null) {
-  if (payload?.provenance === 'nextreset' && (source === 'codex-timeline' || source === 'codex-announcements')) {
-    return { provider: 'codex', label: `NextReset · ${source === 'codex-timeline' ? 'history' : 'announcements'}`,
-      url: source === 'codex-timeline' ? nextResetUrls.archive : nextResetUrls.status };
-  }
-  return feedSources[source];
 }
 
 export function resetFeedCoverageNotes(payload?: ResetDocument | null, now = Date.now()): string[] {

@@ -3,10 +3,9 @@ import { createHash } from 'node:crypto';
 import type postgres from 'postgres';
 import { database } from './db';
 import { stableJson } from './contracts';
-import { feedSources, RESET_NORMALIZATION_VERSION, type FeedSource } from './reset-feeds';
+import { activeResetFeeds, feedSources, RESET_NORMALIZATION_VERSION, type FeedSource } from './reset-feeds';
 import { resetFeedFailure } from './reset-feed-errors';
 import { createResetFeedFetcher } from './reset-feed-fetch';
-import { resetFeedDefinition } from './reset-feed-fallback';
 
 export async function syncResetFeeds() {
   const sql = database();
@@ -22,7 +21,7 @@ export async function syncResetFeeds() {
           AND COALESCE(r.payload->>'normalization_version', '') <> ${String(RESET_NORMALIZATION_VERSION)}))) RETURNING *`;
     if (!state) return { source, cached: true };
     try {
-      const [saved] = await sql`SELECT payload->>'normalization_version' AS version, payload->>'provenance' AS provenance FROM personal_hub.reset_feed_revisions
+      const [saved] = await sql`SELECT payload->>'normalization_version' AS version FROM personal_hub.reset_feed_revisions
         WHERE source = ${source} AND content_hash = ${state.current_hash}`;
       const result = await fetchFeed(source, { ...state, ...saved });
       if ('unchanged' in result) {
@@ -39,8 +38,7 @@ export async function syncResetFeeds() {
         await tx`UPDATE personal_hub.reset_feed_state SET succeeded_at = now(), error = NULL, current_hash = ${contentHash},
           etag = ${result.etag}, last_modified = ${result.last_modified} WHERE source = ${source}`;
       });
-      console.info('Reset feed refreshed', { source, via: payload.provenance ?? 'primary', items: payload.items.length,
-        ...(payload.primary_error ? { primary_error: payload.primary_error } : {}) });
+      console.info('Reset feed refreshed', { source, via: payload.provenance ?? 'primary', items: payload.items.length });
       return { source, ok: true, items: payload.items.length };
     } catch (error) {
       const message = resetFeedFailure(error);
@@ -51,8 +49,8 @@ export async function syncResetFeeds() {
   }));
 }
 export async function resetFeedDashboard() {
-  const rows = await database()`SELECT s.source, s.checked_at, s.succeeded_at, s.error, r.payload,
+  const rows = await database()<(postgres.Row & { source: string })[]>`SELECT s.source, s.checked_at, s.succeeded_at, s.error, r.payload,
     (SELECT count(*)::int FROM personal_hub.reset_feed_revisions h WHERE h.source = s.source) AS revisions
     FROM personal_hub.reset_feed_state s LEFT JOIN personal_hub.reset_feed_revisions r ON r.source = s.source AND r.content_hash = s.current_hash`;
-  return JSON.parse(JSON.stringify(rows.map(row => ({ ...row, ...resetFeedDefinition(row.source as FeedSource, row.payload) }))));
+  return JSON.parse(JSON.stringify(activeResetFeeds(rows)));
 }

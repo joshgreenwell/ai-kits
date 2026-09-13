@@ -72,13 +72,13 @@ test('ingest rejects hidden payload fields and invalid accounting', () => {
   assert.equal(connectionSchema.safeParse({ account_id: 'test', provider: 'codex', account_label: 'test', machine_label: 'test', mode: 'browser' }).success, false);
 });
 test('feeds retain classifications, reject unsafe links and exclude unrelated posts', () => {
-  const feed = normalizeFeed('codex-announcements', { tweets: [
-    { id: '1', at: '2026-09-01', text: 'Potential reset', kind: 'signal', url: 'https://x.com/test/status/1' },
-    { id: '2', at: '2026-09-01', text: 'New model', kind: 'codex', url: 'https://x.com/test/status/2' },
-    { id: '3', at: '2026-09-01', text: 'Bad link', kind: 'reset', url: 'javascript:alert(1)' },
+  const feed = normalizeFeed('claude-radar', { items: [
+    { id: '1', date_published: '2026-09-01', title: 'Upcoming reset', tags: ['counter-reset', 'upcoming'], url: 'https://example.com/1' },
+    { id: '2', date_published: '2026-09-01', title: 'New model', url: 'https://example.com/2' },
+    { id: '3', date_published: '2026-09-01', title: 'Bad reset link', url: 'javascript:alert(1)' },
   ] });
-  assert.equal(feed.items.length, 1); assert.equal(feed.items[0].category, 'announcement'); assert.equal(feed.items[0].status, 'signal');
-  assert.throws(() => normalizeFeed('codex-timeline', { unexpected: [] }));
+  assert.equal(feed.items.length, 1); assert.equal(feed.items[0].category, 'announcement'); assert.equal(feed.items[0].status, 'announced');
+  assert.throws(() => normalizeFeed('claude-radar', { unexpected: [] }));
 });
 test('reset feed failures retain safe, actionable diagnostics', () => {
   assert.equal(resetFeedFailure(new Error('http_403')), 'http_403');
@@ -90,9 +90,7 @@ test('reset feed failures retain safe, actionable diagnostics', () => {
   assert.equal(resetFeedFailureLabel('v4:http_403'), 'source returned HTTP 403');
   assert.equal(resetFeedFailureLabel('v4:network_error'), 'source connection failed');
 });
-test('external probability is not an official promise and projections preserve misses', () => {
-  const doc = normalizeFeed('codex-forecast', { updated_at: '2026-09-09', probabilities: { rounded_24h: 25, rounded_48h: 45 }, confidence: 'low', confidence_note: 'Experimental', official_signal: null });
-  assert.equal(doc.forecast?.probability24, 25); assert.equal(doc.forecast?.official, null);
+test('external projections preserve misses', () => {
   const radar = normalizeFeed('claude-radar', { items: [{ id: '1', title: 'Reset projection', content_text: 'Graded a miss on August 17.', tags: ['counter-reset', 'projected'], date_published: '2026-08-02', url: 'https://www.resetradar.com/#1' }] });
   assert.equal(radar.items[0].status, 'missed projection');
 });
@@ -116,27 +114,23 @@ test('browser adapter exports only numeric quota windows, not account or convers
 });
 
 
-test('banked lifecycle, global scope and announcements remain independent classifications', () => {
-  const base = { id: 'bank', summary: 'Banked credit update', type: 'credits', reset_kind: 'banked', banked_state: 'arriving', scope: 'global', date: '2026-09-05', url: 'https://x.com/test/status/bank', reset_verification_status: 'pending' };
-  const banked = normalizeFeed('codex-timeline', { events: [base] }).items[0];
-  assert.equal(banked.reset_kind, 'banked'); assert.equal(banked.banked_state, 'arriving');
-  assert.equal(banked.status, 'arriving'); assert.equal(banked.verification_status, 'pending');
-  assert.equal(banked.category, 'announcement'); assert.equal(resetMarker(banked), 'banked');
+test('saved banked lifecycle, global scope and announcements retain independent markers', () => {
+  // Synthetic normalized records also cover historical snapshots from retired sources.
+  const banked: ResetItem = { id: 'bank', provider: 'codex', title: 'Banked credit update', reset_kind: 'banked',
+    banked_state: 'arriving', scope: 'global', at: '2026-09-05T00:00:00Z', url: 'https://example.com/bank',
+    verification_status: 'pending', status: 'arriving', category: 'announcement', confidence: null, effective_at: null };
+  assert.equal(resetMarker(banked), 'banked');
   assert.ok(matchesResetType(banked, 'banked')); assert.ok(matchesResetType(banked, 'announcement'));
   assert.equal(matchesResetType(banked, 'global'), false);
-  const global = normalizeFeed('codex-timeline', { events: [{ ...base, id: 'reset', type: 'reset', reset_kind: 'hard', banked_state: null }] }).items[0];
-  assert.equal(global.reset_kind, 'global'); assert.equal(resetMarker(global), 'global');
-  const preview = normalizeFeed('codex-timeline', { events: [{ ...base, type: 'reset', reset_kind: 'hard', banked_state: null, preview: true }] }).items[0];
-  assert.equal(preview.category, 'announcement'); assert.equal(resetMarker(preview), 'announcement');
-  assert.ok(matchesResetType(preview, 'global')); assert.notEqual(resetEntryKey(global), resetEntryKey(preview));
-  const explicit = normalizeFeed('codex-announcements', { tweets: [{ id: 'announced', text: 'All paid accounts will reset tonight', kind: 'candidate', explicit_reset_claim: true, tibo_lane: 'reset_announcement', at: '2026-09-05', url: base.url }] }).items[0];
-  assert.equal(explicit.reset_kind, 'global'); assert.equal(resetMarker(explicit), 'announcement');
-  const feedBanked = normalizeFeed('codex-announcements', { tweets: [{ id: 'bank', text: 'Banked', kind: 'banked', banked_state: 'arriving', at: '2026-09-05', url: base.url }] }).items[0];
-  assert.equal(resetEntryKey(feedBanked), resetEntryKey(banked));
-  for (const kind of ['watch', 'signal']) {
-    const signal = normalizeFeed('codex-announcements', { tweets: [{ id: kind, text: kind, kind, at: '2026-09-05', url: base.url }] }).items[0];
+  const global: ResetItem = { ...banked, id: 'reset', reset_kind: 'global', banked_state: null, category: 'history' };
+  assert.equal(resetMarker(global), 'global');
+  const announced: ResetItem = { ...global, category: 'announcement' };
+  assert.equal(resetMarker(announced), 'announcement');
+  assert.ok(matchesResetType(announced, 'global'));
+  assert.notEqual(resetEntryKey(global), resetEntryKey(announced));
+  for (const kind of ['watch', 'signal'] as const) {
+    const signal = { ...banked, reset_kind: kind };
     assert.equal(resetMarker(signal), 'signal'); assert.ok(matchesResetType(signal, 'signal'));
   }
-  const credits = normalizeFeed('codex-timeline', { events: [{ ...base, reset_kind: null }] }).items[0];
-  assert.equal(resetMarker(credits), 'credits');
+  assert.equal(resetMarker({ ...banked, reset_kind: 'credits' }), 'credits');
 });

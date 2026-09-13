@@ -6,13 +6,13 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { EmptyState, ListRow, ListRows, Stat, StatGroup } from '@/components/kit';
+import { EmptyState, ListRow, ListRows } from '@/components/kit';
 import { ResetDot } from '@/components/reset-dot';
 import { Choice, when } from '@/components/telemetry-shared';
 import { ResetCalendar } from '@/components/reset-calendar';
 import { matchesResetType, resetDay, resetEntryKey, resetMarker, resetTypeLabel, resetTypes } from '@/lib/reset-calendar';
 import { resetFeedFailureLabel } from '@/lib/reset-feed-errors';
-import { resetFeedCoverageNotes } from '@/lib/reset-feed-fallback';
+import { resetFeedCoverageNotes } from '@/lib/nextreset-feeds';
 import type { ResetDocument } from '@/lib/reset-feeds';
 
 type Feed = { source: string; label: string; url: string; provider: string; succeeded_at: string | null; checked_at: string | null; error: string | null; revisions: number; payload: ResetDocument | null };
@@ -21,7 +21,7 @@ type SyncResult = { source: string; ok?: boolean; error?: string; cached?: boole
 export default function Resets() {
   const [feeds, setFeeds] = useState<Feed[]>([]), [provider, setProvider] = useState('all'), [kind, setKind] = useState('all'), [error, setError] = useState(''), [busy, setBusy] = useState(true);
   const [limit, setLimit] = useState(10);
-  const [selectedDay, setSelectedDay] = useState<string | null>(null), [previewAnnouncement, setPreviewAnnouncement] = useState(false);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
   async function refresh(signal?: AbortSignal) {
     setBusy(true);
@@ -43,25 +43,19 @@ export default function Resets() {
 
   useEffect(() => {
     const controller = new AbortController();
-    if (process.env.NODE_ENV !== 'production') setPreviewAnnouncement(new URLSearchParams(window.location.search).get('preview') === 'announcement');
     fetch('/api/reset-feeds', { signal: controller.signal }).then(r => r.ok ? r.json() : Promise.reject()).then(d => setFeeds(d.feeds)).catch(() => {}).finally(() => { if (!controller.signal.aborted) void refresh(controller.signal); });
     return () => controller.abort();
   }, []);
 
-  const forecast = feeds.find(f => f.source === 'codex-forecast');
-  const outlook = forecast?.payload?.forecast;
   const byUrl = new Map<string, { item: NonNullable<Feed['payload']>['items'][number]; feed: Feed }>();
   // Prefer the curated timeline over the same post in the announcement stream.
-  for (const feed of [...feeds].sort((a, b) => Number(a.source === 'codex-timeline') - Number(b.source === 'codex-timeline'))) {
+  for (const feed of [...feeds].sort((a, b) => Number(a.source === 'nextreset-timeline') - Number(b.source === 'nextreset-timeline'))) {
     for (const item of feed.payload?.items ?? []) byUrl.set(resetEntryKey(item), { item, feed });
   }
   const items = [...byUrl.values()].filter(({ item }) => (provider === 'all' || item.provider === provider) && matchesResetType(item, kind)).sort((a, b) => resetDay(b.item).localeCompare(resetDay(a.item)) || b.item.at.localeCompare(a.item.at));
   const visibleItems = selectedDay ? items.filter(({ item }) => resetDay(item) === selectedDay) : items;
-  const stale = (f: Feed) => !!f.error || !f.succeeded_at || Date.now() - Date.parse(f.succeeded_at) > 26 * 3_600_000 || !!f.payload?.upstream_stale || (f.payload?.coverage && Date.now() - Date.parse(f.payload.coverage.checked_at) > 45 * 60_000) || (f.source === 'codex-forecast' && (!f.payload?.source_updated_at || Date.now() - Date.parse(f.payload.source_updated_at) > 24 * 3_600_000));
+  const stale = (f: Feed) => !!f.error || !f.succeeded_at || Date.now() - Date.parse(f.succeeded_at) > 26 * 3_600_000 || !!f.payload?.upstream_stale || (f.payload?.coverage && Date.now() - Date.parse(f.payload.coverage.checked_at) > 45 * 60_000);
   const coverageNotes = [...new Set(feeds.flatMap(f => resetFeedCoverageNotes(f.payload)))];
-  const announcement = outlook?.official ? { title: 'Codex global reset announced', detail: outlook.official, preview: false } : previewAnnouncement ? {
-    title: 'Codex global reset announced', detail: 'Paid subscription usage is expected to reset by 8 PM Pacific. The exact arrival time may vary by account.', preview: true,
-  } : null;
 
   return (
     <Workspace>
@@ -90,43 +84,9 @@ export default function Resets() {
         <Choice label="Show" value={kind} onChange={value => { setKind(value); setSelectedDay(null); setLimit(10); }} options={[{ value: 'all', label: 'All reset types' }, ...resetTypes]} />
       </div>
 
-      {announcement && provider !== 'claude' && (
-        <Alert variant={announcement.preview ? 'default' : 'success'} role="status">
-          <AlertTitle>{announcement.title}</AlertTitle>
-          <AlertDescription>
-            <p>{announcement.detail}</p>
-            <p className="text-muted-foreground mt-1 font-mono text-[11px]">
-              {announcement.preview ? 'Local preview · sample data' : 'Official announcement detected'} ·{' '}
-              <a href="https://codex-reset.com/" target="_blank" rel="noreferrer" className="underline underline-offset-4">View source</a>
-            </p>
-          </AlertDescription>
-        </Alert>
-      )}
-
       <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-        <div className="grid gap-4">
+        <div>
           <ResetCalendar items={items.map(entry => entry.item)} selectedDay={selectedDay} onSelectDay={day => { setSelectedDay(day); setLimit(10); }} busy={busy} />
-
-          {provider !== 'claude' && (
-            <Card className="gap-0 overflow-hidden py-0" aria-label="Codex global reset forecast">
-              <CardHeader className="p-4">
-                <CardTitle className="text-sm">Codex global reset forecast</CardTitle>
-                <CardDescription className="font-mono text-[11px]">
-                  {forecast && stale(forecast) ? 'stale' : outlook?.confidence || 'waiting'}
-                </CardDescription>
-              </CardHeader>
-              <StatGroup className="border-border border-t">
-                <Stat label="Next 24h" value={outlook?.probability24 != null ? `${outlook.probability24}%` : '—'} />
-                <Stat label="By 48h" value={outlook?.probability48 != null ? `${outlook.probability48}%` : '—'} />
-              </StatGroup>
-              <div className="border-border border-t p-4">
-                <p className="text-muted-foreground text-xs leading-relaxed">
-                  External likelihood model; separate from personal allowance windows.{' '}
-                  <a href="https://codex-reset.com/forecast" target="_blank" rel="noreferrer" className="text-primary underline underline-offset-4">Method</a>
-                </p>
-              </div>
-            </Card>
-          )}
         </div>
 
         <Card className="gap-0 overflow-hidden py-0">
@@ -209,8 +169,8 @@ export default function Resets() {
                   {f.label}
                 </a>
               }
-              detail={`Last successful check ${when(f.succeeded_at)} · ${f.revisions} saved revisions${f.error ? ` · ${resetFeedFailureLabel(f.error)}` : ''}${f.payload?.provenance === 'nextreset' ? ` · fallback: ${resetFeedFailureLabel(f.payload.primary_error)}${f.payload.coverage ? ` · archive checked ${when(f.payload.coverage.checked_at)} · posts/replies checked ${when(f.payload.coverage.direct_checked_at)}` : ''}` : ''}`}
-              aside={<Badge variant={stale(f) || resetFeedCoverageNotes(f.payload).length ? 'soft-warning' : 'soft'}>{stale(f) ? 'stale / retry pending' : f.payload?.provenance === 'nextreset' ? 'available via fallback' : 'available'}</Badge>}
+              detail={`Last successful check ${when(f.succeeded_at)} · ${f.revisions} saved revisions${f.error ? ` · ${resetFeedFailureLabel(f.error)}` : ''}${f.payload?.coverage ? ` · archive checked ${when(f.payload.coverage.checked_at)} · posts/replies checked ${when(f.payload.coverage.direct_checked_at)}` : ''}`}
+              aside={<Badge variant={stale(f) || resetFeedCoverageNotes(f.payload).length ? 'soft-warning' : 'soft'}>{stale(f) ? 'stale / retry pending' : 'available'}</Badge>}
             />
           ))}
         </ListRows>
