@@ -84,14 +84,33 @@ export function createRoutingStore(getDatabase?: DatabaseProvider) {
   async function quotaState(source: RoutingSource, now = Date.now()) {
     requireLocalRoutingSource(source);
     const db = await sql();
-    const rows = JSON.parse(JSON.stringify(await db`WITH ranked AS (
+    // The compatibility view arrives with the unified usage migration; before it exists (SQLSTATE
+    // 42P01) the v1 samples are read directly so routing keeps working across the deploy-then-migrate window.
+    const ranked = (fromView: boolean) => fromView
+      ? db`WITH ranked AS (
       SELECT q.id, q.source_id, q.window_key, q.label, q.observed_at, q.used_percent, q.resets_at, q.window_minutes,
         s.last_seen_at AS source_last_seen_at,
         row_number() OVER (PARTITION BY q.window_key ORDER BY q.observed_at DESC, q.received_at DESC) AS sample_rank
-      FROM personal_hub.allowance_percent_view q JOIN personal_hub.telemetry_sources s ON s.id = q.source_id
+      FROM personal_hub.allowance_percent_view q JOIN personal_hub.telemetry_sources s ON s.id = q.source_id AND NOT s.disabled
       WHERE q.account_id = ${source.account_id}
     ) SELECT id, source_id, window_key, label, observed_at, used_percent, resets_at, window_minutes, source_last_seen_at
-      FROM ranked WHERE sample_rank <= 2 ORDER BY window_key, observed_at DESC`)) as QuotaRow[];
+      FROM ranked WHERE sample_rank <= 2 ORDER BY window_key, observed_at DESC`
+      : db`WITH ranked AS (
+      SELECT q.id, q.source_id, q.window_key, q.label, q.observed_at, q.used_percent, q.resets_at, q.window_minutes,
+        s.last_seen_at AS source_last_seen_at,
+        row_number() OVER (PARTITION BY q.window_key ORDER BY q.observed_at DESC, q.received_at DESC) AS sample_rank
+      FROM personal_hub.quota_samples q JOIN personal_hub.telemetry_sources s ON s.id = q.source_id AND NOT s.disabled
+      WHERE q.account_id = ${source.account_id}
+    ) SELECT id, source_id, window_key, label, observed_at, used_percent, resets_at, window_minutes, source_last_seen_at
+      FROM ranked WHERE sample_rank <= 2 ORDER BY window_key, observed_at DESC`;
+    let raw: unknown;
+    try {
+      raw = await ranked(true);
+    } catch (error) {
+      if ((error as { code?: string }).code !== '42P01') throw error;
+      raw = await ranked(false);
+    }
+    const rows = JSON.parse(JSON.stringify(raw)) as QuotaRow[];
     const grouped = new Map<string, QuotaRow[]>();
     for (const row of rows) {
       const group = grouped.get(row.window_key) ?? [];

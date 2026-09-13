@@ -47,6 +47,22 @@ export async function ingestTelemetry(source: Awaited<ReturnType<typeof telemetr
   });
 }
 
+// v1 quota samples and v2 allowance readings share window keys through the compatibility view.
+// Until the unified usage migration is applied the view does not exist (SQLSTATE 42P01); the v1
+// samples alone keep the live page working across the deploy-then-migrate window.
+async function allowancePercentRows(sql: ReturnType<typeof database>) {
+  try {
+    return await sql`SELECT id, account_id, window_key, label, observed_at, used_percent, resets_at, window_minutes, origin, reader
+      FROM personal_hub.allowance_percent_view WHERE observed_at >= now() - interval '35 days' ORDER BY observed_at`;
+  } catch (error) {
+    if ((error as { code?: string }).code !== '42P01') throw error;
+    return await sql`SELECT q.id, q.account_id, q.window_key, q.label, q.observed_at, q.used_percent, q.resets_at, q.window_minutes,
+        'quota_samples'::text AS origin, 'v1'::text AS reader
+      FROM personal_hub.quota_samples q JOIN personal_hub.telemetry_sources s ON s.id = q.source_id AND NOT s.disabled
+      WHERE q.observed_at >= now() - interval '35 days' ORDER BY q.observed_at`;
+  }
+}
+
 async function loadTelemetryDashboard() {
   const sql = database();
   const [accounts, sources, hourly, quotaRows, reports] = await Promise.all([
@@ -63,9 +79,7 @@ async function loadTelemetryDashboard() {
         sum(cache_write_tokens)::float8 AS cache_write_tokens, sum(output_tokens)::float8 AS output_tokens,
         sum(total_tokens)::float8 AS total_tokens, sum(calls)::float8 AS calls
       FROM canonical GROUP BY account_id, hour, model ORDER BY hour`,
-    // v1 quota samples and v2 allowance readings share window keys through the compatibility view.
-    sql`SELECT id, account_id, window_key, label, observed_at, used_percent, resets_at, window_minutes, origin, reader
-      FROM personal_hub.allowance_percent_view WHERE observed_at >= now() - interval '35 days' ORDER BY observed_at`,
+    allowancePercentRows(sql),
     // Project only the baseline fields; the full reports include large detail arrays.
     sql`SELECT DISTINCT ON (period_key, subject_key)
       payload->>'machine_id' AS machine_id, payload->>'machine_name' AS machine_name,
