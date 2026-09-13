@@ -93,6 +93,7 @@ export function createRoutingStore(getDatabase?: DatabaseProvider) {
         row_number() OVER (PARTITION BY q.window_key ORDER BY q.observed_at DESC, q.received_at DESC) AS sample_rank
       FROM personal_hub.allowance_percent_view q JOIN personal_hub.telemetry_sources s ON s.id = q.source_id AND NOT s.disabled
       WHERE q.account_id = ${source.account_id}
+        AND q.resets_at <= q.observed_at + make_interval(mins => coalesce(q.window_minutes, 129600)) + interval '1 day'
     ) SELECT id, source_id, window_key, label, observed_at, used_percent, resets_at, window_minutes, source_last_seen_at
       FROM ranked WHERE sample_rank <= 2 ORDER BY window_key, observed_at DESC`
       : db`WITH ranked AS (
@@ -101,6 +102,7 @@ export function createRoutingStore(getDatabase?: DatabaseProvider) {
         row_number() OVER (PARTITION BY q.window_key ORDER BY q.observed_at DESC, q.received_at DESC) AS sample_rank
       FROM personal_hub.quota_samples q JOIN personal_hub.telemetry_sources s ON s.id = q.source_id AND NOT s.disabled
       WHERE q.account_id = ${source.account_id}
+        AND q.resets_at <= q.observed_at + make_interval(mins => coalesce(q.window_minutes, 129600)) + interval '1 day'
     ) SELECT id, source_id, window_key, label, observed_at, used_percent, resets_at, window_minutes, source_last_seen_at
       FROM ranked WHERE sample_rank <= 2 ORDER BY window_key, observed_at DESC`;
     let raw: unknown;

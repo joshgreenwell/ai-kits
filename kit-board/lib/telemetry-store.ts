@@ -47,19 +47,24 @@ export async function ingestTelemetry(source: Awaited<ReturnType<typeof telemetr
   });
 }
 
+// A window resets within its own length (plus a day of slack). A reading whose reset lies further out is a
+// bad clock or a hand-written sample; the contract now rejects such records, and rows that arrived before
+// that rule are ignored here so they cannot pin a forecast card.
+
 // v1 quota samples and v2 allowance readings share window keys through the compatibility view.
 // Until the unified usage migration is applied the view does not exist (SQLSTATE 42P01); the v1
 // samples alone keep the live page working across the deploy-then-migrate window.
 async function allowancePercentRows(sql: ReturnType<typeof database>) {
   try {
     return await sql`SELECT id, account_id, window_key, label, observed_at, used_percent, resets_at, window_minutes, origin, reader
-      FROM personal_hub.allowance_percent_view WHERE observed_at >= now() - interval '35 days' ORDER BY observed_at`;
+      FROM personal_hub.allowance_percent_view
+      WHERE observed_at >= now() - interval '35 days' AND resets_at <= observed_at + make_interval(mins => coalesce(window_minutes, 129600)) + interval '1 day' ORDER BY observed_at`;
   } catch (error) {
     if ((error as { code?: string }).code !== '42P01') throw error;
     return await sql`SELECT q.id, q.account_id, q.window_key, q.label, q.observed_at, q.used_percent, q.resets_at, q.window_minutes,
         'quota_samples'::text AS origin, 'v1'::text AS reader
       FROM personal_hub.quota_samples q JOIN personal_hub.telemetry_sources s ON s.id = q.source_id AND NOT s.disabled
-      WHERE q.observed_at >= now() - interval '35 days' ORDER BY q.observed_at`;
+      WHERE q.observed_at >= now() - interval '35 days' AND q.resets_at <= q.observed_at + make_interval(mins => coalesce(q.window_minutes, 129600)) + interval '1 day' ORDER BY q.observed_at`;
   }
 }
 
