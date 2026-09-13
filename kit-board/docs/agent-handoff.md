@@ -140,6 +140,10 @@ Likely next operational work:
 
 ## Fast triage checklist
 
+Reset-feed recovery uses an attributed NextReset fallback for the two failing
+Codex public feeds. See [reset-feed recovery](reset-feeds.md) for transport,
+freshness, classification and verification boundaries (September 12, 2026).
+
 | Symptom | First places to inspect |
 | --- | --- |
 | Private page/API fails | `lib/auth.ts`, `app/proxy.ts` if present, Vercel env names, safe runtime logs |

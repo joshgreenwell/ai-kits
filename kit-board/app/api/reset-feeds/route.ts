@@ -14,6 +14,8 @@ export async function POST(request: Request) {
       const source = await telemetrySource(request);
       if (source.mode !== 'local') throw new RequestError('Unauthorized', 403);
     } else { await requireSession(); requireSameOrigin(request); }
-    return Response.json({ results: await syncResetFeeds(), feeds: await resetFeedDashboard() }, { headers: privateHeaders });
+    const results = await syncResetFeeds();
+    const status = results.some(result => 'ok' in result && result.ok === false) ? 207 : 200;
+    return Response.json({ results, feeds: await resetFeedDashboard() }, { status, headers: privateHeaders });
   } catch (error) { return failure(error); }
 }

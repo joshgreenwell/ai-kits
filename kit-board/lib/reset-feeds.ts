@@ -5,11 +5,13 @@ export const feedSources = {
   'claude-radar': { label: 'Reset Radar · Claude', provider: 'claude', url: 'https://www.resetradar.com/feed.json' },
 } as const;
 export type FeedSource = keyof typeof feedSources;
-export const RESET_NORMALIZATION_VERSION = 4;
+export const RESET_NORMALIZATION_VERSION = 5;
 export type ResetKind = 'global' | 'banked' | 'reset' | 'window_flush' | 'credits' | 'watch' | 'signal' | 'forecast';
 export type ResetItem = { id: string; provider: string; title: string; at: string; effective_at: string | null;
   url: string; category: 'history' | 'announcement' | 'forecast'; status: string; confidence: string | null; scope: string | null; reset_kind?: ResetKind; source_type?: string; banked_state?: string | null; announcement_state?: string | null; verification_status?: string | null; observation_result?: string | null };
 export type ResetDocument = { normalization_version?: number; items: ResetItem[]; source_updated_at: string | null; upstream_stale: boolean;
+  provenance?: 'nextreset'; primary_error?: string;
+  coverage?: { checked_at: string; direct_checked_at: string | null; direct_complete: boolean; pending_unavailable: boolean };
   forecast?: { probability24: number | null; probability48: number | null; confidence: string; note: string; official: string | null; last_reset_at: string | null } };
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => v && typeof v === 'object' && !Array.isArray(v) ? v as Obj : {};

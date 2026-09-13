@@ -11,9 +11,12 @@ import { ResetDot } from '@/components/reset-dot';
 import { Choice, when } from '@/components/telemetry-shared';
 import { ResetCalendar } from '@/components/reset-calendar';
 import { matchesResetType, resetDay, resetEntryKey, resetMarker, resetTypeLabel, resetTypes } from '@/lib/reset-calendar';
+import { resetFeedFailureLabel } from '@/lib/reset-feed-errors';
+import { resetFeedCoverageNotes } from '@/lib/reset-feed-fallback';
 import type { ResetDocument } from '@/lib/reset-feeds';
 
 type Feed = { source: string; label: string; url: string; provider: string; succeeded_at: string | null; checked_at: string | null; error: string | null; revisions: number; payload: ResetDocument | null };
+type SyncResult = { source: string; ok?: boolean; error?: string; cached?: boolean; unchanged?: boolean };
 
 export default function Resets() {
   const [feeds, setFeeds] = useState<Feed[]>([]), [provider, setProvider] = useState('all'), [kind, setKind] = useState('all'), [error, setError] = useState(''), [busy, setBusy] = useState(true);
@@ -22,7 +25,18 @@ export default function Resets() {
 
   async function refresh(signal?: AbortSignal) {
     setBusy(true);
-    try { const r = await fetch('/api/reset-feeds', { method: 'POST', signal }); if (!r.ok) throw new Error(); setFeeds((await r.json()).feeds); setError(''); }
+    try {
+      const r = await fetch('/api/reset-feeds', { method: 'POST', signal });
+      const data = await r.json() as { feeds?: Feed[]; results?: SyncResult[] };
+      if (!data.feeds) throw new Error();
+      setFeeds(data.feeds);
+      const failed = (data.results ?? []).filter(result => result.ok === false);
+      const unavailable = failed.length
+        ? failed.map(result => `${data.feeds?.find(feed => feed.source === result.source)?.label ?? result.source}: ${resetFeedFailureLabel(result.error)}`).join('; ')
+        : data.feeds.filter(feed => feed.error).map(feed => `${feed.label}: ${resetFeedFailureLabel(feed.error)}`).join('; ');
+      setError(unavailable ? `Some feeds are using saved data. ${unavailable}` : '');
+      if (!r.ok && r.status !== 207) throw new Error();
+    }
     catch { if (!signal?.aborted) setError('Refresh unavailable. Showing the last saved feeds.'); }
     finally { if (!signal?.aborted) setBusy(false); }
   }
@@ -43,7 +57,8 @@ export default function Resets() {
   }
   const items = [...byUrl.values()].filter(({ item }) => (provider === 'all' || item.provider === provider) && matchesResetType(item, kind)).sort((a, b) => resetDay(b.item).localeCompare(resetDay(a.item)) || b.item.at.localeCompare(a.item.at));
   const visibleItems = selectedDay ? items.filter(({ item }) => resetDay(item) === selectedDay) : items;
-  const stale = (f: Feed) => !!f.error || !f.succeeded_at || Date.now() - Date.parse(f.succeeded_at) > 26 * 3_600_000 || !!f.payload?.upstream_stale || (f.source === 'codex-forecast' && (!f.payload?.source_updated_at || Date.now() - Date.parse(f.payload.source_updated_at) > 24 * 3_600_000));
+  const stale = (f: Feed) => !!f.error || !f.succeeded_at || Date.now() - Date.parse(f.succeeded_at) > 26 * 3_600_000 || !!f.payload?.upstream_stale || (f.payload?.coverage && Date.now() - Date.parse(f.payload.coverage.checked_at) > 45 * 60_000) || (f.source === 'codex-forecast' && (!f.payload?.source_updated_at || Date.now() - Date.parse(f.payload.source_updated_at) > 24 * 3_600_000));
+  const coverageNotes = [...new Set(feeds.flatMap(f => resetFeedCoverageNotes(f.payload)))];
   const announcement = outlook?.official ? { title: 'Codex global reset announced', detail: outlook.official, preview: false } : previewAnnouncement ? {
     title: 'Codex global reset announced', detail: 'Paid subscription usage is expected to reset by 8 PM Pacific. The exact arrival time may vary by account.', preview: true,
   } : null;
@@ -58,8 +73,15 @@ export default function Resets() {
 
       {error && (
         <Alert variant="warning" role="alert">
-          <AlertTitle>Refresh unavailable</AlertTitle>
-          <AlertDescription>Showing the last saved feeds.</AlertDescription>
+          <AlertTitle>Some feeds are stale</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {coverageNotes.length > 0 && (
+        <Alert variant="warning" role="status">
+          <AlertTitle>Feed coverage limited</AlertTitle>
+          <AlertDescription>NextReset: {coverageNotes.join('; ')}. Saved history is available, but newer announcements may be missing.</AlertDescription>
         </Alert>
       )}
 
@@ -187,8 +209,8 @@ export default function Resets() {
                   {f.label}
                 </a>
               }
-              detail={`Last successful check ${when(f.succeeded_at)} · ${f.revisions} saved revisions`}
-              aside={<Badge variant={stale(f) ? 'soft-warning' : 'soft'}>{stale(f) ? 'stale / retry pending' : 'available'}</Badge>}
+              detail={`Last successful check ${when(f.succeeded_at)} · ${f.revisions} saved revisions${f.error ? ` · ${resetFeedFailureLabel(f.error)}` : ''}${f.payload?.provenance === 'nextreset' ? ` · fallback: ${resetFeedFailureLabel(f.payload.primary_error)}${f.payload.coverage ? ` · archive checked ${when(f.payload.coverage.checked_at)} · posts/replies checked ${when(f.payload.coverage.direct_checked_at)}` : ''}` : ''}`}
+              aside={<Badge variant={stale(f) || resetFeedCoverageNotes(f.payload).length ? 'soft-warning' : 'soft'}>{stale(f) ? 'stale / retry pending' : f.payload?.provenance === 'nextreset' ? 'available via fallback' : 'available'}</Badge>}
             />
           ))}
         </ListRows>
