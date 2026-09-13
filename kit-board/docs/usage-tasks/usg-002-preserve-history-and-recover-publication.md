@@ -30,7 +30,7 @@ The September 13 audit recorded missing Windows September reports, a failed deta
 
 Show backup restoration, canonical reconciliation, an actual recovered publication receipt, and the next scheduled outcome where accessible. Keep private identifiers and contents out of committed evidence.
 
-Apply the common completion requirements in the [backlog index](README.md). Completion requires the remaining inaccessible-host inventory, natural scheduled occurrence, and full historical reconciliation described below.
+Apply the common completion requirements in the [backlog index](README.md). Completion requires the remaining inaccessible-host inventory and full historical reconciliation described below.
 
 ## Starting points
 
@@ -52,7 +52,8 @@ Started September 13, 2026. See the [sanitized recovery evidence](../usage-evide
 - Diagnosed the current failure as HTTP 401 caused by a publisher key absent from the deployed credential set. Added a tested usage-only additive credential path so recovery did not overwrite the non-readable primary hosting secret, plus source-tested bounded publisher and scheduled-companion HTTP diagnostics. The isolated release contained only the authentication change; the installed Windows companion binary was not replaced in this pass.
 - Reconstructed the active deployment source into an isolated private release because its dirty source could not be reproduced from Git alone. All 255 source files passed UID/SHA-1 verification; the candidate's only runtime differences were the authentication entrypoint and new credential helper. Focused tests, typecheck, build, exact valid/wrong/cross-kind auth gates, and the production alias checks passed.
 - Retried the exact preserved artifact successfully, verified its authenticated production receipt, and confirmed the follow-up current snapshot was selected. A Task Scheduler invocation then exited `0`, accepted six buckets and one request record with no rejections, and published a third detailed revision that became the selected September report.
+- Observed the first natural hourly occurrence after recovery at 6:10 PM Central. Task Scheduler completed with result `0` and no missed runs; the matching production response accepted ten buckets and two usage records with no duplicates or rejections, the detailed September step uploaded with a receipt, the telemetry outbox was empty, and no detailed artifact remained pending.
 - Sent the completed slice to a new Astra reviewer at high effort. Its two correctness/privacy findings and scheduled-diagnostic observation were fixed and retested before production activation.
 - Final validation passed: 72 web tests with three database-only skips, 15 publisher tests, four focused companion tests, companion formatting, typecheck, production build, `git diff --check`, and 230 documentation links. Both isolated restore verifiers passed again, and all 172 files in the finalized private manifest matched their recorded sizes and SHA-256 digests.
 
-Remaining: observe a natural hourly occurrence, inspect the Mac and browser hosts, and reconcile the production-wide v1-only and disabled-source histories into the complete before/after matrix. The task remains In progress until those acceptance criteria are evidenced.
+Remaining: inspect the Mac and browser hosts, then reconcile the production-wide v1-only and disabled-source histories into the complete before/after matrix. The task remains In progress until those acceptance criteria are evidenced.
