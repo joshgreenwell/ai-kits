@@ -1,0 +1,82 @@
+name: companion
+on:
+  push:
+    paths:
+      - 'kit-board/companion/**'
+      - 'kit-board/tests/fixtures/usage-v2/**'
+      - 'kit-board/scripts/telemetry/collect.py'
+      - 'kit-board/lib/generated/usage-v2.schema.json'
+      - '.github/workflows/companion.yml'
+  pull_request:
+    paths:
+      - 'kit-board/companion/**'
+      - 'kit-board/tests/fixtures/usage-v2/**'
+      - 'kit-board/scripts/telemetry/collect.py'
+      - 'kit-board/lib/generated/usage-v2.schema.json'
+      - '.github/workflows/companion.yml'
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+jobs:
+  verify:
+    name: verify (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: kit-board/companion
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: kit-board/companion
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: Fixture corpus and v1 parity expectations are current
+        run: python3 scripts/fixtures.py check
+      - name: Vendored schema matches the generated copy
+        shell: bash
+        run: |
+          generated=../lib/generated/usage-v2.schema.json
+          vendored=crates/observatory-contract/schema/usage-v2.schema.json
+          if [ -f "$generated" ]; then
+            cmp "$generated" "$vendored"
+          else
+            echo "::notice::$generated is not present yet (server phase 0); the vendored copy is the section 1.1 definition"
+          fi
+      - name: Release build
+        run: cargo build --release -p observatory
+      - name: Statusline latency (informational)
+        shell: bash
+        run: |
+          export OBSERVATORY_CONFIG_DIR="$RUNNER_TEMP/observatory-config"
+          printf '{"rate_limits":{"five_hour":{"used_percentage":20,"resets_at":4102444800},"seven_day":{"used_percentage":40,"resets_at":4102444800}},"version":"2.0.0"}' > "$RUNNER_TEMP/statusline.json"
+          start=$(python3 -c 'import time; print(time.time())')
+          for _ in $(seq 1 50); do ./target/release/observatory statusline < "$RUNNER_TEMP/statusline.json" > /dev/null; done
+          end=$(python3 -c 'import time; print(time.time())')
+          python3 -c "print('statusline: %.2f ms per invocation (50 runs, process spawn included)' % (($end - $start) * 20))"
+      - name: Synthetic backfill dry run (informational)
+        shell: bash
+        run: python3 scripts/bench.py --bytes 64000000 --exe ./target/release/observatory
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: kit-board/companion/Cargo.toml
+          command: check
+          arguments: --all-features

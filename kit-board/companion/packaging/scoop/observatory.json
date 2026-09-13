@@ -1,0 +1,34 @@
+{
+  "version": "2.0.0",
+  "description": "Personal Observatory companion: collects AI usage on this machine and publishes it to the Observatory.",
+  "homepage": "https://github.com/joshgreenwell/ai-kits/tree/main/kit-board/companion",
+  "license": "BSD-2-Clause",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/joshgreenwell/ai-kits/releases/download/observatory-v2.0.0/observatory-x86_64-pc-windows-msvc.zip",
+      "hash": "REPLACE_WITH_SHA256_FROM_THE_RELEASE_CHECKSUMS"
+    },
+    "arm64": {
+      "url": "https://github.com/joshgreenwell/ai-kits/releases/download/observatory-v2.0.0/observatory-aarch64-pc-windows-msvc.zip",
+      "hash": "REPLACE_WITH_SHA256_FROM_THE_RELEASE_CHECKSUMS"
+    }
+  },
+  "bin": "observatory.exe",
+  "checkver": {
+    "github": "https://github.com/joshgreenwell/ai-kits",
+    "regex": "observatory-v([\\d.]+)"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/joshgreenwell/ai-kits/releases/download/observatory-v$version/observatory-x86_64-pc-windows-msvc.zip"
+      },
+      "arm64": {
+        "url": "https://github.com/joshgreenwell/ai-kits/releases/download/observatory-v$version/observatory-aarch64-pc-windows-msvc.zip"
+      }
+    },
+    "hash": {
+      "url": "$baseurl/observatory-$version-checksums.txt"
+    }
+  }
+}

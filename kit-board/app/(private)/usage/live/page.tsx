@@ -33,7 +33,7 @@ export default function LiveUsage() {
   const { data, error, now, retry } = useLiveData();
   const [account, setAccount] = useState('all'), [granularity, setGranularity] = useState('hour'), [showSpark, setShowSpark] = useState(false);
   const rows = data?.hourly.filter(r => account === 'all' || r.account_id === account) ?? [];
-  const localSources = data?.sources.filter(s => !s.disabled && s.mode === 'local' && (account === 'all' || s.account_id === account)) ?? [];
+  const localSources = data?.sources.filter(s => !s.disabled && (s.mode === 'local' || s.mode === 'companion') && (account === 'all' || s.account_id === account)) ?? [];
   const recent = localSources.length > 0 && localSources.every(s => s.last_seen_at && now - Date.parse(s.last_seen_at) <= 2 * 3_600_000 && !s.coverage?.unavailable_roots && !s.coverage?.malformed_lines);
   const pace = tokenPace(rows, now);
   const chart = new Map<string, number>();

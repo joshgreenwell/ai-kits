@@ -98,6 +98,10 @@ export function AllowanceCard({ account, pace: p, now }: { account: { label: str
   const projected = p.projectedUsedPercent;
   const over = projected !== null && projected > 100;
   const hourly = p.window_minutes < 1440;
+  // Rows from the compatibility view carry the reader that produced the number.
+  const reader = (p as { reader?: string }).reader;
+  // A weekly window scoped to one model: capped separately, and that model's use also counts toward the shared weekly window.
+  const scoped = p.window_key.startsWith('seven_day_');
   const rateUnit = hourly ? 'hour' : 'day';
 
   const verdict =
@@ -114,12 +118,15 @@ export function AllowanceCard({ account, pace: p, now }: { account: { label: str
   return (
     <Card className={cn('gap-4 overflow-hidden py-0', over && 'border-destructive/45')}>
       <CardHeader className="p-4">
-        <CardDescription>{account.label} · {p.completedCycles} completed {p.completedCycles === 1 ? 'cycle' : 'cycles'} in view</CardDescription>
+        <CardDescription>{account.label} · {p.completedCycles} completed {p.completedCycles === 1 ? 'cycle' : 'cycles'} in view{reader && reader !== 'v1' ? ` · via ${reader}` : ''}</CardDescription>
         <CardTitle className="text-base">{p.label}</CardTitle>
         <CardAction>
-          <Badge variant={p.stale ? 'soft-warning' : p.forecastSource === 'historical' ? 'soft-info' : 'soft'}>
-            {sourceLabel[p.forecastSource]}
-          </Badge>
+          <span className="flex flex-wrap justify-end gap-1.5">
+            {scoped && <Badge variant="soft-info">model-scoped weekly</Badge>}
+            <Badge variant={p.stale ? 'soft-warning' : p.forecastSource === 'historical' ? 'soft-info' : 'soft'}>
+              {sourceLabel[p.forecastSource]}
+            </Badge>
+          </span>
         </CardAction>
       </CardHeader>
 
@@ -203,6 +210,7 @@ export function AllowanceCard({ account, pace: p, now }: { account: { label: str
                   : p.forecastSource === 'stale'
                     ? 'The latest reading is stale, so the active projection is paused.'
                     : 'No comparable completed cycle or usable live segment is available yet.'}
+            {scoped ? ' This window is capped for one model; that model’s use also counts toward the shared weekly window.' : ''}
             {' '}Resets, decreases and gaps over 3h restart live history. Above 100% shows demand
             beyond the allowance. The dotted diagonal guide spreads 100% evenly across the cycle.
           </p>

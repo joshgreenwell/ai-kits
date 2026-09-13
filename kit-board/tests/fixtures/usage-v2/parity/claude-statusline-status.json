@@ -1,0 +1,15 @@
+{
+  "claude_code_version": "2.0.0",
+  "entrypoint": "cli",
+  "invocations": 3,
+  "last_invocation_at": "2026-09-02T03:10:00Z",
+  "last_published_at": "2026-09-02T03:10:00Z",
+  "offered_windows": {},
+  "published_windows": [
+    "five_hour"
+  ],
+  "rate_limit_keys": [
+    "five_hour"
+  ],
+  "rate_limits_present": true
+}

@@ -2,5 +2,5 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "regions": ["cle1"],
-  "crons": [{ "path": "/api/internal/sync-legacy-usage", "schedule": "0 18 * * *" }, { "path": "/api/internal/sync-reset-feeds", "schedule": "15 13 * * *" }]
+  "crons": [{ "path": "/api/internal/sync-legacy-usage", "schedule": "0 18 * * *" }, { "path": "/api/internal/sync-reset-feeds", "schedule": "15 13 * * *" }, { "path": "/api/internal/sync-companion-release", "schedule": "45 13 * * *" }]
 }

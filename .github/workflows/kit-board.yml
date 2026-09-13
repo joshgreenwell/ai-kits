@@ -30,5 +30,11 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: '1'
       - run: npm run collectors:bundle
+      - run: npm run usage-schema
       - name: Generated assets are current
-        run: git diff --exit-code -- lib/generated/report-ui.json lib/generated/collector-bundles.json
+        run: git diff --exit-code -- lib/generated/report-ui.json lib/generated/collector-bundles.json lib/generated/usage-v2.schema.json
+      - name: Install PostgreSQL tools for the disposable cluster
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q postgresql
+          echo "/usr/lib/postgresql/$(ls /usr/lib/postgresql | sort -V | tail -1)/bin" >> "$GITHUB_PATH"
+      - run: npm run test:db

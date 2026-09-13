@@ -2,7 +2,26 @@
 
 The runtime uses **zero model calls**. Python 3.10+ and its built-in SQLite store read counters locally, checkpoint JSONL offsets, and publish cumulative hourly buckets. No new Python packages are required. Public feed fetching and browser quota collection also use ordinary code, with no AI inference.
 
-## Local setup (macOS / Windows)
+For what each collector can and cannot attribute (tokens, allowances, money, project, surface) per provider and surface, and the process behind each cell, see [usage coverage](usage-coverage.md).
+
+## Companion install (v2, one binary per machine)
+
+The `observatory` companion (`companion/`, see its README) replaces the local script, the statusline hook, and the schedule installer. Pairing and settings live in the Observatory:
+
+1. Usage → Connections → **Add companion**: label the machine and copy the one-time code (ten minutes, single use).
+2. On the machine: `observatory connect --url https://<observatory> --code XXXX-XXXX`, then `observatory setup`. Setup discovers Claude Code and Codex stores, proposes bindings, asks once about the private-interface readers, the Claude statusline hook (an existing statusline command is preserved), and the schedule, then runs a dry run, a first publish, and `service install`. The first run pins the backfill start (`--since YYYY-MM-DD` on `connect`, default the first day of the current UTC month) and reads every local transcript from that date on; the schedule then keeps up hourly. To reach further back later, remove the install's state database and run again.
+3. Usage → Settings holds the collection modes: global defaults plus a per-install override. Every install fetches the effective document on each run; a local `deny` list in `companion.json` can only remove modes.
+4. Connections shows each install's version, platform, last run, applied settings version, "update available", every binding's identity state, and the per-adapter coverage from the latest run. "Off" is always distinguishable from "broken".
+
+The companion emits the same hourly buckets the v1 script published (they land under the binding's own source row and deduplicate with v1 uploads of the same session) plus allowance readings, provider aggregates, and money as separate ledgers. Keep a v1 schedule until the companion has published with receipts; Connections flags an account that still has an active v1 collector beside a companion binding.
+
+The Claude statusline hook publishes every window Claude Code reports, including the model-scoped weekly windows (for example the Fable weekly cap), each as its own card under Current allowances with a `model-scoped weekly` badge. A scoped window is never added to the pooled weekly window.
+
+With the **Detailed monthly report (analyzer)** setting on (global or per install), each run also executes the v1 analyzer adapter for every binding whose `companion.json` entry carries a `detailed_report` block; `observatory setup` copies that block from an existing v1 connection when it finds one. The analyzer, its configuration, and the usage-publisher credential must already be installed on that machine, exactly as for the v1 step below.
+
+**Add browser** issues a code for the v2 browser collector (a later workstream); the v1 Claude quota extension below keeps working meanwhile.
+
+## Local setup (macOS / Windows) — v1 script, migration path
 
 1. In Observatory → AI usage → Connections, download a **local** connection for the correct account. Reuse the same account ID on multiple machines that use that account. Give each machine its own connection. Existing IDs are shown in the account selector and connection list.
 2. Download and unzip the local collector. Store the connection JSON in a private local directory outside source control. It contains an upload key scoped to that account, not a provider login or DB password.

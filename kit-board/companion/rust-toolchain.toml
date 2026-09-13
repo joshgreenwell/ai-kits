@@ -1,0 +1,5 @@
+[toolchain]
+# Pinned stable minimum supported Rust version. Bump together with
+# `rust-version` in Cargo.toml and the toolchain in .github/workflows/companion.yml.
+channel = "1.88.0"
+components = ["rustfmt", "clippy"]

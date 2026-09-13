@@ -403,6 +403,12 @@ export default function Home() {
   const costDimensions = aggregateCostDimensions(visibleRows);
   const fastTokens = costDimensions.filter((row) => ["fast", "priority"].includes(row.service_tier.toLowerCase())).reduce((sum, row) => sum + row.total_tokens, 0);
   const pricingCatalogs = [...new Set(costSnapshots.map((cost) => cost?.pricing_catalog?.version).filter(Boolean))];
+  // Models the analyzer could not price: the catalog it ships is the only rate source.
+  const unpricedModels = (() => {
+    const totals = new Map<string, number>();
+    for (const cost of costSnapshots) for (const row of cost?.by_model ?? []) if (row.unpriced_tokens > 0) totals.set(row.key, (totals.get(row.key) ?? 0) + row.unpriced_tokens);
+    return [...totals].sort((a, b) => b[1] - a[1]);
+  })();
   const environment = aggregateEnvironmental(visibleRows);
 
   const dayTotals = new Map<string, { tokens: number; calls: number }>();
@@ -603,6 +609,16 @@ export default function Home() {
             <Stat label="Tier assumed" value={assumedTierCalls.toLocaleString()} caption="calls treated as Standard" />
           </StatGroup>
         </div>
+
+        {unpricedModels.length > 0 && (
+          <div className="border-border border-t px-4 py-3">
+            <p className="text-muted-foreground text-xs leading-relaxed">
+              <span className="text-foreground font-semibold">Unpriced models:</span>{' '}
+              {unpricedModels.map(([model, tokens]) => `${model} (${formatTokens(tokens)})`).join(', ')}.
+              {' '}These are missing from the analyzer’s pricing catalog{pricingCatalogs.length ? ` (rates ${pricingCatalogs.join(', ')})` : ''}; add their rates there and the next hourly refresh prices the remaining {formatPercent(1 - pricingCoverage)}.
+            </p>
+          </div>
+        )}
 
         <div className="border-border grid gap-4 border-t p-4 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
           <div>

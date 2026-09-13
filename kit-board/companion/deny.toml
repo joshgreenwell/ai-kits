@@ -1,0 +1,50 @@
+# cargo-deny policy: the advisory database, a license allowlist, duplicate
+# version bans, and crates.io as the only source.
+
+[graph]
+all-features = false
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "aarch64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+]
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "deny"
+wildcards = "allow"
+highlight = "all"
+# Duplicates we cannot resolve from this workspace; remove an entry once the
+# tree no longer needs it.
+skip = [
+  { crate = "getrandom", reason = "ring (0.2), rustix via tempfile (0.3), and uuid (0.4) pin different majors" },
+  { crate = "syn", reason = "proc-macro crates pin syn 2 and syn 3" },
+  { crate = "windows-sys", reason = "the Windows platform crates (schannel, rustix, winapi-util) pin different majors" },
+]
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

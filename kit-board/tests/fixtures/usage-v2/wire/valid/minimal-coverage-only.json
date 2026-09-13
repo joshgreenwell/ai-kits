@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "run": {
+    "run_id": "9c0f1a2b-3d4e-4f50-8a6b-7c8d9e0f1a2b",
+    "started_at": "2026-09-02T04:00:00.000Z",
+    "finished_at": "2026-09-02T04:00:02.500Z",
+    "companion_version": "2.0.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "settings_version": 3
+  },
+  "coverage": []
+}

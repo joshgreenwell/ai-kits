@@ -9,7 +9,7 @@ export type LiveData = {
   sources: { id: string; account_id: string; machine_label: string; mode: string; disabled: boolean; last_seen_at: string | null;
     coverage: { since?: string; files?: number; bytes_read?: number; duration_ms?: number; malformed_lines?: number; unavailable_roots?: number } | null }[];
   hourly: { account_id: string; hour: string; model: string; total_tokens: number; input_tokens: number; cached_tokens: number; cache_write_tokens: number; output_tokens: number; calls: number }[];
-  quotas: (QuotaSample & { id: string; account_id: string })[];
+  quotas: (QuotaSample & { id: string; account_id: string; origin?: string; reader?: string })[];
   calibrations?: Calibration[];
   history: { machine_id: string; machine_name: string; month: string; total_tokens: number; daily: { date: string; total_tokens: number; calls: number }[] }[];
   as_of: string;

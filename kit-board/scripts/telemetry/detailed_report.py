@@ -5,6 +5,7 @@ Opt-in through a local collector's detailed_report configuration. Uses a separat
 usage-publisher key, keeps exact attempted artifacts for retry, skips unchanged
 analysis, and finalizes the previously active month once after rollover.
 """
+import argparse
 import hashlib
 import json
 import os
@@ -170,3 +171,18 @@ def refresh_details(config_path, connection, dry_run=False, now=None):
         save(pending_path, pending)
         deliver(pending)
     return {'status': 'dry_run' if dry_run else 'ok', 'reports': results, 'duration_ms': round((time.monotonic() - started) * 1000)}
+
+
+if __name__ == '__main__':
+    # The companion (`observatory run`) invokes this adapter as a subprocess with a connection
+    # file it wrote; the output is one JSON object with bounded status codes, never provider data.
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--config', required=True)
+    parser.add_argument('--dry-run', action='store_true')
+    arguments = parser.parse_args()
+    try:
+        config_file = Path(arguments.config).expanduser().resolve()
+        print(json.dumps(refresh_details(config_file, json.loads(config_file.read_text()), arguments.dry_run)))
+    except Exception as error:
+        print(json.dumps({'status': 'failed', 'error': type(error).__name__}))
+        sys.exit(1)

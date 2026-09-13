@@ -54,15 +54,18 @@ async function loadTelemetryDashboard() {
     sql`SELECT id, account_id, machine_label, mode, disabled, last_seen_at, coverage FROM personal_hub.telemetry_sources ORDER BY created_at`,
     // Each bucket is a complete cumulative snapshot. Choose the most complete copy,
     // including when a session was copied to another machine. Never sum revisions.
-    sql`WITH canonical AS (SELECT DISTINCT ON (account_id, session_hash, hour, model) *
-      FROM personal_hub.token_bucket_revisions WHERE hour >= now() - interval '35 days'
-      ORDER BY account_id, session_hash, hour, model, calls DESC, total_tokens DESC, observed_at DESC, received_at DESC)
+    // Disabled connections and bindings leave the dashboard: the join excludes their revisions.
+    sql`WITH canonical AS (SELECT DISTINCT ON (t.account_id, t.session_hash, t.hour, t.model) t.*
+      FROM personal_hub.token_bucket_revisions t JOIN personal_hub.telemetry_sources s ON s.id = t.source_id AND NOT s.disabled
+      WHERE t.hour >= now() - interval '35 days'
+      ORDER BY t.account_id, t.session_hash, t.hour, t.model, t.calls DESC, t.total_tokens DESC, t.observed_at DESC, t.received_at DESC)
       SELECT account_id, hour, model, sum(input_tokens)::float8 AS input_tokens, sum(cached_tokens)::float8 AS cached_tokens,
         sum(cache_write_tokens)::float8 AS cache_write_tokens, sum(output_tokens)::float8 AS output_tokens,
         sum(total_tokens)::float8 AS total_tokens, sum(calls)::float8 AS calls
       FROM canonical GROUP BY account_id, hour, model ORDER BY hour`,
-    sql`SELECT id, account_id, window_key, label, observed_at, used_percent, resets_at, window_minutes
-      FROM personal_hub.quota_samples WHERE observed_at >= now() - interval '35 days' ORDER BY observed_at`,
+    // v1 quota samples and v2 allowance readings share window keys through the compatibility view.
+    sql`SELECT id, account_id, window_key, label, observed_at, used_percent, resets_at, window_minutes, origin, reader
+      FROM personal_hub.allowance_percent_view WHERE observed_at >= now() - interval '35 days' ORDER BY observed_at`,
     // Project only the baseline fields; the full reports include large detail arrays.
     sql`SELECT DISTINCT ON (period_key, subject_key)
       payload->>'machine_id' AS machine_id, payload->>'machine_name' AS machine_name,

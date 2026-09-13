@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState, Field, ListRow, ListRows, StatusBadge } from '@/components/kit';
 import { Choice, useLiveData, when } from '@/components/telemetry-shared';
+import { CompanionInstalls } from '@/components/companion-installs';
 
 export default function Connections() {
   const { data, error } = useLiveData();
@@ -46,6 +47,13 @@ export default function Connections() {
           <AlertDescription>{message || error}</AlertDescription>
         </Alert>
       )}
+
+      <CompanionInstalls />
+
+      <div className="grid gap-1">
+        <h2 className="text-lg font-semibold tracking-tight">Legacy collectors (v1)</h2>
+        <p className="text-muted-foreground max-w-[72ch] text-sm">The Python script and the Claude quota extension keep working during the migration. Each machine moves to the companion above; remove its v1 schedule once the companion has published with receipts.</p>
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>

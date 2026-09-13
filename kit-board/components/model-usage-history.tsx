@@ -9,9 +9,12 @@ import { quotaCycles, quotaOutlook } from '@/lib/telemetry-contract';
 
 type Outlook = NonNullable<ReturnType<typeof quotaOutlook>>;
 type WindowView = { account: LiveData['accounts'][number]; pace: Outlook };
+type ModelSeries = { model: string; calls: number; activeHours: number; share: number; dailyShare: number[] };
 
 const DAY = 86_400_000;
 const HISTORY_DAYS = 30;
+const MAX_LINES = 6;
+const LINE_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--muted-foreground)'];
 
 function dayKey(at: string | number) {
   const timestamp = typeof at === 'number' ? at : Date.parse(at);
@@ -20,6 +23,48 @@ function dayKey(at: string | number) {
 
 function shortDay(at: string) {
   return new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+/**
+ * One chart, one line per model: each model's share of that day's collected calls.
+ * Lines share the axis so a shift from one model to another reads as a crossing,
+ * which a stack of separate bar strips never shows.
+ */
+function ModelLines({ days, models }: { days: string[]; models: ModelSeries[] }) {
+  const width = 360, height = 170, left = 30, right = 8, top = 12, bottom = 20;
+  const x = (index: number) => left + (days.length > 1 ? index / (days.length - 1) : 0) * (width - left - right);
+  const y = (value: number) => top + (1 - Math.max(0, Math.min(100, value)) / 100) * (height - top - bottom);
+  const label = models.map(m => `${m.model} ${m.dailyShare.at(-1)?.toFixed(0) ?? 0}% today`).join('; ');
+  return (
+    <div className="grid gap-2">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" className="w-full" aria-label={`Daily share of calls per model over ${days.length} days: ${label}`}>
+        {[0, 50, 100].map(value => (
+          <g key={value}>
+            <line x1={left} x2={width - right} y1={y(value)} y2={y(value)} stroke="var(--border)" strokeDasharray={value === 100 ? undefined : '4 3'} />
+            <text x={left - 4} y={y(value) + 4} textAnchor="end" fill="var(--muted-foreground)" fontSize="10" fontFamily="var(--font-mono)">{value}%</text>
+          </g>
+        ))}
+        {models.map((model, index) => {
+          const color = LINE_COLORS[index % LINE_COLORS.length];
+          const points = model.dailyShare.map((value, day) => `${x(day).toFixed(1)},${y(value).toFixed(1)}`).join(' ');
+          const last = model.dailyShare.length - 1;
+          return (
+            <g key={model.model}>
+              <polyline points={points} fill="none" stroke={color} strokeWidth={index === 0 ? 2 : 1.5} strokeLinejoin="round" strokeLinecap="round" opacity={index >= 5 ? 0.6 : 1}>
+                <title>{model.model}</title>
+              </polyline>
+              <circle cx={x(last)} cy={y(model.dailyShare[last] ?? 0)} r="3" fill={color} />
+            </g>
+          );
+        })}
+      </svg>
+      <div className="text-muted-foreground flex justify-between font-mono text-[10px]">
+        <span>{shortDay(days[0])}</span>
+        <span>share of the day’s calls</span>
+        <span>Today</span>
+      </div>
+    </div>
+  );
 }
 
 export function ModelUsageHistory({ data, windows, now }: { data: LiveData; windows: WindowView[]; now: number }) {
@@ -66,7 +111,7 @@ export function ModelUsageHistory({ data, windows, now }: { data: LiveData; wind
       byModel.set(row.model, model);
     }
     const totalCalls = [...callsByDay.values()].reduce((sum, calls) => sum + calls, 0);
-    const models = [...byModel].map(([model, values]) => ({
+    const models: ModelSeries[] = [...byModel].map(([model, values]) => ({
       model,
       calls: values.calls,
       activeHours: values.activeHours.size,
@@ -96,13 +141,14 @@ export function ModelUsageHistory({ data, windows, now }: { data: LiveData; wind
     );
   }
 
-  const axis = [shortDay(history.days[0]), 'Daily share', 'Today'];
+  const charted = history.models.slice(0, MAX_LINES);
+  const others = history.models.slice(MAX_LINES);
   return (
     <Card className="gap-0 overflow-hidden py-0">
       <CardHeader className="p-4">
         <CardTitle className="text-base">Model activity during allowance burn</CardTitle>
         <CardDescription>
-          Thirty UTC days · allowance points and model call share, without token-based quota attribution
+          Thirty UTC days · allowance points and each model’s share of the day’s calls, without token-based quota attribution
         </CardDescription>
         <CardAction>
           <Choice
@@ -138,24 +184,29 @@ export function ModelUsageHistory({ data, windows, now }: { data: LiveData; wind
         </div>
 
         {history.models.length ? (
-          <div className="divide-border grid divide-y rounded-lg border">
-            {history.models.map(model => (
-              <div key={model.model} className="grid gap-3 p-4 [content-visibility:auto] lg:grid-cols-[minmax(180px,0.42fr)_minmax(300px,1fr)] lg:items-center">
-                <div className="min-w-0">
-                  <p className="truncate font-mono text-sm font-medium" title={model.model}>{model.model}</p>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    <Badge variant="soft">{model.share.toFixed(1)}% of calls</Badge>
-                    <Badge variant="outline">{model.activeHours} active {model.activeHours === 1 ? 'hour' : 'hours'}</Badge>
-                  </div>
-                </div>
-                <SparkBars
-                  values={model.dailyShare}
-                  markIndex={model.dailyShare.length - 1}
-                  axis={axis}
-                  formatValue={value => `${value.toFixed(1)}% of calls`}
-                />
-              </div>
-            ))}
+          <div className="grid gap-3 rounded-lg border p-4">
+            <div>
+              <h3 className="text-sm font-semibold">Model share by day</h3>
+              <p className="text-muted-foreground text-xs">One line per model; the top {charted.length} by calls in view{others.length ? `, ${others.length} more listed below` : ''}.</p>
+            </div>
+            <ModelLines days={history.days} models={charted} />
+            <ul className="grid gap-1.5 sm:grid-cols-2">
+              {charted.map((model, index) => (
+                <li key={model.model} className="flex min-w-0 items-center gap-2 text-sm">
+                  <i aria-hidden className="block h-0.5 w-4 shrink-0 rounded" style={{ background: LINE_COLORS[index % LINE_COLORS.length] }} />
+                  <span className="truncate font-mono text-xs" title={model.model}>{model.model}</span>
+                  <Badge variant="soft">{model.share.toFixed(1)}%</Badge>
+                  <span className="text-muted-foreground font-mono text-[10px]">{model.activeHours}h active</span>
+                </li>
+              ))}
+              {others.map(model => (
+                <li key={model.model} className="text-muted-foreground flex min-w-0 items-center gap-2 text-sm">
+                  <i aria-hidden className="block h-0.5 w-4 shrink-0 rounded bg-border" />
+                  <span className="truncate font-mono text-xs" title={model.model}>{model.model}</span>
+                  <Badge variant="outline">{model.share.toFixed(1)}%</Badge>
+                </li>
+              ))}
+            </ul>
           </div>
         ) : (
           <EmptyState
@@ -165,7 +216,7 @@ export function ModelUsageHistory({ data, windows, now }: { data: LiveData; wind
         )}
 
         <p className="text-muted-foreground text-xs leading-relaxed">
-          Model rows describe activity observed alongside this account&apos;s allowance window. They do not claim that a model consumed the same share of allowance; pooled provider limits cannot be divided reliably with the data collected today.
+          Model lines describe activity observed alongside this account&apos;s allowance window. They do not claim that a model consumed the same share of allowance; pooled provider limits cannot be divided reliably with the data collected today.
         </p>
       </CardContent>
     </Card>

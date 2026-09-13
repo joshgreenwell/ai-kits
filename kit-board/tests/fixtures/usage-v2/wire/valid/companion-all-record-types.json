@@ -1,0 +1,167 @@
+{
+  "schema_version": 2,
+  "run": {
+    "run_id": "9c0f1a2b-3d4e-4f50-8a6b-7c8d9e0f1a2b",
+    "started_at": "2026-09-02T04:00:00.000Z",
+    "finished_at": "2026-09-02T04:00:02.500Z",
+    "companion_version": "2.0.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "settings_version": 3
+  },
+  "buckets": [],
+  "records": [
+    {
+      "record_id": "2737bc3c-969b-5356-abd5-8155d0ca3c6a",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:15:30.500Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "activity.request",
+      "semantic_key": "1596354260a1596fb7adf48204686e421596354260a1596fb7adf48204686e42",
+      "product": "claude_code",
+      "surface": "cli",
+      "execution_host": "local",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "session_identity": "provider",
+      "parent_session_hash": null,
+      "model_requested": null,
+      "model_actual": "claude-sonnet-4",
+      "started_at": null,
+      "ended_at": "2026-09-02T03:15:30.500Z",
+      "tokens": {
+        "input_fresh": 100,
+        "input_cached": 0,
+        "input_cache_write": 0,
+        "output": 50,
+        "reasoning": 10
+      },
+      "tool_calls": 4,
+      "project_hash": null,
+      "client_version": "1.0.101",
+      "latency_ms": null,
+      "outcome": "completed",
+      "tools": [
+        {
+          "name": "Read",
+          "calls": 3
+        },
+        {
+          "name": "h:0123456789abcdef",
+          "calls": 1
+        }
+      ]
+    },
+    {
+      "record_id": "693ff3b9-006f-58ec-ab27-96271f89747a",
+      "binding_id": "7f3d4e5a-6b72-4c8d-ae9f-2a3b4c5d6e7f",
+      "adapter": "cursor_account",
+      "channel": "provider_api",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "reported",
+      "parser_version": "1",
+      "record_type": "account.usage_bucket",
+      "report_source": "cursor_usage_events",
+      "bucket_start": "2026-09-02T03:00:00.000Z",
+      "bucket_end": "2026-09-02T03:00:01.000Z",
+      "provider_timezone": null,
+      "dimensions": {
+        "model": "claude-sonnet-4",
+        "product": "cursor",
+        "client": null,
+        "user_ref": null,
+        "workspace_ref": null,
+        "api_key_ref": null
+      },
+      "measures": {
+        "requests": 1,
+        "input_tokens": 1200,
+        "cached_tokens": 800,
+        "cache_write_tokens": null,
+        "output_tokens": 300,
+        "reasoning_tokens": null,
+        "total_tokens": null
+      },
+      "provider_event_id": "evt_synthetic_000001",
+      "provider_refreshed_at": "2026-09-02T03:19:00.000Z"
+    },
+    {
+      "record_id": "6e9adff1-cc7d-5626-9f3e-c3597330decf",
+      "binding_id": "6e2c3d4f-5a61-4b7c-9d8e-1f2a3b4c5d6e",
+      "adapter": "codex_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T01:03:00.000Z",
+      "basis": "reported",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "allowance.reading",
+      "meter_key": "codex:300",
+      "label": "Codex · 5h",
+      "kind": "percent_used",
+      "value": 30,
+      "unit": "percent",
+      "capacity": null,
+      "window_minutes": 300,
+      "window_started_at": null,
+      "resets_at": "2026-09-02T02:00:00.000Z",
+      "reader": "embedded",
+      "raw_window_id": "primary"
+    },
+    {
+      "record_id": "af0c463c-86d8-50e5-99d5-bdf0fbefc563",
+      "binding_id": "7f3d4e5a-6b72-4c8d-ae9f-2a3b4c5d6e7f",
+      "adapter": "cursor_account",
+      "channel": "provider_api",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "reported",
+      "parser_version": "1",
+      "record_type": "money.entry",
+      "entry_kind": "metered_charge",
+      "amount": "0.040000",
+      "unit": "USD",
+      "source_unit": "cents",
+      "price_basis": "provider_reported",
+      "period_start": "2026-09-02T03:00:00.000Z",
+      "period_end": "2026-09-02T03:00:01.000Z",
+      "reference": {
+        "kind": "provider_event",
+        "key": "evt_synthetic_000001"
+      },
+      "sku": null,
+      "model": "claude-sonnet-4"
+    }
+  ],
+  "coverage": [
+    {
+      "adapter": "claude_execution",
+      "state": "ok",
+      "detail_code": null,
+      "stores_discovered": 0,
+      "files": 0,
+      "bytes_read": 0,
+      "records_emitted": 1,
+      "malformed": 0,
+      "rejected_by_server": 0,
+      "duration_ms": 1,
+      "cursor_state": "complete",
+      "probe_requests": 0,
+      "parser_version": "2.0.0+v1.1.0"
+    },
+    {
+      "adapter": "cursor_account",
+      "state": "ok",
+      "detail_code": null,
+      "stores_discovered": 0,
+      "files": 0,
+      "bytes_read": 0,
+      "records_emitted": 2,
+      "malformed": 0,
+      "rejected_by_server": 0,
+      "duration_ms": 1,
+      "cursor_state": "complete",
+      "probe_requests": 2,
+      "parser_version": "1"
+    }
+  ]
+}

@@ -1,0 +1,165 @@
+{
+  "schema_version": 2,
+  "run": {
+    "run_id": "9c0f1a2b-3d4e-4f50-8a6b-7c8d9e0f1a2b",
+    "started_at": "2026-09-02T04:00:00.000Z",
+    "finished_at": "2026-09-02T04:00:02.500Z",
+    "companion_version": "2.0.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "settings_version": 3
+  },
+  "buckets": [
+    {
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "bucket": {
+        "session_hash": "d890899ec14854ce99bff86a03296be8d890899ec14854ce99bff86a03296be8",
+        "hour": "2026-09-02T02:00:00.000Z",
+        "model": "claude-opus-4-1",
+        "input_tokens": 5,
+        "cached_tokens": 20,
+        "cache_write_tokens": 8,
+        "output_tokens": 24,
+        "total_tokens": 57,
+        "calls": 2
+      }
+    },
+    {
+      "binding_id": "6e2c3d4f-5a61-4b7c-9d8e-1f2a3b4c5d6e",
+      "bucket": {
+        "session_hash": "42bec29b84c7516baaa20763ac9f5c8242bec29b84c7516baaa20763ac9f5c82",
+        "hour": "2026-09-02T01:00:00.000Z",
+        "model": "gpt-5-codex",
+        "input_tokens": 155,
+        "cached_tokens": 40,
+        "cache_write_tokens": 5,
+        "output_tokens": 15,
+        "total_tokens": 215,
+        "calls": 3
+      }
+    }
+  ],
+  "records": [],
+  "coverage": [
+    {
+      "adapter": "claude_execution",
+      "state": "ok",
+      "detail_code": null,
+      "stores_discovered": 1,
+      "files": 3,
+      "bytes_read": 4096,
+      "records_emitted": 2,
+      "malformed": 0,
+      "rejected_by_server": 0,
+      "duration_ms": 1,
+      "cursor_state": "complete",
+      "probe_requests": 0,
+      "parser_version": "2.0.0+v1.1.0"
+    },
+    {
+      "adapter": "codex_execution",
+      "state": "partial",
+      "detail_code": "unavailable_roots",
+      "stores_discovered": 1,
+      "files": 3,
+      "bytes_read": 8192,
+      "records_emitted": 0,
+      "malformed": 1,
+      "rejected_by_server": 0,
+      "duration_ms": 1,
+      "cursor_state": "complete",
+      "probe_requests": 0,
+      "parser_version": "2.0.0+v1.1.0"
+    },
+    {
+      "adapter": "claude_account",
+      "state": "disabled_by_setting",
+      "detail_code": "mode_off",
+      "stores_discovered": 0,
+      "files": 0,
+      "bytes_read": 0,
+      "records_emitted": 0,
+      "malformed": 0,
+      "rejected_by_server": 0,
+      "duration_ms": 1,
+      "cursor_state": "unknown",
+      "probe_requests": 0,
+      "parser_version": "0"
+    },
+    {
+      "adapter": "codex_account",
+      "state": "prerequisite_missing",
+      "detail_code": "executable_missing",
+      "stores_discovered": 0,
+      "files": 0,
+      "bytes_read": 0,
+      "records_emitted": 0,
+      "malformed": 0,
+      "rejected_by_server": 0,
+      "duration_ms": 1,
+      "cursor_state": "unknown",
+      "probe_requests": 0,
+      "parser_version": "0"
+    },
+    {
+      "adapter": "cursor_execution",
+      "state": "disabled_by_setting",
+      "detail_code": "provider_disabled",
+      "stores_discovered": 0,
+      "files": 0,
+      "bytes_read": 0,
+      "records_emitted": 0,
+      "malformed": 0,
+      "rejected_by_server": 0,
+      "duration_ms": 1,
+      "cursor_state": "unknown",
+      "probe_requests": 0,
+      "parser_version": "2.0.0+v1.1.0"
+    },
+    {
+      "adapter": "cursor_account",
+      "state": "disabled_by_setting",
+      "detail_code": "provider_disabled",
+      "stores_discovered": 0,
+      "files": 0,
+      "bytes_read": 0,
+      "records_emitted": 0,
+      "malformed": 0,
+      "rejected_by_server": 0,
+      "duration_ms": 1,
+      "cursor_state": "unknown",
+      "probe_requests": 0,
+      "parser_version": "0"
+    },
+    {
+      "adapter": "anthropic_api",
+      "state": "disabled_by_setting",
+      "detail_code": "provider_disabled",
+      "stores_discovered": 0,
+      "files": 0,
+      "bytes_read": 0,
+      "records_emitted": 0,
+      "malformed": 0,
+      "rejected_by_server": 0,
+      "duration_ms": 1,
+      "cursor_state": "unknown",
+      "probe_requests": 0,
+      "parser_version": "0"
+    },
+    {
+      "adapter": "openai_api",
+      "state": "disabled_by_setting",
+      "detail_code": "provider_disabled",
+      "stores_discovered": 0,
+      "files": 0,
+      "bytes_read": 0,
+      "records_emitted": 0,
+      "malformed": 0,
+      "rejected_by_server": 0,
+      "duration_ms": 1,
+      "cursor_state": "unknown",
+      "probe_requests": 0,
+      "parser_version": "0"
+    }
+  ]
+}

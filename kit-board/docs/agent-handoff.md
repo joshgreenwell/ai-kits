@@ -38,7 +38,10 @@ The global shell and usage views are native React. Stored report HTML is intenti
 | Monthly usage dashboard | `app/(private)/usage/page.tsx`, `app/usage-header.css`, `lib/usage.ts`, `app/api/reports/route.ts`, `scripts/telemetry/detailed_report.py` |
 | Live usage views | `app/(private)/usage/live/page.tsx`, `app/(private)/usage/connections/page.tsx`, `app/(private)/usage/resets/page.tsx`, `app/telemetry.css` |
 | Telemetry contracts, storage, calculations | `lib/telemetry-contract.ts`, `lib/telemetry-store.ts`, `lib/cloud-estimate.ts`, `lib/cloud-estimate-store.ts` |
+| Unified usage (envelope v2): contract, settings, ledgers, pairing | `lib/usage-contract.ts` (authority; `npm run usage-schema` writes `lib/generated/usage-v2.schema.json`), `lib/companion-settings.ts`, `lib/usage-store.ts`, `app/api/v1/companion/*`, `app/api/v1/usage/route.ts`, `app/api/companion-installs/route.ts`, `app/api/collection-settings/route.ts`, `app/api/usage-v2/route.ts`, `app/(private)/usage/settings/page.tsx`, `components/companion-installs.tsx` |
 | Local collectors and Claude browser adapter | `scripts/telemetry/`, `browser/claude-quota/`, `docs/usage-collection.md` |
+| Companion (Rust, replaces the local collector scripts) | `companion/` (workspace, `companion/README.md`), `tests/fixtures/usage-v2/` (shared wire and parity corpus), `.github/workflows/companion.yml` |
+| Usage coverage matrix: what is and is not collected, per provider, surface, and process | `docs/usage-coverage.md` (living document; update it with any collector or provider change) |
 | Reset feeds | `lib/reset-feeds.ts`, `lib/reset-feed-store.ts`, `app/api/reset-feeds/route.ts` |
 | Generic report ingestion | `lib/contracts.ts`, `lib/db.ts`, `app/api/v1/reports/[kind]/route.ts`, `scripts/publish.mjs` |
 | HTML report isolation and assets | `lib/artifact.ts`, `lib/artifact-runtime.ts`, `components/report-frame.tsx`, `app/api/artifacts/`, `scripts/publish-assets.mjs` |
@@ -88,6 +91,7 @@ Uploaded monthly reports, hourly telemetry, allowance percentages, and external 
 - Browser-only Claude activity can provide allowance/reset observations, not exact historical token counts.
 
 Current operational status is in `docs/schedules.md`. As of this handoff, macOS Codex and Claude collectors exist, Windows local connections have checked in, and Claude allowance samples have not yet arrived. The old browser connection is disabled; a new browser pairing is needed for the personal Claude account.
+- Project attribution is opt-in (`execution.project_attribution: hashed`) and uploads a hash of the working directory, never the path; it covers local and desktop-app sessions only. Cloud runs (Claude Code on the web, Codex cloud) leave no local transcript and appear only as unattributed allowance movement. `docs/usage-coverage.md` is the matrix.
 
 ## Schedules, collectors, and reports
 
@@ -96,6 +100,7 @@ Keep schedules independent. The portal consumes their reports; it does not repla
 - Local telemetry uses `scripts/telemetry/collect.py`; it reads local JSONL counters into a private SQLite checkpoint/outbox and publishes hourly. `install_schedule.py` installs a macOS LaunchAgent or Windows Task Scheduler task.
 - Claude's optional `statusline.py` writes provider rate-limit fields to a local inbox. It is installed on this Mac but only produces data after an eligible local Claude Code response.
 - The Claude browser extension is quota-only. Its connection JSON is imported in its options screen; it never receives Claude cookies.
+- The `observatory` companion under `companion/` is the v2 replacement for `collect.py`, `statusline.py`, and `install_schedule.py`: one binary per machine, adapters per provider, envelope v2 to `POST /api/v1/usage`. Phase 1 (core) is built and gated by the v1 parity corpus; it is inert until the server side (`/api/v1/companion/*`, `/api/v1/usage`, migration) is deployed. The v1 scripts stay frozen until then. See `companion/README.md`.
 - `scripts/publish.mjs` publishes generic reports with a local outbox. `publish-assets.mjs` uploads audit linked files. Preserve observation timestamps and source coverage rather than substituting publication time.
 - Vercel runs the legacy usage compatibility sync daily at 18:00 UTC and reset feed sync daily at 13:15 UTC. The designated Codex local collector can additionally refresh feeds hourly.
 
@@ -164,3 +169,8 @@ Usage changes from commit `80b2ab8` are deployed as `[historical deployment ID o
 ### Compact reset calendar refinement (September 10)
 
 Commit `da71b39` is deployed as `[historical deployment ID omitted]`. The calendar is 300px wide alongside the record, with date/type markers and separate provider/type filters; all reset types are shown initially. Normalizer v2 retains banked lifecycle, global scope and announcement/verification metadata. Existing snapshots were successfully refreshed from all four sources. Production checks confirmed distinct markers, day filtering, lease reuse and responsive layout; 40 isolated-release tests and the Vercel build passed, with no deployment error entries during verification.
+
+
+### Project attribution and coverage matrix (September 12)
+
+The companion now records each request's working directory as `sha256(["project", cwd])` and its surface (`cli`, `desktop`, `ide`, `sdk`) from Claude Code's `entrypoint` and Codex's `originator`; the hash is uploaded only when `execution.project_attribution` is `hashed`, the path never. State schema 2 adds the columns and a local `projects` table, listed by `observatory projects`. The server already stores `activity_requests.project_hash` in the pending unified-usage migration; a label map and a by-project view are not built. `docs/usage-coverage.md` records, per provider and surface, what is collected, what is not, and the process behind each cell, including the planned paths for cloud sessions and per-project allowance deltas. Keep it current with any collector or provider change.

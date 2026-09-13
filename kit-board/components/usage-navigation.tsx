@@ -8,6 +8,7 @@ const VIEWS = [
   ['/usage/live', 'Usage & pace'],
   ['/usage/resets', 'Reset intelligence'],
   ['/usage/connections', 'Connections'],
+  ['/usage/settings', 'Settings'],
 ] as const;
 
 export function UsageNavigation() {

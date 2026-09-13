@@ -32,7 +32,8 @@ export function createRoutingStore(getDatabase?: DatabaseProvider) {
       }
     }
     const rows = [...unique.entries()].filter(([key]) => key.startsWith('event:')).map(([, value]) => value);
-    return (await sql()).begin(async transaction => {
+    const db = await sql();
+    return db.begin(async transaction => {
       const tx = transaction as unknown as Sql;
       const acceptedEventIds = new Set<string>();
       const inserts: Array<Record<string, unknown>> = [];
@@ -72,7 +73,8 @@ export function createRoutingStore(getDatabase?: DatabaseProvider) {
 
   async function eventsForTask(source: RoutingSource, taskId: string) {
     requireLocalRoutingSource(source);
-    const rows = await (await sql())`SELECT event_id, task_id, attempt_id, sequence, event_type, occurred_at, payload
+    const db = await sql();
+    const rows = await db`SELECT event_id, task_id, attempt_id, sequence, event_type, occurred_at, payload
       FROM personal_hub.agent_routing_events WHERE source_id = ${source.id} AND account_id = ${source.account_id} AND task_id = ${taskId}
       ORDER BY sequence, received_at, id LIMIT 500`;
     return rows.map(row => ({ schema_version: 1, event_id: row.event_id, task_id: row.task_id, attempt_id: row.attempt_id,
@@ -81,12 +83,13 @@ export function createRoutingStore(getDatabase?: DatabaseProvider) {
 
   async function quotaState(source: RoutingSource, now = Date.now()) {
     requireLocalRoutingSource(source);
-    const rows = JSON.parse(JSON.stringify(await (await sql())`WITH ranked AS (
+    const db = await sql();
+    const rows = JSON.parse(JSON.stringify(await db`WITH ranked AS (
       SELECT q.id, q.source_id, q.window_key, q.label, q.observed_at, q.used_percent, q.resets_at, q.window_minutes,
         s.last_seen_at AS source_last_seen_at,
         row_number() OVER (PARTITION BY q.window_key ORDER BY q.observed_at DESC, q.received_at DESC) AS sample_rank
-      FROM personal_hub.quota_samples q JOIN personal_hub.telemetry_sources s ON s.id = q.source_id
-      WHERE q.account_id = ${source.account_id} AND NOT s.disabled
+      FROM personal_hub.allowance_percent_view q JOIN personal_hub.telemetry_sources s ON s.id = q.source_id
+      WHERE q.account_id = ${source.account_id}
     ) SELECT id, source_id, window_key, label, observed_at, used_percent, resets_at, window_minutes, source_last_seen_at
       FROM ranked WHERE sample_rank <= 2 ORDER BY window_key, observed_at DESC`)) as QuotaRow[];
     const grouped = new Map<string, QuotaRow[]>();

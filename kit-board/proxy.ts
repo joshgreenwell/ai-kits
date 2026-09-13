@@ -6,8 +6,10 @@ export function proxy(request: NextRequest) {
   const isRead = request.method === 'GET' || request.method === 'HEAD';
   const isPublic = path === '/login' || path.startsWith('/api/auth/');
   // These handlers authenticate their own scoped producer or cron credentials.
-  const ingestion = (request.method === 'POST' && (path === '/api/reports' || path.startsWith('/api/v1/reports/') || path === '/api/v1/telemetry' || path === '/api/reset-feeds')) ||
-    (request.method === 'GET' && (path === '/api/internal/sync-legacy-usage' || path === '/api/internal/sync-reset-feeds'));
+  const companion = path.startsWith('/api/v1/companion/') || path === '/api/v1/usage';
+  const ingestion = (request.method === 'POST' && (path === '/api/reports' || path.startsWith('/api/v1/reports/') || path === '/api/v1/telemetry' || path === '/api/reset-feeds' || companion)) ||
+    (request.method === 'PUT' && path === '/api/v1/companion/settings') ||
+    (request.method === 'GET' && (path === '/api/internal/sync-legacy-usage' || path === '/api/internal/sync-reset-feeds' || path === '/api/internal/sync-companion-release' || path === '/api/v1/companion/config'));
   const signedIn = verifySession(request.cookies.get(cookie)?.value ?? '', process.env.SESSION_SECRET ?? '', process.env.SITE_PASSWORD_HASH ?? '');
   if (!isPublic && !ingestion && !signedIn) {
     if (path.startsWith('/api/') || !isRead) return NextResponse.json({ error: 'Please sign in' }, { status: 401, headers: { 'Cache-Control': 'private, no-store' } });
