@@ -4,6 +4,14 @@
 @import "tailwindcss/utilities.css" layer(utilities);
 @import "tw-animate-css";
 @source not "../lib/generated";
+/* Only UI sources feed the class scan: prose, fixtures, collectors, and the Rust companion would
+   otherwise add a utility whenever a word such as "invisible" appears in a comment or a doc. */
+@source not "../companion";
+@source not "../docs";
+@source not "../tests";
+@source not "../supabase";
+@source not "../browser";
+@source not "../public";
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
