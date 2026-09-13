@@ -20,8 +20,7 @@
     "predev": "node scripts/build-report-ui.mjs",
     "prebuild": "node scripts/build-report-ui.mjs && node --import tsx scripts/build-usage-schema.mjs",
     "report-ui": "node scripts/build-report-ui.mjs",
-    "test:collector": "python3 -m unittest discover -s tests -p '*_test.py'",
-    "collectors:bundle": "python3 scripts/build-collector-bundles.py"
+    "test:collector": "python3 -m unittest discover -s tests -p '*_test.py'"
   },
   "dependencies": {
     "class-variance-authority": "0.7.1",
