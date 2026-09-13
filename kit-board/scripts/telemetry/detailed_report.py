@@ -8,6 +8,7 @@ analysis, and finalizes the previously active month once after rollover.
 import argparse
 import hashlib
 import json
+import locale
 import os
 from pathlib import Path
 import subprocess
@@ -54,6 +55,17 @@ def publisher_config(connection, settings):
     return config
 
 
+def decode_report(raw):
+    # Windows PowerShell re-encodes the analyzer's stdout in the console code page, so a non-ASCII
+    # task title arrives as cp1252 there and as UTF-8 on macOS. Try UTF-8 first, then the console page.
+    for encoding in ('utf-8', locale.getpreferredencoding(False), 'cp1252'):
+        try:
+            return json.loads(raw.decode(encoding))
+        except (UnicodeDecodeError, ValueError):
+            continue
+    raise ValueError('Detailed analyzer output is not valid JSON')
+
+
 def build_envelope(connection, settings, publisher, month, period_state):
     analyzer = Path(settings['analyzer_path']).expanduser().resolve()
     if not analyzer.is_file() or analyzer.suffix != '.py':
@@ -76,7 +88,7 @@ def build_envelope(connection, settings, publisher, month, period_state):
             raise ValueError('Unsupported report provider')
         with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
             completed = subprocess.run(argv, stdout=stdout, stderr=stderr, timeout=120, check=False,
-                                       env={**os.environ, 'TOKEN_REPORT_PYTHON': sys.executable})
+                                       env={**os.environ, 'TOKEN_REPORT_PYTHON': sys.executable, 'PYTHONIOENCODING': 'utf-8'})
             if completed.returncode:
                 raise RuntimeError('Detailed analyzer failed; previous published report is retained')
             if connection['provider'] == 'codex':
@@ -84,7 +96,7 @@ def build_envelope(connection, settings, publisher, month, period_state):
             else:
                 with output.open('rb') as handle: raw = handle.read(MAX_BYTES + 1)
         if len(raw) > MAX_BYTES: raise ValueError('Detailed report exceeds upload limit')
-        data = json.loads(raw)
+        data = decode_report(raw)
     if connection['provider'] == 'codex':
         envelope = {'schema_version': data.get('schema_version', 2), 'machine_id': publisher['machine_id'],
                     'machine_name': publisher['machine_name'], 'report': data}

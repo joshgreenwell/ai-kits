@@ -2,6 +2,7 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -16,6 +17,7 @@ class DetailedReports(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(); self.root = Path(self.tmp.name)
         self.analyzer = self.root / 'analyze_token_usage.py'; self.analyzer.write_text('# analyzer')
         self.analyzer.with_name('run_analyzer.sh').write_text('# launcher')
+        self.analyzer.with_name('run_analyzer.ps1').write_text('# launcher')  # the adapter picks the launcher by platform
         self.config_path = self.root / 'connection.json'
         self.publisher = {'endpoint': 'https://example.com/api/reports', 'api_key': 'report-key', 'machine_id': 'mac', 'machine_name': 'Mac'}
         self.upload_config = self.root / 'publisher.json'; self.upload_config.write_text(json.dumps(self.publisher))
@@ -29,7 +31,7 @@ class DetailedReports(unittest.TestCase):
     def tearDown(self): self.tmp.cleanup()
 
     def run_analyzer(self, argv, **kwargs):
-        self.assertIn('run_analyzer.sh', ' '.join(argv)); self.assertNotIn('--upload', argv)
+        self.assertIn('run_analyzer.ps1' if sys.platform == 'win32' else 'run_analyzer.sh', ' '.join(argv)); self.assertNotIn('--upload', argv)
         fixture = copy.deepcopy(self.fixture); fixture['current']['month'] = argv[argv.index('--month') + 1]
         kwargs['stdout'].write(json.dumps(fixture).encode()); return SimpleNamespace(returncode=0)
 
