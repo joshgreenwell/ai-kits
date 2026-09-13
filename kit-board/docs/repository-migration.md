@@ -15,8 +15,8 @@ Source base: `74abf3ed8db78edb3b6d12b4cdba03ef2a25d6b1`. Destination base: `bfb8
 | `docs/agent-handoff.md` | Relocated root, historical-status qualification, deployment-cutover instructions, private identifier removal. |
 | `docs/architecture.md` | Relocated application ownership path; historical deployment IDs omitted. |
 | `docs/schedules.md` | Private source/receipt/cloud-task/deployment identifiers omitted; historical behavior retained. |
-| `lib/generated/collector-bundles.json` | Rebuilt from imported collector sources with deterministic ZIP metadata. |
-| `scripts/build-collector-bundles.py` | Deterministic ZIP metadata so generated bundles match across fresh checkouts. |
+| `lib/generated/collector-bundles.json` | Rebuilt during the move for source parity; removed on 2026-09-13 when v1 distribution was retired. |
+| `scripts/build-collector-bundles.py` | Added deterministic ZIP metadata during the move; removed on 2026-09-13 with the retired bundle path. |
 
 ## Omitted source files
 
@@ -30,7 +30,7 @@ Source base: `74abf3ed8db78edb3b6d12b4cdba03ef2a25d6b1`. Destination base: `bfb8
 
 ## Private and generated exclusions
 
-No `.git`, `.env.local`, `.local`, `.vercel`, `node_modules`, `.next`, caches, outboxes, SQLite state, credentials, vault/brain notes or private report payloads are imported as public source. Existing tracked generated UI/collector bundles and licensed embedded fonts are retained. Runtime names, production URLs, schema, home configuration directories and API contracts remain unchanged. The working application is still independently configured; cloning does not recover private history or external scheduled jobs.
+No `.git`, `.env.local`, `.local`, `.vercel`, `node_modules`, `.next`, caches, outboxes, SQLite state, credentials, vault/brain notes or private report payloads are imported as public source. The tracked generated UI and licensed embedded fonts are retained; the v1 collector bundle was subsequently removed. Runtime names, production URLs, schema, home configuration directories and API contracts remain unchanged. The working application is still independently configured; cloning does not recover private history or external scheduled jobs.
 
 ## Verification at the relocated root
 

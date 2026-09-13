@@ -4,13 +4,13 @@ Updated 2026-09-10 for the move into `joshgreenwell/ai-kits`, at repository-root
 
 ## What this checkout provides
 
-The application, lockfile, six ordered database migrations, local hourly collectors, Claude browser extension, report publisher, audit asset publisher, readings renderer, generated download bundles, fonts/notices, and tests are included. It receives externally produced reports and can run bounded deterministic feed/ingestion calculations. It does not run agents, scan email, modify Jira, or read an Obsidian vault itself.
+The application, lockfile, seven ordered database migrations, companion source, report publisher, audit asset publisher, readings renderer, fonts/notices, and tests are included. It receives externally produced reports and can run bounded deterministic feed/ingestion calculations. It does not run agents, scan email, modify Jira, or read an Obsidian vault itself. The retired v1 collectors are not served by the site and their production credentials are disabled.
 
 A fresh clone has **no private report history, configured accounts, password, publisher credentials, provider logs, or external analyzers**. The app can build without them; a working authenticated dashboard needs a configured database and login. Existing history requires restoring the existing database through its operator, not replaying empty migrations over production.
 
 ## Application setup
 
-Prerequisites: Node **22.x**, npm, Python **3.10+** for collectors/tests (standard library only). Native PostgreSQL tools are optional for the disposable database test. From a fresh checkout:
+Prerequisites: Node **22.x** and npm. Python **3.10+** is needed for the detailed-report adapter and Python tests. Rust stable is needed only to build the companion from source. Native PostgreSQL tools are optional for the disposable database test. From a fresh checkout:
 
 ```bash
 cd ai-kits/kit-board
@@ -40,7 +40,7 @@ Create login and publisher secrets in a protected local setup session, then stor
 
 ## Database bootstrap and recovery
 
-The app uses postgres.js directly, not a public Supabase Data API. Use an isolated Supabase/Postgres database for development. Its administrator applies **all** SQL files in `supabase/migrations/` in lexicographic filename order, beginning with `20260908050538_personal_hub_report_history.sql` and ending with `20260910193058_agent_routing_events.sql`. Each is a migration, not an idempotent initialization script: track applied filenames and do not rerun them against an existing database. Supabase provides `anon` and `authenticated`; vanilla Postgres needs those roles before these migrations. Keep `personal_hub` unexposed, RLS enabled and public grants revoked.
+The app uses postgres.js directly, not a public Supabase Data API. Use an isolated Supabase/Postgres database for development. Its administrator applies **all** SQL files in `supabase/migrations/` in lexicographic filename order, beginning with `20260908050538_personal_hub_report_history.sql` and ending with `20260912230000_unified_usage.sql`. Each is a migration, not an idempotent initialization script: track applied filenames and do not rerun them against an existing database. Supabase provides `anon` and `authenticated`; vanilla Postgres needs those roles before these migrations. Keep `personal_hub` unexposed, RLS enabled and public grants revoked.
 
 The second migration creates `personal_hub_app` without a password. Set a strong password using the administrator's protected channel (for example an interactive psql `\password personal_hub_app` session), then configure the application with only that restricted identity and the correct verified TLS connection. Retain the connection queue and disabled prepared statements in `lib/db.ts`.
 
@@ -52,7 +52,7 @@ npm run test:routing:db
 
 This helper creates its own temporary Unix-socket-only cluster, applies every migration, runs integration tests, and removes its cluster. It accepts no production URL. It does not provision the application's TLS database. Normal `npm test` deliberately skips the database integration test unless its dedicated test environment exists.
 
-For recovery of an existing installation, preserve the private database backup/history, credential configuration, local collector SQLite checkpoints, pending uploads and successful receipts. Reuse existing account/source/machine identities. A fresh connection and empty checkpoint is a new installation, not evidence of restored coverage. Production's applied migration status must be checked independently; the imported routing migration was part of local working-tree changes.
+For recovery of an existing installation, preserve the private database backup/history, credential configuration, companion SQLite checkpoints, pending uploads and successful receipts. Reuse existing account/source/machine identities. A fresh connection and empty checkpoint is a new installation, not evidence of restored coverage. Production's applied migration status must be checked independently; the imported routing migration was part of local working-tree changes.
 
 ## Operator location map
 
@@ -67,7 +67,7 @@ These are locations verified on the migration Mac, not portable defaults. Replac
 | Assistant merge contract | `personal-assistant-brain/reference/briefing-data-contract.md` under that repository |
 | Luumen agent brain | `/Users/joshgreenwell/github/luumen-brain`; separate private context, not an Observatory runtime dependency |
 | Generic publisher configuration | `~/.config/personal-hub/publish.json`; override with `--config` or `PERSONAL_HUB_CONFIG` |
-| Telemetry connections and state | `~/.config/personal-hub/telemetry/`; pass the chosen private connection file to `--config` |
+| Companion configuration and state | `~/.config/personal-hub/companion/`; use the same explicit `--config-dir` for connect, setup, status, and the installed service |
 | Codex report publisher | `~/.codex/token-usage-upload.json` |
 | Claude report publisher | `~/.config/personal-hub/claude-usage-upload.json` |
 | Private app runtime/archive | `.env.local`, `.local/` under the application; ignored, independently backed up |
@@ -76,19 +76,9 @@ Obsidian's local registration file is `~/Library/Application Support/obsidian/ob
 
 ## Usage: hourly counters and allowance
 
-The complete instructions are in [usage collection](usage-collection.md). Included scripts are `scripts/telemetry/collect.py`, `detailed_report.py`, `statusline.py`, and `install_schedule.py`. Download bundles contain the same scripts and the setup guide. Python is the only collector dependency.
+The complete instructions are in [usage collection](usage-collection.md). Install one `observatory` companion binary per machine, pair it from Usage → Connections, and run `observatory setup`. The same companion owns Codex and Claude collection, the Claude statusline hook, its hourly service, checkpoints, receipts, and retry state under one config directory.
 
-```bash
-python3 scripts/telemetry/collect.py --config /private/path/connection.json --dry-run
-# With a configured destination, publish the measured counters:
-python3 scripts/telemetry/collect.py --config /private/path/connection.json
-# Install an hourly task only when ready to enable this connection:
-python3 scripts/telemetry/install_schedule.py --config /private/path/connection.json
-```
-
-A dry run still reads logs and may build local checkpoints; it does not prove remote acceptance. Default sources: `~/.codex/sessions`, `~/.codex/archived_sessions`, `~/.claude/projects`. Use `roots` for other account-owned paths before the initial scan. Never assign identical logs to two accounts. Keep old state when relocating scripts; reinstall each task with the same connection only after verifying the old schedule so it cannot run twice. The current Mac hourly tasks use `com.personal-observatory.usage.<source-id>`; Windows uses Task Scheduler. Existing monthly finalizers and daily harvest jobs remain independent.
-
-Claude allowance statusline: preserve the user's existing wrapper and call `statusline.py --inbox /private/path/claude-quota`; configure the matching `quota_inbox`. Browser-only quota: load `browser/claude-quota/` unpacked in Chrome/Edge, import the browser connection, explicitly pair the intended account/organization, and retain a signed-in Claude tab. Local and browser connection files are different. Browser activity is not exact token history.
+Do not reinstall the retired Python collector, schedule installer, statusline script, or unpacked v1 browser extension. Their source credentials are disabled and `POST /api/v1/telemetry` returns `410 Gone`. Remove any remaining `Personal Observatory Usage ...` Task Scheduler tasks or `com.personal-observatory.usage.*` LaunchAgents, then archive the old `PersonalObservatory` or `~/.config/personal-hub/telemetry` tree after confirming a recent companion receipt and an empty outbox.
 
 ## Usage: external detailed analyzers and monthly jobs
 
@@ -101,7 +91,7 @@ These are existing locally installed scripts, **not npm dependencies and not inc
 | Claude private configuration | `~/.claude/token-observatory/config.json`; keep private, restore separately |
 | Claude retained history | `~/.claude/token-observatory/state/ledger/`; essential if original transcripts aged out; also retain its reports and upload state |
 
-For Codex set `detailed_report.analyzer_path`, `codex_home`, `upload_config_path`, and the **existing** `machine_id` in the private collector connection. For Claude use `analyzer_path`, `analyzer_config_path`, `upload_config_path`, and existing Claude Code machine identity. Exact objects are in [usage collection](usage-collection.md). Report upload config uses `endpoint` (same site's `/api/reports`), `api_key`, `machine_id`, `machine_name`; the detailed adapter requires a different key from the telemetry key.
+For Codex set `detailed_report.analyzer_path`, `codex_home`, `upload_config_path`, and the **existing** `machine_id` on its binding in `companion.json`. For Claude use `analyzer_path`, `analyzer_config_path`, `upload_config_path`, and the existing Claude Code machine identity. Exact objects are in [usage collection](usage-collection.md). Report upload config uses `endpoint` (same site's `/api/reports`), `api_key`, `machine_id`, `machine_name`; the detailed adapter requires a different key from the companion install key.
 
 Local analyzer invocations used by the adapter (replace month and private paths):
 

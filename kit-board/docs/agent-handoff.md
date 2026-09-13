@@ -39,7 +39,7 @@ The global shell and usage views are native React. Stored report HTML is intenti
 | Live usage views | `app/(private)/usage/live/page.tsx`, `app/(private)/usage/connections/page.tsx`, `app/(private)/usage/resets/page.tsx`, `app/telemetry.css` |
 | Telemetry contracts, storage, calculations | `lib/telemetry-contract.ts`, `lib/telemetry-store.ts`, `lib/cloud-estimate.ts`, `lib/cloud-estimate-store.ts` |
 | Unified usage (envelope v2): contract, settings, ledgers, pairing | `lib/usage-contract.ts` (authority; `npm run usage-schema` writes `lib/generated/usage-v2.schema.json`), `lib/companion-settings.ts`, `lib/usage-store.ts`, `app/api/v1/companion/*`, `app/api/v1/usage/route.ts`, `app/api/companion-installs/route.ts`, `app/api/collection-settings/route.ts`, `app/api/usage-v2/route.ts`, `app/(private)/usage/settings/page.tsx`, `components/companion-installs.tsx` |
-| Local collectors and Claude browser adapter | `scripts/telemetry/`, `browser/claude-quota/`, `docs/usage-collection.md` |
+| Retired v1 reference implementations | `scripts/telemetry/collect.py`, `scripts/telemetry/statusline.py`, `browser/claude-quota/`; retained only for parity tests, never served or authorized |
 | Companion (Rust, replaces the local collector scripts) | `companion/` (workspace, `companion/README.md`), `tests/fixtures/usage-v2/` (shared wire and parity corpus), `.github/workflows/companion.yml` |
 | Usage coverage matrix: what is and is not collected, per provider, surface, and process | `docs/usage-coverage.md` (living document; update it with any collector or provider change) |
 | Reset feeds | `lib/reset-feeds.ts`, `lib/reset-feed-store.ts`, `app/api/reset-feeds/route.ts` |
@@ -49,7 +49,7 @@ The global shell and usage views are native React. Stored report HTML is intenti
 | Hosting cron schedules | `vercel.json`, `app/api/internal/` |
 | Tests | `tests/*.test.ts`, `tests/*_test.py` |
 
-`lib/generated/report-ui.json` and `lib/generated/collector-bundles.json` are checked-in generated files. Run `npm run report-ui` after changing the report UI inputs and `npm run collectors:bundle` after changing collector/browser files; commit their generated output with the source change.
+`lib/generated/report-ui.json` is a checked-in generated file. Run `npm run report-ui` after changing the report UI inputs and commit its output with the source change. The retired collector-bundle generator and generated ZIP payload were removed; the site does not distribute v1 collectors.
 
 ## Data and security boundaries
 
@@ -101,7 +101,7 @@ Keep schedules independent. The portal consumes their reports; it does not repla
 - `scripts/publish.mjs` publishes generic reports with a local outbox. `publish-assets.mjs` uploads audit linked files. Preserve observation timestamps and source coverage rather than substituting publication time.
 - Vercel runs the legacy usage compatibility sync daily at 18:00 UTC and reset feed sync daily at 13:15 UTC. The designated Codex local collector can additionally refresh feeds hourly.
 
-For Windows local collection, the supported location is `%LOCALAPPDATA%\PersonalObservatory`: extracted local collector scripts and the downloaded local connection JSON live there. Browser connection JSON belongs in the extension popup, not the Python collector. See `docs/usage-collection.md` for exact commands.
+For Windows local collection, use one non-virtualized companion directory such as `%USERPROFILE%\.config\personal-hub\companion` and pass it consistently with `--config-dir`. Provider-owned `.codex` and `.claude` stores remain in place as inputs; do not copy them into the companion tree. See `docs/usage-collection.md` for exact commands.
 
 ## Development and verification
 
@@ -145,10 +145,10 @@ Likely next operational work:
 | Private page/API fails | `lib/auth.ts`, `app/proxy.ts` if present, Vercel env names, safe runtime logs |
 | A report is missing or stale | `docs/schedules.md`, producer outbox/receipt under protected local config, `report_revisions`, producer scope |
 | Live usage is pending/503 | `lib/db.ts`, `lib/database-queue.ts`, `lib/read-cache.ts`, new-deployment logs, `/api/usage-live` Server-Timing |
-| Token totals disagree | `lib/telemetry-store.ts` canonical query, local collector SQLite state, account/source identity; never sum raw revisions |
+| Token totals disagree | `lib/usage-store.ts` canonical query, companion SQLite state, account/binding identity; never sum raw revisions |
 | Claude cloud estimate is absent | Pairing/statusline readings, source freshness/coverage, `lib/cloud-estimate.ts`, confirmed baselines |
 | Audit appears shallow or evidence links fail | `lib/report-selection.ts`, `lib/artifact.ts`, `lib/assets-store.ts`, audit coverage marker, protected artifact routes |
-| Collector download/setup fails | `scripts/build-collector-bundles.py`, `lib/generated/collector-bundles.json`, `/api/collector-download`, `docs/usage-collection.md` |
+| Companion setup fails | `companion/README.md`, `observatory doctor`, the configured companion directory, `/api/v1/companion/*`, `docs/usage-collection.md` |
 
 Keep this handoff current when the data model, deployment topology, or operational status materially changes.
 

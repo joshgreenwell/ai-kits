@@ -100,8 +100,8 @@ The adapter keeps its own analyzers, state, artifacts, and usage-publisher crede
 
 | Item | macOS and Linux | Windows |
 | --- | --- | --- |
-| Config, key, state, inbox, logs | `~/.config/personal-hub/companion/` | `%LOCALAPPDATA%\PersonalObservatory\` |
-| `companion.json` | install id and key, Observatory URL, per-binding root overrides, `deny` list, optional `since`; `0600` | same, or `%USERPROFILE%\.config\personal-hub\companion` when set up from a packaged app |
+| Config, key, state, inbox, logs | `~/.config/personal-hub/companion/` | `%USERPROFILE%\.config\personal-hub\companion\` is recommended so packaged and ordinary apps share one tree; `%LOCALAPPDATA%\PersonalObservatory\` remains the CLI default |
+| `companion.json` | install id and key, Observatory URL, per-binding root overrides, `deny` list, optional `since`; `0600` | same; pass the selected root consistently with `--config-dir` |
 | `secrets.json` (opt-in) | Admin API keys; read only by `anthropic_api` and `openai_api` | same |
 | `<install-id>.sqlite3`, `<install-id>.lock` | state and the run lock | same |
 | `inbox/claude-statusline/`, `inbox/hooks/` | hook inboxes; one file per UTC hour | same |
