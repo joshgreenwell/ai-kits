@@ -2,6 +2,7 @@ import { PageHeader } from '@/components/page-header';
 import { Workspace } from '@/components/workspace';
 import { Badge } from '@/components/ui/badge';
 import { CompanionInstalls } from '@/components/companion-installs';
+import { BrowserConnections } from '@/components/browser-connections';
 
 export default function Connections() {
   return (
@@ -12,6 +13,7 @@ export default function Connections() {
         actions={<Badge variant="outline">Hourly by default</Badge>}
       />
       <CompanionInstalls />
+      <BrowserConnections />
     </Workspace>
   );
 }

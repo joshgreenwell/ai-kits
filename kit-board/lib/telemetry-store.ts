@@ -1,7 +1,9 @@
 import 'server-only';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import type postgres from 'postgres';
 import { database } from './db';
 import { RequestError, stableJson } from './contracts';
+import type { TelemetryInput } from './telemetry-contract';
 import { readCache } from './read-cache';
 
 const hash = (value: unknown) => createHash('sha256').update(typeof value === 'string' ? value : stableJson(value)).digest('hex');
@@ -12,6 +14,19 @@ export async function telemetrySource(request: Request) {
     JOIN personal_hub.usage_accounts a ON a.id = s.account_id WHERE key_hash = ${hash(auth.slice(7))} AND NOT disabled`;
   if (!source) throw new RequestError('Unauthorized', 401);
   return source as { id: string; account_id: string; mode: 'local' | 'browser'; provider: 'codex' | 'claude' };
+}
+
+/** The browser quota extension is the last v1 collector in service: allowance readings only, never buckets. */
+export async function ingestBrowserQuotas(source: Awaited<ReturnType<typeof telemetrySource>>, input: TelemetryInput) {
+  if (input.buckets.length) throw new RequestError('This connection can publish quota readings only', 403);
+  return database().begin(async transaction => {
+    // postgres 3.4.8 TransactionSql uses Omit, which drops the callable signature.
+    const tx = transaction as unknown as postgres.Sql;
+    const rows = input.quotas.map(q => ({ id: randomUUID(), account_id: source.account_id, source_id: source.id, content_hash: hash(q), ...q }));
+    const quotas = rows.length ? (await tx`INSERT INTO personal_hub.quota_samples ${tx(rows)} ON CONFLICT DO NOTHING RETURNING id`).length : 0;
+    await tx`UPDATE personal_hub.telemetry_sources SET last_seen_at = now(), coverage = ${tx.json(input.coverage as postgres.JSONValue)} WHERE id = ${source.id}`;
+    return { ok: true, id: hash({ source: source.id, input }), buckets: 0, quotas, duplicate: quotas === 0 };
+  });
 }
 
 // A window resets within its own length (plus a day of slack). A reading whose reset lies further out is a
@@ -42,9 +57,11 @@ async function loadTelemetryDashboard() {
     sql`SELECT id, account_id, machine_label, mode, disabled, last_seen_at, coverage FROM personal_hub.telemetry_sources ORDER BY created_at`,
     // Each bucket is a complete cumulative snapshot. Choose the most complete copy,
     // including when a session was copied to another machine. Never sum revisions.
-    // Disabled connections and bindings leave the dashboard: the join excludes their revisions.
+    // A retired or paused connection stops uploading; its measured history stays on the dashboard.
+    // The retired v1 scripts and the companion published the same buckets, so hiding one copy
+    // would erase weeks of work rather than a duplicate.
     sql`WITH canonical AS (SELECT DISTINCT ON (t.account_id, t.session_hash, t.hour, t.model) t.*
-      FROM personal_hub.token_bucket_revisions t JOIN personal_hub.telemetry_sources s ON s.id = t.source_id AND NOT s.disabled
+      FROM personal_hub.token_bucket_revisions t
       WHERE t.hour >= now() - interval '35 days'
       ORDER BY t.account_id, t.session_hash, t.hour, t.model, t.calls DESC, t.total_tokens DESC, t.observed_at DESC, t.received_at DESC)
       SELECT account_id, hour, model, sum(input_tokens)::float8 AS input_tokens, sum(cached_tokens)::float8 AS cached_tokens,
