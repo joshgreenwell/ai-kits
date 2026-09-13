@@ -41,6 +41,33 @@ pub fn config_dir() -> Result<PathBuf, PathError> {
     home_dir().map(|home| home.join(".config/personal-hub/companion")).ok_or(PathError::NoHome)
 }
 
+/// Whether files written to this directory land in a packaged (MSIX) application's
+/// private store. Windows redirects new folders a packaged app such as the Claude
+/// desktop app creates under `%LOCALAPPDATA%` into `Packages/<app>/LocalCache/Local`;
+/// files there are invisible to Task Scheduler, other terminals, and every other
+/// program, so a companion set up from inside such an app would never run on
+/// schedule. Only a file reveals the redirect (the directory itself canonicalizes
+/// to its nominal path), so the check writes and removes an empty probe file,
+/// creating the directory when it does not exist yet.
+pub fn virtualized_store(dir: &Path) -> bool {
+    if !cfg!(windows) || fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(format!(".observatory-probe-{}", std::process::id()));
+    if fs::write(&probe, b"").is_err() {
+        return false;
+    }
+    let real = fs::canonicalize(&probe).map(|p| p.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    let _ = fs::remove_file(&probe);
+    real.contains("\\packages\\") && real.contains("\\localcache\\")
+}
+
+/// The configuration directory that survives packaged-app redirection on Windows:
+/// under the profile root, which Windows never virtualizes.
+pub fn unvirtualized_config_dir() -> Option<PathBuf> {
+    home_dir().map(|home| home.join(".config").join("personal-hub").join("companion"))
+}
+
 /// Claude Code's project transcripts.
 pub fn claude_projects_root() -> Option<PathBuf> {
     home_dir().map(|home| home.join(".claude").join("projects"))

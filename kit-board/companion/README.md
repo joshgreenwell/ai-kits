@@ -55,7 +55,18 @@ shows "update available" when an install's reported version is behind
 | `observatory version` | The semantic version, also reported in every envelope. |
 | `observatory serve` | Placeholder; live mode is a later phase. |
 
-Every command accepts `--config-dir <dir>`; `OBSERVATORY_CONFIG_DIR` does the same. `OBSERVATORY_LOG`
+Every command accepts `--config-dir <dir>`; `OBSERVATORY_CONFIG_DIR` does the same. The scheduler
+entry and the statusline hook that `setup` installs pin the directory with `--config-dir`, so every
+context that starts the companion shares one state.
+
+**Windows and packaged apps.** A process started from a packaged (MSIX) app, such as a Claude Code
+session inside the Claude desktop app, sees new folders under `%LOCALAPPDATA%` redirected into
+`Packages\<app>\LocalCache\Local`; Task Scheduler and every other program never see those files.
+`connect` and `setup` detect this (`doctor` reports `config_dir_virtualized`) and refuse to continue;
+pass `--config-dir %USERPROFILE%\.config\personal-hub\companion` (the profile root is never
+redirected) or run them from a normal terminal. The Microsoft Store Python is redirected the same way,
+so the analyzer step skips interpreters under `WindowsApps`; name another one in the binding's
+`detailed_report.python`. `OBSERVATORY_LOG`
 (`error`, `warn`, `info`, `debug`) sets the log level on stderr; logs contain counters and codes.
 
 ### The run loop
@@ -90,7 +101,7 @@ The adapter keeps its own analyzers, state, artifacts, and usage-publisher crede
 | Item | macOS and Linux | Windows |
 | --- | --- | --- |
 | Config, key, state, inbox, logs | `~/.config/personal-hub/companion/` | `%LOCALAPPDATA%\PersonalObservatory\` |
-| `companion.json` | install id and key, Observatory URL, per-binding root overrides, `deny` list, optional `since`; `0600` | same |
+| `companion.json` | install id and key, Observatory URL, per-binding root overrides, `deny` list, optional `since`; `0600` | same, or `%USERPROFILE%\.config\personal-hub\companion` when set up from a packaged app |
 | `secrets.json` (opt-in) | Admin API keys; read only by `anthropic_api` and `openai_api` | same |
 | `<install-id>.sqlite3`, `<install-id>.lock` | state and the run lock | same |
 | `inbox/claude-statusline/`, `inbox/hooks/` | hook inboxes; one file per UTC hour | same |
@@ -224,6 +235,11 @@ owner can veto any of them.
   10080-minute window, and the inbox reader forwards it. The parity corpus contains only the two
   pooled windows, so `expected.json` is unchanged. Each scoped window is its own meter on the
   Observatory; it is never summed with the pooled weekly window.
+- **A reading's reset must fall inside its own window** (plus a day of slack; 90 days when the
+  window length is unknown). The hook drops such a sample and the contract rejects the record on
+  both sides: a far-future reset would otherwise pin the forecast card for weeks.
+- **Stub adapters report `prerequisite_missing` / `not_implemented`** once their prerequisites are
+  present instead of running and failing; `failed` is reserved for real errors.
 - **The detailed monthly report stays a Python adapter** run as a subprocess; porting the
   analyzers is out of scope, and the adapter already owns retries, artifacts, and the
   publisher credential.

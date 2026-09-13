@@ -122,7 +122,12 @@ pub fn install(
         }
         let agent = LaunchAgent {
             label: label.clone(),
-            program_arguments: vec![exe.to_string_lossy().into_owned(), "run".into()],
+            program_arguments: vec![
+                exe.to_string_lossy().into_owned(),
+                "--config-dir".into(),
+                config_dir.to_string_lossy().into_owned(),
+                "run".into(),
+            ],
             start_interval: cadence_minutes * 60,
             run_at_load: true,
             process_type: "Background".into(),
@@ -135,7 +140,10 @@ pub fn install(
             return Err(ServiceError::Command);
         }
     } else if cfg!(windows) {
-        let task = format!("\"{}\" run", exe.to_string_lossy());
+        // The directory is pinned so a run started by the scheduler and one started from a
+        // packaged app (which sees a redirected %LOCALAPPDATA%) share the same state.
+        let task =
+            format!("\"{}\" --config-dir \"{}\" run", exe.to_string_lossy(), config_dir.to_string_lossy());
         let cadence = cadence_minutes.to_string();
         let ok = run_quiet(
             "schtasks",
@@ -148,8 +156,9 @@ pub fn install(
         let dir = systemd_dir()?;
         fs::create_dir_all(&dir)?;
         let service = format!(
-            "[Unit]\nDescription=Personal Observatory companion\n\n[Service]\nType=oneshot\nExecStart={} run\n",
-            exe.to_string_lossy()
+            "[Unit]\nDescription=Personal Observatory companion\n\n[Service]\nType=oneshot\nExecStart={} --config-dir {} run\n",
+            exe.to_string_lossy(),
+            config_dir.to_string_lossy()
         );
         let timer = format!(
             "[Unit]\nDescription=Personal Observatory companion schedule\n\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec={cadence_minutes}min\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n"

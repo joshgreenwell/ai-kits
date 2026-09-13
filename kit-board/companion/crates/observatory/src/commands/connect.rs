@@ -30,6 +30,7 @@ pub fn host_name() -> String {
 
 /// `POST /api/v1/companion/pair`, then write `companion.json` (0600) with the install id and key.
 pub fn connect(dir: &Path, args: ConnectArgs) -> CommandResult {
+    super::refuse_virtualized(dir)?;
     match CompanionConfig::load(dir) {
         Ok(_) if !args.force => return Err(CommandError::AlreadyConnected),
         Ok(_) | Err(ConfigError::NotConnected) => {}

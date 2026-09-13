@@ -58,6 +58,8 @@ pub fn doctor(dir: &Path) -> CommandResult {
         "ok": true,
         "version": observatory_core::VERSION,
         "tls_roots": observatory_core::http::TLS_ROOTS_LABEL,
+        "config_dir": dir.to_string_lossy(),
+        "config_dir_virtualized": observatory_core::paths::virtualized_store(dir),
         "config": prepared.config_source,
         "config_error": prepared.config_error,
         "settings_version": ctx.settings_version,

@@ -30,6 +30,12 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
   without it (`scripts/cross-macos-from-windows.sh`) uses the bundled Mozilla roots and reports
   `"tls_roots": "webpki"` in `doctor`.
 - `connect --since YYYY-MM-DD` sets the backfill start before the first run pins it.
+- The scheduler entry and the statusline hook pin `--config-dir`; `connect` and `setup` refuse a
+  directory that a packaged app redirects into its private store (`doctor` reports
+  `config_dir_virtualized`); the analyzer step never picks the Store Python.
+- Allowance readings whose reset lies beyond their window are dropped by the hook and rejected by
+  the contract; stub adapters report `not_implemented` instead of `failed`; write transactions
+  open with `BEGIN IMMEDIATE` so concurrent adapters wait instead of failing with `state_error`.
 - Model-scoped weekly allowance windows (`seven_day_<model>`) from the Claude Code statusline are
   published beside the pooled windows, labelled `Claude · weekly · <Model>`.
 - The `detailed_monthly_report` setting runs the kept v1 analyzer adapter

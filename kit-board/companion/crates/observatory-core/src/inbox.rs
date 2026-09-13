@@ -115,7 +115,12 @@ pub fn samples_from_statusline(data: &Value, now: Timestamp) -> Vec<StatuslineSa
         let reset = window.get("resets_at").and_then(Value::as_f64);
         let (Some(used), Some(reset)) = (used, reset) else { continue };
         let percent = used.as_f64().unwrap_or(-1.0);
-        if !(0.0..=100.0).contains(&percent) || reset <= now_seconds {
+        // The reset must lie inside the window (plus a day of slack); anything else is a
+        // bad clock or a hand-written payload and would pin the forecast for weeks.
+        if !(0.0..=100.0).contains(&percent)
+            || reset <= now_seconds
+            || reset > now_seconds + (minutes * 60 + 86_400) as f64
+        {
             continue;
         }
         let Some(resets_at) = crate::pyjson::iso(reset) else { continue };
@@ -294,6 +299,7 @@ mod tests {
         let data = json!({"rate_limits": {"five_hour": {"used_percentage": 20, "resets_at": 1_788_314_400},
             "seven_day": {"used_percentage": 120, "resets_at": 1_788_400_000},
             "seven_day_fable": {"used_percentage": 51.5, "resets_at": 1_788_400_000},
+            "seven_day_far": {"used_percentage": 10, "resets_at": 4_102_444_800_u64},
             "spend": {"used_percentage": 1}}, "version": "2.0.0"});
         let samples = samples_from_statusline(&data, now);
         assert_eq!(
@@ -327,7 +333,10 @@ mod tests {
             serde_json::from_slice(&fs::read(inbox.parent().unwrap().join(STATUS_SIDECAR)).unwrap()).unwrap();
         assert_eq!(status["invocations"], 2);
         assert_eq!(status["last_published_at"], "2026-09-02T01:00:00Z");
-        assert_eq!(status["rate_limit_keys"], json!(["five_hour", "seven_day", "seven_day_fable", "spend"]));
+        assert_eq!(
+            status["rate_limit_keys"],
+            json!(["five_hour", "seven_day", "seven_day_fable", "seven_day_far", "spend"])
+        );
         assert!(status["offered_windows"].get("seven_day_fable").is_some());
         assert!(status["offered_windows"].get("spend").is_none());
         assert!(status.get("cwd").is_none());

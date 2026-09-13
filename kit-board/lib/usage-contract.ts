@@ -69,7 +69,9 @@ export const allowanceReadingSchema = z.object({ ...header, record_type: z.liter
   reader: z.enum(['statusline','oauth_usage','app_server','embedded','web_backend','usage_summary','dashboard_rpc']),
   raw_window_id: z.string().max(120).nullable(),
 }).strict().refine(r => r.kind !== 'percent_used' || (r.value !== null && r.value >= 0 && r.value <= 100), 'Percent out of range')
-  .refine(r => !r.resets_at || Date.parse(r.resets_at) > Date.parse(r.observed_at), 'Expired reading');
+  .refine(r => !r.resets_at || Date.parse(r.resets_at) > Date.parse(r.observed_at), 'Expired reading')
+  // A window resets within its own length (plus a day of slack); a far-future reset would pin the forecast for weeks.
+  .refine(r => !r.resets_at || Date.parse(r.resets_at) <= Date.parse(r.observed_at) + ((r.window_minutes ?? 90 * 1440) * 60 + 86_400) * 1000, 'Reset beyond window');
 
 export const moneyEntrySchema = z.object({ ...header, record_type: z.literal('money.entry'),
   entry_kind: z.enum(['estimate','included_usage','metered_charge','credit_grant','credit_consumption','adjustment','invoice_line']),

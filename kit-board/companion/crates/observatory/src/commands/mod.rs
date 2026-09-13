@@ -42,6 +42,10 @@ pub enum CommandError {
     AlreadyConnected,
     #[error("{0}")]
     Invalid(String),
+    #[error(
+        "the configuration directory {0} is redirected into a packaged app's private store (Windows shows it under Packages/<app>/LocalCache), so scheduled runs and other programs would never see it; run this from a normal terminal, or pass --config-dir {1} (or set OBSERVATORY_CONFIG_DIR)"
+    )]
+    VirtualizedConfigDir(String, String),
     #[error("a local file could not be written")]
     Io(#[from] std::io::Error),
 }
@@ -62,6 +66,7 @@ impl CommandError {
             CommandError::Path(_) => "path_error",
             CommandError::AlreadyConnected => "already_connected",
             CommandError::Invalid(_) => "invalid_argument",
+            CommandError::VirtualizedConfigDir(..) => "config_dir_virtualized",
             CommandError::Io(_) => "io_error",
         }
     }
@@ -75,6 +80,16 @@ pub fn config_dir(cli: &Cli) -> Result<PathBuf, CommandError> {
         Some(dir) => Ok(dir.clone()),
         None => Ok(paths::config_dir()?),
     }
+}
+
+/// Refuses to create an install whose files would live in a packaged app's private store.
+pub fn refuse_virtualized(dir: &std::path::Path) -> Result<(), CommandError> {
+    if paths::virtualized_store(dir) {
+        let suggestion =
+            paths::unvirtualized_config_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        return Err(CommandError::VirtualizedConfigDir(dir.to_string_lossy().into_owned(), suggestion));
+    }
+    Ok(())
 }
 
 pub fn print_json<T: serde::Serialize>(value: &T) {

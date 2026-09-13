@@ -77,8 +77,11 @@ pub fn run(
     if write_private(&connection, &text).is_err() {
         return failed("io_error");
     }
-    let interpreter =
-        settings.python.clone().or_else(|| find_executable("python3")).or_else(|| find_executable("python"));
+    let interpreter = settings
+        .python
+        .clone()
+        .or_else(|| usable_interpreter("python3"))
+        .or_else(|| usable_interpreter("python"));
     let Some(interpreter) = interpreter else { return failed("interpreter_missing") };
     let mut command = Command::new(interpreter);
     command.arg(&settings.script).arg("--config").arg(&connection);
@@ -123,6 +126,14 @@ pub fn run(
         }
         _ => failed(if status.success() { "invalid_output" } else { "exit_nonzero" }),
     }
+}
+
+/// An interpreter on `PATH` that can see this directory: the Microsoft Store Python
+/// (an App Execution Alias under `WindowsApps`) runs with its own redirected
+/// `%LOCALAPPDATA%` and cannot read the connection file the companion writes.
+fn usable_interpreter(name: &str) -> Option<PathBuf> {
+    find_executable(name)
+        .filter(|path| !path.to_string_lossy().to_ascii_lowercase().contains("\\windowsapps\\"))
 }
 
 /// The v1 telemetry directory on this machine.

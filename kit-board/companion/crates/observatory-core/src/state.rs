@@ -221,8 +221,11 @@ impl State {
         Ok(false)
     }
 
+    /// Every transaction here writes. `IMMEDIATE` takes the write lock at once so a
+    /// second adapter thread waits on the busy timeout instead of failing with
+    /// `SQLITE_BUSY` when a deferred read transaction tries to upgrade under WAL.
     pub fn begin(&self) -> Result<(), StateError> {
-        self.conn.execute_batch("BEGIN")?;
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
         Ok(())
     }
 

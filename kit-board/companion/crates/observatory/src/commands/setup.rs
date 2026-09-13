@@ -118,7 +118,7 @@ fn install_statusline_hook(dir: &Path) -> Result<Option<String>, CommandError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
         Err(error) => return Err(error.into()),
     };
-    let ours = format!("\"{}\" statusline", exe.to_string_lossy());
+    let ours = format!("\"{}\" --config-dir \"{}\" statusline", exe.to_string_lossy(), dir.to_string_lossy());
     let existing =
         settings.get("statusLine").and_then(|s| s.get("command")).and_then(Value::as_str).map(str::to_owned);
     let mut preserved = None;
@@ -146,6 +146,7 @@ fn install_statusline_hook(dir: &Path) -> Result<Option<String>, CommandError> {
 }
 
 pub fn setup(dir: &Path, args: SetupArgs) -> CommandResult {
+    super::refuse_virtualized(dir)?;
     let mut config = CompanionConfig::load(dir)?;
     let prompt = Prompt::new(args.yes);
     let binds = parse_binds(&args.bind)?;

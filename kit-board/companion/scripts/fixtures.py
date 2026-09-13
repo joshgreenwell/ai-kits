@@ -344,6 +344,8 @@ def invalid_envelopes() -> dict[str, tuple[str, bool, dict]]:
     out_of_range = allowance("codex_execution", "local_file", B_CODEX, "embedded", "codex:300", "Codex · 5h", 130, 300,
                              "2026-09-02T02:00:00.000Z", "primary", "range", observed_at="2026-09-02T01:03:00.000Z")
     future = activity_request(); future["observed_at"] = "2099-01-01T00:00:00.000Z"
+    far_reset = allowance("claude_execution", "local_file", B_CLAUDE, "statusline", "five_hour", "Claude · 5h", 84, 300,
+                          "2100-01-01T00:00:00.000Z", "five_hour", "far", observed_at="2026-09-02T01:03:00.000Z")
     bad_type = activity_request(); bad_type["record_type"] = "activity.turn"
     bad_uuid = activity_request(); bad_uuid["record_id"] = "not-a-uuid"
     bad_stamp = activity_request(); bad_stamp["observed_at"] = "2026-09-02T03:15:30"
@@ -356,6 +358,7 @@ def invalid_envelopes() -> dict[str, tuple[str, bool, dict]]:
         "reasoning-exceeds-output": ("reasoning_exceeds_output", False, base(records=[activity_request(reasoning=51, output=50)])),
         "empty-usage-bucket": ("empty_bucket", False, base(records=[empty_bucket])),
         "expired-allowance-reading": ("expired_reading", False, base(records=[expired])),
+        "reset-beyond-window": ("reset_beyond_window", False, base(records=[far_reset])),
         "percent-out-of-range": ("percent_out_of_range", False, base(records=[out_of_range])),
         "future-observed-at": ("timestamp_in_future", False, base(records=[future])),
         "bucket-total-mismatch": ("bucket_total_mismatch", False, base(buckets=[bad_total])),

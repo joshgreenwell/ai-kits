@@ -356,10 +356,20 @@ impl Record {
                 {
                     out.push(Violation { path: format!("{path}.value"), rule: "percent out of range" });
                 }
-                if let Some(resets) = r.resets_at.as_ref()
-                    && resets.timestamp() <= r.observed_at.timestamp()
-                {
-                    out.push(Violation { path: format!("{path}.resets_at"), rule: "expired reading" });
+                if let Some(resets) = r.resets_at.as_ref() {
+                    if resets.timestamp() <= r.observed_at.timestamp() {
+                        out.push(Violation { path: format!("{path}.resets_at"), rule: "expired reading" });
+                    }
+                    // A window resets within its own length; a reset far beyond it is a bad
+                    // clock or a hand-written sample and would pin the forecast for weeks.
+                    let horizon =
+                        r.window_minutes.as_ref().map_or(90 * 86_400, |m| m.get() as i64 * 60 + 86_400);
+                    if resets.timestamp().as_second() > r.observed_at.timestamp().as_second() + horizon {
+                        out.push(Violation {
+                            path: format!("{path}.resets_at"),
+                            rule: "reset beyond window",
+                        });
+                    }
                 }
             }
             Record::MoneyEntry(r) => {

@@ -12,6 +12,8 @@ use observatory_core::discovery::find_executable;
 
 const STUB_PARSER_VERSION: &str = "0";
 
+// Prerequisites are checked first so `doctor` names what is missing; when everything is
+// present the stub reports `not_implemented` rather than running and failing.
 fn blocked(state: CoverageState, detail: DetailCode) -> Preflight {
     Preflight::Blocked { state, detail }
 }
@@ -36,7 +38,9 @@ impl Adapter for ClaudeAccount {
             return blocked(CoverageState::PrerequisiteMissing, DetailCode::NoBinding);
         }
         match claude_credential_presence() {
-            CredentialPresence::Present { .. } => Preflight::Ready,
+            CredentialPresence::Present { .. } => {
+                blocked(CoverageState::PrerequisiteMissing, DetailCode::NotImplemented)
+            }
             CredentialPresence::Expired => {
                 blocked(CoverageState::CredentialUnavailable, DetailCode::CredentialExpired)
             }
@@ -76,7 +80,7 @@ impl Adapter for CodexAccount {
         if find_executable("codex").is_none() {
             return blocked(CoverageState::PrerequisiteMissing, DetailCode::ExecutableMissing);
         }
-        Preflight::Ready
+        blocked(CoverageState::PrerequisiteMissing, DetailCode::NotImplemented)
     }
     fn collect(
         &self,
@@ -105,7 +109,7 @@ impl Adapter for CursorExecution {
             .filter(|binding| binding.runnable())
             .any(|binding| binding.cursor_state_db.as_ref().is_some_and(|path| path.is_file()));
         if present {
-            Preflight::Ready
+            blocked(CoverageState::PrerequisiteMissing, DetailCode::NotImplemented)
         } else {
             blocked(CoverageState::PrerequisiteMissing, DetailCode::StoreMissing)
         }
@@ -137,7 +141,7 @@ impl Adapter for CursorAccount {
             .filter(|binding| binding.runnable())
             .any(|binding| binding.cursor_state_db.as_ref().is_some_and(|path| path.is_file()));
         if present {
-            Preflight::Ready
+            blocked(CoverageState::PrerequisiteMissing, DetailCode::NotImplemented)
         } else {
             blocked(CoverageState::CredentialUnavailable, DetailCode::CredentialMissing)
         }
@@ -161,7 +165,7 @@ fn secrets_present(ctx: &RunContext, anthropic: bool) -> Preflight {
                 secrets.openai_admin_key.as_ref()
             };
             if key.is_some_and(|k| !k.is_empty()) {
-                Preflight::Ready
+                blocked(CoverageState::PrerequisiteMissing, DetailCode::NotImplemented)
             } else {
                 blocked(CoverageState::CredentialUnavailable, DetailCode::CredentialMissing)
             }

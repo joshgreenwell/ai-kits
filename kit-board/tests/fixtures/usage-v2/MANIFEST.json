@@ -37,6 +37,7 @@
     "wire/invalid/negative-counter.json",
     "wire/invalid/percent-out-of-range.json",
     "wire/invalid/reasoning-exceeds-output.json",
+    "wire/invalid/reset-beyond-window.json",
     "wire/invalid/stamp-without-offset.json",
     "wire/invalid/too-many-tools.json",
     "wire/invalid/unknown-adapter.json",
