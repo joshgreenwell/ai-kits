@@ -1,6 +1,6 @@
-# Script-based usage collection
+# Usage collection
 
-The runtime uses **zero model calls**. Python 3.10+ and its built-in SQLite store read counters locally, checkpoint JSONL offsets, and publish cumulative hourly buckets. No new Python packages are required. Public feed fetching and browser quota collection also use ordinary code, with no AI inference.
+Collection uses **zero model calls**. The `observatory` companion reads provider-owned local stores, checkpoints progress in SQLite, and publishes cumulative hourly buckets plus independent allowance, aggregate, and money records. Public feed fetching and browser quota collection also use ordinary code, with no AI inference.
 
 For what each collector can and cannot attribute (tokens, allowances, money, project, surface) per provider and surface, and the process behind each cell, see [usage coverage](usage-coverage.md).
 
@@ -13,68 +13,27 @@ The `observatory` companion (`companion/`, see its README) replaces the local sc
 3. Usage → Settings holds the collection modes: global defaults plus a per-install override. Every install fetches the effective document on each run; a local `deny` list in `companion.json` can only remove modes.
 4. Connections shows each install's version, platform, last run, applied settings version, "update available", every binding's identity state, and the per-adapter coverage from the latest run. "Off" is always distinguishable from "broken".
 
-The companion emits the same hourly buckets the v1 script published (they land under the binding's own source row and deduplicate with v1 uploads of the same session) plus allowance readings, provider aggregates, and money as separate ledgers. Keep a v1 schedule until the companion has published with receipts; Connections flags an account that still has an active v1 collector beside a companion binding.
+The companion emits the same hourly buckets the v1 script published, plus allowance readings, provider aggregates, and money as separate ledgers. The legacy local and browser collector credentials were disabled on September 13, 2026; the website no longer creates connection files, serves collector bundles, or accepts `POST /api/v1/telemetry`.
 
 The Claude statusline hook publishes every window Claude Code reports, including the model-scoped weekly windows (for example the Fable weekly cap), each as its own card under Current allowances with a `model-scoped weekly` badge. A scoped window is never added to the pooled weekly window.
 
-With the **Detailed monthly report (analyzer)** setting on (global or per install), each run also executes the v1 analyzer adapter for every binding whose `companion.json` entry carries a `detailed_report` block; `observatory setup` copies that block from an existing v1 connection when it finds one. The analyzer, its configuration, and the usage-publisher credential must already be installed on that machine, exactly as for the v1 step below.
+With the **Detailed monthly report (analyzer)** setting on (global or per install), each run also executes the detailed analyzer adapter for every binding whose `companion.json` entry carries a `detailed_report` block. Setup can copy that block from an old connection during migration, but the old connection and collector directory are not needed afterward. The analyzer, its provider configuration, and the usage-publisher credential remain protected local dependencies.
 
-**Add browser** issues a code for the v2 browser collector (a later workstream); the v1 Claude quota extension below keeps working meanwhile.
+**Add browser** issues a code for the v2 browser collector workstream. It does not reactivate or authorize the retired v1 Claude extension.
 
-## Local setup (macOS / Windows) — v1 script, migration path
+## Retired v1 cleanup
 
-1. In Observatory → AI usage → Connections, download a **local** connection for the correct account. Reuse the same account ID on multiple machines that use that account. Give each machine its own connection. Existing IDs are shown in the account selector and connection list.
-2. Download and unzip the local collector. Store the connection JSON in a private local directory outside source control. It contains an upload key scoped to that account, not a provider login or DB password.
-3. Run `python3 collect.py --config /absolute/path/connection.json --dry-run` (`py` can replace `python3` on Windows). The first run indexes local logs from the start of the current UTC month. `--since YYYY-MM-DD` chooses a different initial backfill date; this date is then pinned in the local state.
-4. Run the same command without `--dry-run` to publish. SQLite keeps pending batches and receipts, so retries require no source reanalysis and duplicate uploads do not add tokens.
-5. Run `python3 install_schedule.py --config /absolute/path/connection.json` to install an hourly macOS LaunchAgent or Windows Task Scheduler task. Add `--refresh-feeds` on one collector to trigger cached public-feed checks. Use `--uninstall` with the same config to stop that connection's schedule.
+Do not reinstall `collect.py`, `install_schedule.py`, `statusline.py`, or the unpacked Claude quota extension. Their production source credentials are disabled. Remove their Task Scheduler tasks or LaunchAgents first, then archive and delete the old collector directory after confirming the companion has a recent accepted receipt and an empty outbox.
 
-The schedule runs while the user is logged in. A sleeping/offline computer reports after it wakes. Windows requires an installed Python interpreter and a logged-in interactive session for the default task. Keep the downloaded collector and connection file at their configured paths.
-
-### Windows: where to put the downloaded file
-
-For a **Local script** connection, use `%LOCALAPPDATA%\PersonalObservatory` (normally `C:\Users\<you>\AppData\Local\PersonalObservatory`). Create that folder and extract the local collector ZIP there. Move the downloaded connection JSON into the same folder and rename it `connection.json`. The folder should contain `collect.py`, `install_schedule.py`, `statusline.py`, and `connection.json`. Python 3.10+ is required.
-
-Run in PowerShell, checking each command succeeds before continuing:
-
-```powershell
-Set-Location "$env:LOCALAPPDATA\PersonalObservatory"
-py -3 .\collect.py --config .\connection.json --dry-run
-py -3 .\collect.py --config .\connection.json
-py -3 .\install_schedule.py --config .\connection.json
-```
-
-The dry run indexes logs without uploading; the second run uploads; the last installs the hourly task. Confirm `ok: true` from the upload and a fresh Last check on the Connections page. Keep the folder outside Git, cloud-synced folders, and temporary Downloads cleanup. The JSON contains a scoped upload key. Each provider/account gets its own connection file: for example, keep `codex.json` and `claude.json` and use the corresponding filename in all commands. Do not replace a file already used by a scheduled task.
-
-A **Browser** connection JSON is imported into the browser collector extension popup instead. It does not go into Claude settings or the Python script. Follow the browser steps below; the extension keeps its configuration after import.
-
-Default roots are `~/.codex/sessions` plus `~/.codex/archived_sessions` for Codex, and `~/.claude/projects` for Claude. For Claude Desktop Code/Cowork or another CLI profile, add a `roots` array of absolute log directories to the connection **before the first scan**. Nested `.jsonl` files are discovered recursively. Only account-owned roots belong in a connection; the collector cannot infer the authenticated account from a token log. Changing accounts or roots requires new collector state. Do not point both Claude accounts at the same roots.
-
-Counters retained locally: session hashes, request/message hashes, UTC hour, model, exclusive token categories, call count, file checkpoints, quota readings, and receipts. Prompt text, assistant content, repository names, and source paths are not uploaded. Local checkpoint paths stay in SQLite. Normal logs contain only counters and bounded errors.
-
-## Claude Code allowance hook (optional)
-
-The supported statusline JSON includes `rate_limits` after an eligible Claude.ai session has received a response. Configure the bundled `statusline.py --inbox /private/path/claude-quota` as a statusline command, or call it from an existing wrapper while preserving that wrapper's output. Add `"quota_inbox": "/private/path/claude-quota"` to that Claude connection. The hourly collector uploads the whitelisted quota fields. The hook never makes an inference request and must not overwrite an existing custom statusline without preserving it. Windows supports the same Python script.
-
-## Second personal Claude account in a browser
-
-1. Use Chrome or Edge in the profile signed into the intended Claude account. Windows is optional.
-2. Download and unzip the browser collector. Open the browser's Extensions page, enable Developer mode, and choose **Load unpacked** for that folder. Installation is a user/browser action.
-3. Download a **Claude / Browser** connection from the Observatory, then import the file in the extension popup. Use a distinct account ID such as `claude-personal` for this second account.
-4. Keep a signed-in `https://claude.ai/` tab open. Click **Find my Claude account**, verify the displayed identity, and explicitly pin the correct organization. Collection then uploads a first reading and runs hourly.
-5. Check the popup's last successful upload and the Observatory's account cards. If the profile changes to a different Claude account, uploads pause until explicitly paired again. Sign-in or browser verification must be completed normally in Claude.
-
-Only numeric allowance utilization and reset times are uploaded. Claude session cookies never leave the browser. The extension stores its Observatory quota-only upload key in extension-local storage restricted to trusted extension contexts. It requests access only to Claude and this Observatory; no cookie permission or conversation API is used.
-
-This is an **experimental web adapter**, using the same usage endpoints documented by CodexBar. Claude can change them. The official personal Settings → Usage page is authoritative. This does not use Anthropic Console's Admin Usage API, which reports separately billed API usage and is not a personal subscription token ledger. Browser-only activity cannot be reconstructed as exact token counts from quota percentages. Installing Claude Code on the second account provides future local Code token logs, not past browser-chat token history.
+The supported local footprint is intentionally small: the installed `observatory` binary, one companion config/state directory, one protected usage-publisher credential when detailed reports are enabled, and the provider-owned `.codex` / `.claude` stores that are the source data. The companion config directory contains its JSON config, SQLite checkpoint/receipt state, lock, inbox, logs, safety backups, and detailed-report retry state; these are one managed runtime tree, not separate installs. The old `PersonalObservatory` or `~/.config/personal-hub/telemetry` tree is not part of v2.
 
 ## Detailed monthly report, refreshed hourly
 
 The **Monthly report** page (`/usage`) keeps the complete uploaded analysis: token composition, daily activity, models and pricing dimensions, projects, task families, work modes, agent orchestration, and source coverage. It reads the latest existing machine/month envelopes through `/api/reports`, refreshing once per visible minute. `/usage/reports` redirects to the same page. Current-month snapshots are explicitly month-to-date; percentage comparisons against a full prior month are suppressed until the month closes.
 
-The optional `detailed_report` step in `scripts/telemetry/collect.py` runs the installed local analyzers after ordinary hourly telemetry. It makes no model calls. Codex uses the supported token-analysis launcher; Claude Code merges its retained ledger and current transcripts without modifying the daily harvester. This preserves each analyzer's attribution, versioned pricing assumptions and missing-data labels. The reduced hourly counter ledger alone cannot reconstruct these fields. Browser quota-only collectors cannot generate detailed token reports.
+The companion's optional `detailed_report` adapter runs the installed local analyzers after ordinary hourly telemetry. It makes no model calls. Codex uses the supported token-analysis launcher; Claude Code merges its retained ledger and current transcripts without modifying the daily harvester. This preserves each analyzer's attribution, versioned pricing assumptions and missing-data labels. The reduced hourly counter ledger alone cannot reconstruct these fields. Browser quota-only collectors cannot generate detailed token reports.
 
-Add this object to an existing **local** Codex connection file, using that machine's real paths and existing report identity:
+The equivalent `detailed_report` block lives on the Codex binding in `companion.json`, using that machine's real paths and existing report identity:
 
 ```json
 "detailed_report": {
@@ -85,7 +44,7 @@ Add this object to an existing **local** Codex connection file, using that machi
 }
 ```
 
-For Claude Code, use its `claude_token_observatory.py` analyzer path and `analyzer_config_path` instead of `codex_home`. Pin the analyzer's Claude Code envelope identity, including its existing suffix. The separate upload config must already hold a usage-publisher credential for the same Observatory `/api/reports` origin; quota/telemetry keys cannot publish reports. The collector bundle includes the adapter, but each computer must also have its analyzer, configuration and publisher credential installed. Test with the collector's `--dry-run` before enabling its schedule.
+For Claude Code, use its `claude_token_observatory.py` analyzer path and `analyzer_config_path` instead of `codex_home`. Pin the analyzer's Claude Code envelope identity, including its existing suffix. The separate upload config must already hold a usage-publisher credential for the same Observatory `/api/reports` origin; companion install keys cannot publish reports. Each computer must also have its analyzer, provider configuration, and publisher credential installed. Test with `observatory run --dry-run` before enabling the service.
 
 Analysis uses each analyzer's local calendar month. Unchanged measured content creates no revision. Changed snapshots use the existing immutable report store; exact attempted artifacts are persisted privately and retried before reanalysis after uncertain upload outcomes. The previously active month receives one final snapshot after rollover. Existing monthly finalizers remain unchanged. Detailed-report failures are logged separately and preserve the previous published snapshot; collector success alone does not prove detailed publication succeeded. Snapshot change time appears on each machine card.
 

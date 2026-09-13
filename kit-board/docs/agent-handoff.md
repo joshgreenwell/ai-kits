@@ -70,11 +70,9 @@ Private endpoints must authenticate first and return `private, no-store`. Browse
 
 ## Database and migrations
 
-Migrations are ordered in `supabase/migrations/` and have already been applied to production through:
+Migrations are ordered in `supabase/migrations/`. Production includes `20260909200659_cloud_usage_calibrations.sql` and `20260912230000_unified_usage.sql`; the latter was applied through the Supabase administrative path as migration-history version `20260913045514`. Post-apply validation confirmed RLS on all nine new tables, no public/anonymous grants, a security-invoker compatibility view, and no `UPDATE` or `DELETE` privilege for `personal_hub_app` on the four ledgers.
 
-`20260909200659_cloud_usage_calibrations.sql`
-
-The main tables are `report_revisions`, `report_assets`, `usage_accounts`, `telemetry_sources`, `token_bucket_revisions`, `quota_samples`, `usage_calibrations`, and reset-feed state/revisions. Read the existing migrations before adding a table or grant. New private tables need RLS, revoked public grants, limited `personal_hub_app` grants, and matching policies.
+The main tables are `report_revisions`, `report_assets`, `usage_accounts`, `telemetry_sources`, `token_bucket_revisions`, `quota_samples`, `usage_calibrations`, and reset-feed state/revisions. The unified usage migration adds `collection_settings`, `companion_installs`, `companion_pairing_codes`, `companion_bindings`, `companion_runs`, and four independent ledgers that are never summed together: `activity_requests`, `account_usage_buckets`, `allowance_readings`, `money_entries`; plus `allowance_percent_view`, which unions v1 quota samples and v2 percent readings by window key. Ledgers are append-only for the application role; canonical rows are chosen at read time. Read the existing migrations before adding a table or grant. New private tables need RLS, revoked public grants, limited `personal_hub_app` grants, and matching policies.
 
 Use the Supabase MCP/administrative path for DDL and write a corresponding migration. Validate privileges after DDL; the app role must not be allowed to change report history or an existing calibration coefficient. The Supabase project has no Data API requirement; keep its private schema unexposed.
 
@@ -89,18 +87,17 @@ Uploaded monthly reports, hourly telemetry, allowance percentages, and external 
 - `usage_calibrations` stores user-confirmed, local-only Claude evidence. Its provisional local-equivalent cloud/uncollected UI is paused (removed from Usage & pace); the retained backend never creates estimated buckets or modifies observed tokens.
 - The cloud scenario requires real Claude allowance samples plus an explicit local-only baseline. It must pause for resets, gaps, stale readings, incomplete collectors, mismatched baselines, or insufficient allowance change. Do not introduce a provider-wide fixed conversion or sum five-hour and weekly windows.
 - Browser-only Claude activity can provide allowance/reset observations, not exact historical token counts.
-
-Current operational status is in `docs/schedules.md`. As of this handoff, macOS Codex and Claude collectors exist, Windows local connections have checked in, and Claude allowance samples have not yet arrived. The old browser connection is disabled; a new browser pairing is needed for the personal Claude account.
 - Project attribution is opt-in (`execution.project_attribution: hashed`) and uploads a hash of the working directory, never the path; it covers local and desktop-app sessions only. Cloud runs (Claude Code on the web, Codex cloud) leave no local transcript and appear only as unattributed allowance movement. `docs/usage-coverage.md` is the matrix.
+
+Current operational status is in `docs/schedules.md`. As of September 13, both machines have enabled companion installs and account bindings. Every legacy `local` and `browser` source is disabled in production; the old Windows Claude and Codex keys return 410. Remove the remaining v1 schedules and files from each machine rather than troubleshooting them.
 
 ## Schedules, collectors, and reports
 
 Keep schedules independent. The portal consumes their reports; it does not replace their source collection or merge logic.
 
-- Local telemetry uses `scripts/telemetry/collect.py`; it reads local JSONL counters into a private SQLite checkpoint/outbox and publishes hourly. `install_schedule.py` installs a macOS LaunchAgent or Windows Task Scheduler task.
-- Claude's optional `statusline.py` writes provider rate-limit fields to a local inbox. It is installed on this Mac but only produces data after an eligible local Claude Code response.
-- The Claude browser extension is quota-only. Its connection JSON is imported in its options screen; it never receives Claude cookies.
-- The `observatory` companion under `companion/` is the v2 replacement for `collect.py`, `statusline.py`, and `install_schedule.py`: one binary per machine, adapters per provider, envelope v2 to `POST /api/v1/usage`. Phase 1 (core) is built and gated by the v1 parity corpus; it is inert until the server side (`/api/v1/companion/*`, `/api/v1/usage`, migration) is deployed. The v1 scripts stay frozen until then. See `companion/README.md`.
+- The `observatory` companion under `companion/` replaces `collect.py`, `statusline.py`, and `install_schedule.py`: one binary per machine, adapters per provider, envelope v2 to `POST /api/v1/usage`. The server side and unified migration are live. The website no longer creates or serves v1 collectors, and legacy telemetry ingestion returns 410. See `companion/README.md`.
+- The companion-managed Claude statusline hook writes provider rate-limit fields to its own inbox. Do not restore the old Python statusline hook.
+- Legacy local and browser collector sources were disabled in production on September 13. Their schedules, unpacked extensions, connection files, and SQLite state may be removed after preserving any unrelated analyzer/publisher configuration.
 - `scripts/publish.mjs` publishes generic reports with a local outbox. `publish-assets.mjs` uploads audit linked files. Preserve observation timestamps and source coverage rather than substituting publication time.
 - Vercel runs the legacy usage compatibility sync daily at 18:00 UTC and reset feed sync daily at 13:15 UTC. The designated Codex local collector can additionally refresh feeds hourly.
 
