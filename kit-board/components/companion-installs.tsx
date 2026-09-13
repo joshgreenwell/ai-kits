@@ -134,9 +134,6 @@ export function CompanionInstalls() {
             <p>The companion reads Claude Code and Codex history on the machine, derives the same hourly buckets the local script published, and adds allowance readings, provider aggregates, and money as separate ledgers. Prompts, paths, and credentials never leave the machine.</p>
             <p>The browser collector reads allowance readings from the sites you are already signed into. It never collects tokens for browser chats.</p>
             <p>Every adapter reports its state on each run, so “off” is always distinguishable from “broken”.</p>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" asChild><a href="/api/collector-download?kind=browser">Download browser collector</a></Button>
-            </div>
           </CardContent>
         </Card>
       </div>

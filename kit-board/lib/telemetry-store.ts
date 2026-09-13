@@ -1,27 +1,10 @@
 import 'server-only';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import type postgres from 'postgres';
+import { createHash } from 'node:crypto';
 import { database } from './db';
 import { RequestError, stableJson } from './contracts';
-import { connectionSchema, type TelemetryInput } from './telemetry-contract';
 import { readCache } from './read-cache';
 
 const hash = (value: unknown) => createHash('sha256').update(typeof value === 'string' ? value : stableJson(value)).digest('hex');
-export async function createConnection(input: unknown) {
-  const data = connectionSchema.parse(input), sql = database();
-  const id = randomUUID(), key = randomBytes(32).toString('base64url');
-  await sql.begin(async transaction => {
-    // postgres 3.4.8 TransactionSql uses Omit, which drops the callable signature.
-    const tx = transaction as unknown as postgres.Sql;
-    await tx`INSERT INTO personal_hub.usage_accounts (id, provider, label) VALUES (${data.account_id}, ${data.provider}, ${data.account_label}) ON CONFLICT DO NOTHING`;
-    const [account] = await tx`SELECT provider FROM personal_hub.usage_accounts WHERE id = ${data.account_id}`;
-    if (account.provider !== data.provider) throw new RequestError('Account belongs to another provider', 409);
-    await tx`INSERT INTO personal_hub.telemetry_sources (id, account_id, machine_label, mode, key_hash)
-      VALUES (${id}, ${data.account_id}, ${data.machine_label}, ${data.mode}, ${hash(key)})`;
-  });
-  return { schema_version: 1, url: process.env.SITE_URL, source_id: id, key, account_id: data.account_id, provider: data.provider, mode: data.mode };
-}
-
 export async function telemetrySource(request: Request) {
   const auth = request.headers.get('authorization') ?? '';
   if (!/^Bearer [A-Za-z0-9_-]{43}$/.test(auth)) throw new RequestError('Unauthorized', 401);
@@ -29,22 +12,6 @@ export async function telemetrySource(request: Request) {
     JOIN personal_hub.usage_accounts a ON a.id = s.account_id WHERE key_hash = ${hash(auth.slice(7))} AND NOT disabled`;
   if (!source) throw new RequestError('Unauthorized', 401);
   return source as { id: string; account_id: string; mode: 'local' | 'browser'; provider: 'codex' | 'claude' };
-}
-
-export async function ingestTelemetry(source: Awaited<ReturnType<typeof telemetrySource>>, input: TelemetryInput) {
-  if (source.mode === 'browser' && input.buckets.length) throw new RequestError('This connection can publish quota readings only', 403);
-  return database().begin(async transaction => {
-    // postgres 3.4.8 TransactionSql uses Omit, which drops the callable signature.
-    const tx = transaction as unknown as postgres.Sql;
-    const bucketRows = input.buckets.map(bucket => ({ id: randomUUID(), account_id: source.account_id,
-      source_id: source.id, observed_at: input.observed_at, content_hash: hash(bucket), ...bucket }));
-    const quotaRows = input.quotas.map(q => ({ id: randomUUID(), account_id: source.account_id,
-      source_id: source.id, content_hash: hash(q), ...q }));
-    const buckets = bucketRows.length ? (await tx`INSERT INTO personal_hub.token_bucket_revisions ${tx(bucketRows)} ON CONFLICT DO NOTHING RETURNING id`).length : 0;
-    const quotas = quotaRows.length ? (await tx`INSERT INTO personal_hub.quota_samples ${tx(quotaRows)} ON CONFLICT DO NOTHING RETURNING id`).length : 0;
-    await tx`UPDATE personal_hub.telemetry_sources SET last_seen_at = now(), coverage = ${tx.json(input.coverage as postgres.JSONValue)} WHERE id = ${source.id}`;
-    return { ok: true, id: hash({ source: source.id, input }), buckets, quotas, duplicate: buckets + quotas === 0 };
-  });
 }
 
 // A window resets within its own length (plus a day of slack). A reading whose reset lies further out is a
