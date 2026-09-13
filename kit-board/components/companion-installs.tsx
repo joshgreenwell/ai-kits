@@ -145,7 +145,15 @@ export function CompanionInstalls() {
             Settings version {data?.settings_version ?? '…'}{data?.latest_companion_version ? ` · latest companion ${data.latest_companion_version}` : ' · latest companion release not known yet'}
           </CardDescription>
         </CardHeader>
-        {data?.installs.length ? (
+        {data === null ? (
+          <div className="p-4">
+            {error ? (
+              <Button variant="outline" size="sm" onClick={() => void refresh()}>Retry loading installs</Button>
+            ) : (
+              <p className="text-muted-foreground text-sm" role="status">Loading companion installs…</p>
+            )}
+          </div>
+        ) : data.installs.length ? (
           <ListRows className="rounded-none border-x-0 border-b-0">
             {data.installs.map(install => {
               const run = install.latest_run;

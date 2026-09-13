@@ -78,7 +78,7 @@ Obsidian's local registration file is `~/Library/Application Support/obsidian/ob
 
 The complete instructions are in [usage collection](usage-collection.md). Install one `observatory` companion binary per machine, pair it from Usage → Connections, and run `observatory setup`. The same companion owns Codex and Claude collection, the Claude statusline hook, its hourly service, checkpoints, receipts, and retry state under one config directory.
 
-Do not reinstall the retired Python collector, schedule installer, statusline script, or unpacked v1 browser extension. Their source credentials are disabled and `POST /api/v1/telemetry` returns `410 Gone`. Remove any remaining `Personal Observatory Usage ...` Task Scheduler tasks or `com.personal-observatory.usage.*` LaunchAgents, then archive the old `PersonalObservatory` or `~/.config/personal-hub/telemetry` tree after confirming a recent companion receipt and an empty outbox.
+Do not reinstall the retired Python collector, schedule installer, or statusline script. Their local source credentials are disabled and local uploads to `POST /api/v1/telemetry` return `410 Gone`. Remove any remaining `Personal Observatory Usage ...` Task Scheduler tasks or `com.personal-observatory.usage.*` LaunchAgents, then archive the old `PersonalObservatory` or `~/.config/personal-hub/telemetry` tree after confirming a recent companion receipt and an empty outbox. Existing enabled v1 Claude browser extensions remain the temporary quota reader; preserve them until the v2 browser collector replaces them or the corresponding source is deliberately retired.
 
 ## Usage: external detailed analyzers and monthly jobs
 

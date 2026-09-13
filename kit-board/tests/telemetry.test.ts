@@ -4,6 +4,7 @@ import { isSparkWindow, quotaPace, tokenPace, telemetrySchema, connectionSchema 
 import { calendarDays, matchesResetType, resetDay, resetEntryKey, resetMarker, shiftMonth } from '../lib/reset-calendar';
 import type { ResetItem } from '../lib/reset-feeds';
 import { normalizeFeed } from '../lib/reset-feeds';
+import { resetFeedFailure, resetFeedFailureLabel } from '../lib/reset-feed-errors';
 import { normalizeQuota } from '../browser/claude-quota/normalize.js';
 const now = Date.parse('2026-09-09T18:00:00Z');
 const q = (at: string, used: number, reset = '2026-09-10T18:00:00Z') => ({ window_key: 'weekly', label: 'Weekly', observed_at: at, used_percent: used, resets_at: reset, window_minutes: 10080 });
@@ -78,6 +79,16 @@ test('feeds retain classifications, reject unsafe links and exclude unrelated po
   ] });
   assert.equal(feed.items.length, 1); assert.equal(feed.items[0].category, 'announcement'); assert.equal(feed.items[0].status, 'signal');
   assert.throws(() => normalizeFeed('codex-timeline', { unexpected: [] }));
+});
+test('reset feed failures retain safe, actionable diagnostics', () => {
+  assert.equal(resetFeedFailure(new Error('http_403')), 'http_403');
+  assert.equal(resetFeedFailure(new DOMException('timed out', 'TimeoutError')), 'timeout');
+  assert.equal(resetFeedFailure(new TypeError('fetch failed')), 'network_error');
+  assert.equal(resetFeedFailure(new SyntaxError('private parser detail')), 'invalid_json');
+  assert.equal(resetFeedFailure(new Error('Forecast schema changed')), 'schema_changed');
+  assert.equal(resetFeedFailure(new Error('unexpected_content_type')), 'unexpected_content_type');
+  assert.equal(resetFeedFailureLabel('v4:http_403'), 'source returned HTTP 403');
+  assert.equal(resetFeedFailureLabel('v4:network_error'), 'source connection failed');
 });
 test('external probability is not an official promise and projections preserve misses', () => {
   const doc = normalizeFeed('codex-forecast', { updated_at: '2026-09-09', probabilities: { rounded_24h: 25, rounded_48h: 45 }, confidence: 'low', confidence_note: 'Experimental', official_signal: null });

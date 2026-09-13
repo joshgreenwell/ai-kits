@@ -1,6 +1,6 @@
 # Personal Observatory agent handoff
 
-Updated September 10, 2026. Start with [startup and recovery](startup-and-recovery.md) for the repository relocation, external dependencies and private prerequisites. Historical operational notes below are dated evidence, not a fresh production verification.
+Updated September 13, 2026. Start with [startup and recovery](startup-and-recovery.md) for the repository relocation, external dependencies and private prerequisites. Historical operational notes below are dated evidence, not a fresh production verification.
 
 ## Scope and source
 
@@ -39,7 +39,7 @@ The global shell and usage views are native React. Stored report HTML is intenti
 | Live usage views | `app/(private)/usage/live/page.tsx`, `app/(private)/usage/connections/page.tsx`, `app/(private)/usage/resets/page.tsx`, `app/telemetry.css` |
 | Telemetry contracts, storage, calculations | `lib/telemetry-contract.ts`, `lib/telemetry-store.ts`, `lib/cloud-estimate.ts`, `lib/cloud-estimate-store.ts` |
 | Unified usage (envelope v2): contract, settings, ledgers, pairing | `lib/usage-contract.ts` (authority; `npm run usage-schema` writes `lib/generated/usage-v2.schema.json`), `lib/companion-settings.ts`, `lib/usage-store.ts`, `app/api/v1/companion/*`, `app/api/v1/usage/route.ts`, `app/api/companion-installs/route.ts`, `app/api/collection-settings/route.ts`, `app/api/usage-v2/route.ts`, `app/(private)/usage/settings/page.tsx`, `components/companion-installs.tsx` |
-| Retired v1 reference implementations | `scripts/telemetry/collect.py`, `scripts/telemetry/statusline.py`, `browser/claude-quota/`; retained only for parity tests, never served or authorized |
+| v1 reference implementations and browser bridge | `scripts/telemetry/collect.py`, `scripts/telemetry/statusline.py` are retired and retained only for parity tests; `browser/claude-quota/` remains temporarily authorized for quota-only uploads from existing enabled browser sources |
 | Companion (Rust, replaces the local collector scripts) | `companion/` (workspace, `companion/README.md`), `tests/fixtures/usage-v2/` (shared wire and parity corpus), `.github/workflows/companion.yml` |
 | Usage coverage matrix: what is and is not collected, per provider, surface, and process | `docs/usage-coverage.md` (living document; update it with any collector or provider change) |
 | Reset feeds | `lib/reset-feeds.ts`, `lib/reset-feed-store.ts`, `app/api/reset-feeds/route.ts` |
@@ -89,15 +89,15 @@ Uploaded monthly reports, hourly telemetry, allowance percentages, and external 
 - Browser-only Claude activity can provide allowance/reset observations, not exact historical token counts.
 - Project attribution is opt-in (`execution.project_attribution: hashed`) and uploads a hash of the working directory, never the path; it covers local and desktop-app sessions only. Cloud runs (Claude Code on the web, Codex cloud) leave no local transcript and appear only as unattributed allowance movement. `docs/usage-coverage.md` is the matrix.
 
-Current operational status is in `docs/schedules.md`. As of September 13, both machines have enabled companion installs and account bindings. Every legacy `local` and `browser` source is disabled in production; the old Windows Claude and Codex keys return 410. Remove the remaining v1 schedules and files from each machine rather than troubleshooting them.
+Current operational status is in `docs/schedules.md`. As of September 13, both machines have enabled companion installs and account bindings. Every legacy `local` source is disabled in production, and the old Windows Claude and Codex keys return 410. The existing Work and Personal browser quota sources are enabled as a temporary bridge. Remove the remaining v1 local schedules and files from each machine rather than troubleshooting them, but preserve the active unpacked browser extensions until their replacement is live.
 
 ## Schedules, collectors, and reports
 
 Keep schedules independent. The portal consumes their reports; it does not replace their source collection or merge logic.
 
-- The `observatory` companion under `companion/` replaces `collect.py`, `statusline.py`, and `install_schedule.py`: one binary per machine, adapters per provider, envelope v2 to `POST /api/v1/usage`. The server side and unified migration are live. The website no longer creates or serves v1 collectors, and legacy telemetry ingestion returns 410. See `companion/README.md`.
+- The `observatory` companion under `companion/` replaces `collect.py`, `statusline.py`, and `install_schedule.py`: one binary per machine, adapters per provider, envelope v2 to `POST /api/v1/usage`. The server side and unified migration are live. The website no longer creates or serves v1 collectors. Legacy local telemetry receives 410, while enabled v1 browser sources may send quota-only Claude readings until the v2 browser collector ships. See `companion/README.md`.
 - The companion-managed Claude statusline hook writes provider rate-limit fields to its own inbox. Do not restore the old Python statusline hook.
-- Legacy local and browser collector sources were disabled in production on September 13. Their schedules, unpacked extensions, connection files, and SQLite state may be removed after preserving any unrelated analyzer/publisher configuration.
+- Legacy local collector sources were disabled in production on September 13. Their schedules, connection files, and SQLite state may be removed after preserving any unrelated analyzer/publisher configuration. Existing enabled v1 browser quota sources remain manageable through the Browser collectors card; keep their unpacked extensions until the v2 replacement is live or the source is deliberately retired.
 - `scripts/publish.mjs` publishes generic reports with a local outbox. `publish-assets.mjs` uploads audit linked files. Preserve observation timestamps and source coverage rather than substituting publication time.
 - Vercel runs the legacy usage compatibility sync daily at 18:00 UTC and reset feed sync daily at 13:15 UTC. The designated Codex local collector can additionally refresh feeds hourly.
 
