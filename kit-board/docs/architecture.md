@@ -1,5 +1,7 @@
 # Personal Observatory
 
+For the current usage feature inventory and verified operational gaps, start with [Usage: how the system actually works](usage-system.md). [V2 operation](usage-collection.md) and [v1 retirement](usage-v1-retirement.md) separate the supported collection path from migration/removal. Older verification notes below are historical.
+
 The new Vercel project is `the-mindful-pug/personal-hub`. Its source is an independent application under `ai-kits/kit-board/`, not Luumen product code. It combines existing report experiences behind one password and navigation header.
 
 ## Data ownership
@@ -14,7 +16,7 @@ Obsidian remains local shared working memory. Do not sync the entire vault to th
 
 Each report producer receives a separate bearer credential scoped to its report kinds. The site password cannot upload data. Report producer credentials never appear in prompts, source control, browser storage, or report payloads.
 
-Hourly usage is a separate subsystem: one companion per machine uploads envelope v2 to `POST /api/v1/usage`, with account-bound source rows created from its bindings. The server retains revisions and selects canonical snapshots without double counting. Allowance readings, provider aggregates, and money remain independent from tokens and public reset claims. The monthly dashboard keeps the full analyzer envelope; a configured companion can refresh that envelope separately from token buckets. See `usage-collection.md` for accounting boundaries.
+Hourly usage is a separate subsystem: one companion per machine uploads envelope v2 to `POST /api/v1/usage`, with account-bound source rows created from its bindings. Both collector generations write hourly snapshots into `token_bucket_revisions`; the v2 rollout did not replace that table. The server retains revisions and selects canonical snapshots without double counting. Typed allowance readings and optional request records use new ledgers; provider aggregates and money have storage contracts but unimplemented collectors. The monthly dashboard keeps the full analyzer envelope in `report_revisions`; a configured companion refreshes it separately from token buckets. See `usage-collection.md` for accounting boundaries.
 
 Companion install keys are random, stored only as hashes in Supabase, and revocable through the authenticated Connections page. Bindings scope records to their assigned accounts. Retired local-script collector keys are disabled and receive Gone from `POST /api/v1/telemetry`; existing enabled v1 browser keys remain accepted there for quota-only Claude readings until the v2 browser collector ships. The site no longer issues v1 connection files or bundles. Public reset feeds use an allowlist, bounded fetches, a shared refresh lease, and immutable normalized revisions. No collection or calculation invokes an AI model.
 

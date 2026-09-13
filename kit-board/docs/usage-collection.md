@@ -1,6 +1,8 @@
-# Usage collection
+# V2 usage collection
 
-Collection uses **zero model calls**. The `observatory` companion reads provider-owned local stores, checkpoints progress in SQLite, and publishes cumulative hourly buckets plus independent allowance, aggregate, and money records. Public feed fetching and browser quota collection also use ordinary code, with no AI inference.
+This is the current companion operating guide. Start with [how Usage actually works](usage-system.md) for the feature inventory and verified status. All old collector, data-migration, and scheduler-removal instructions live separately in [v1 retirement](usage-v1-retirement.md).
+
+The `observatory` companion uses **zero model calls**. It reads provider-owned local stores, checkpoints progress in SQLite, and publishes cumulative hourly buckets and independent allowance readings; request records are optional. Provider account aggregates and money have server contracts but their adapters are not implemented. Public feed fetching and the existing v1 browser quota collector also use ordinary code. Separate AI monthly automations still exist and do invoke a model session; they are not part of the companion run loop.
 
 For what each collector can and cannot attribute (tokens, allowances, money, project, surface) per provider and surface, and the process behind each cell, see [usage coverage](usage-coverage.md).
 
@@ -9,23 +11,56 @@ For what each collector can and cannot attribute (tokens, allowances, money, pro
 The `observatory` companion (`companion/`, see its README) replaces the local script, the statusline hook, and the schedule installer. Pairing and settings live in the Observatory:
 
 1. Usage → Connections → **Add companion**: label the machine and copy the one-time code (ten minutes, single use).
-2. On the machine: `observatory connect --url https://<observatory> --code XXXX-XXXX`, then `observatory setup`. From a Claude Code session inside the Claude desktop app on Windows, add `--config-dir %USERPROFILE%\.config\personal-hub\companion` to both: the app redirects new `%LOCALAPPDATA%` folders into its private store, and the companion refuses to set up there. Setup discovers Claude Code and Codex stores, proposes bindings, asks once about the private-interface readers, the Claude statusline hook (an existing statusline command is preserved), and the schedule, then runs a dry run, a first publish, and `service install`. The first run pins the backfill start (`--since YYYY-MM-DD` on `connect`, default the first day of the current UTC month) and reads every local transcript from that date on; the schedule then keeps up hourly. To reach further back later, remove the install's state database and run again.
+2. On the machine: `observatory connect --url https://<observatory> --code XXXX-XXXX`, then `observatory setup`. Use one explicit config directory on Windows as shown below: packaged apps can redirect new `%LOCALAPPDATA%` folders into a private store. Setup discovers stores, proposes bindings, asks about reader modes, the Claude statusline hook and schedule, then performs a dry run, a first publish, and `service install`. Some proposed modes are still stubs; see the capability table below. The first run pins the backfill start (`--since YYYY-MM-DD` on `connect`, default the first day of the current UTC month) and reads available local transcripts from that date. It does not import old collector state or prove historical parity. Do not delete the state database to extend backfill: preserve checkpoints, outboxes and receipts and follow the migration/recovery process first.
 3. Usage → Settings holds the collection modes: global defaults plus a per-install override. Every install fetches the effective document on each run; a local `deny` list in `companion.json` can only remove modes.
 4. Connections shows each install's version, platform, last run, applied settings version, "update available", every binding's identity state, and the per-adapter coverage from the latest run. "Off" is always distinguishable from "broken".
 
-The companion emits the same hourly buckets the v1 script published, plus allowance readings, provider aggregates, and money as separate ledgers. The legacy local-script credentials were disabled on September 13, 2026, and local payloads to `POST /api/v1/telemetry` receive `410 Gone`. Existing enabled v1 browser connections may continue publishing quota-only Claude readings to that endpoint until the v2 browser collector replaces them. The website no longer creates v1 connection files or serves collector bundles.
+The companion emits the same *shape and intended identity rules* for hourly buckets as the v1 script, plus typed allowance readings and optional requests. This is compatibility, not proof that historical backfill matches; the current audit found many v1-only keys. `/api/v1/usage` is the v2 endpoint despite the API namespace. All old runtime and data dependencies are listed in the [retirement inventory](usage-v1-retirement.md#what-belongs-to-v1).
 
 The Claude statusline hook publishes every window Claude Code reports, including the model-scoped weekly windows (for example the Fable weekly cap), each as its own card under Current allowances with a `model-scoped weekly` badge. A scoped window is never added to the pooled weekly window.
 
-With the **Detailed monthly report (analyzer)** setting on (global or per install), each run also executes the detailed analyzer adapter for every binding whose `companion.json` entry carries a `detailed_report` block. Setup can copy that block from an old connection during migration, but the old connection and collector directory are not needed afterward. The analyzer, its provider configuration, and the usage-publisher credential remain protected local dependencies.
+With the **Detailed monthly report (analyzer)** setting on (global or per install), each run also executes the detailed analyzer adapter for every configured binding. Setup can copy an old connection's configuration, but the `script` path may still point into the old directory. Verify and relocate all such dependencies before deleting it. The adapter, analyzer, provider configuration, and usage-publisher credential remain protected local dependencies.
 
-**Add browser** issues a code for the v2 browser collector workstream. It does not create or reactivate a v1 Claude extension connection. Existing v1 browser connections are managed separately in the **Browser collectors** card, where they can be paused or resumed.
+**Add browser** currently issues a code for an unimplemented v2 browser collector. It is not a usable new installation path. Existing v1 browser sources use their separate controls and are not governed by v2 browser switches.
 
-## Retired v1 cleanup
+## Windows commands
 
-Do not reinstall `collect.py`, `install_schedule.py`, or `statusline.py`; their production source credentials are disabled. Remove their Task Scheduler tasks or LaunchAgents first, then archive and delete the old collector directory after confirming the companion has a recent accepted receipt and an empty outbox. Keep an unpacked Claude quota extension that belongs to an enabled browser connection until the v2 replacement is live or that connection is deliberately paused and retired.
+For this installed Windows companion, use ordinary PowerShell and pin the same directory everywhere:
 
-The supported local footprint is intentionally small: the installed `observatory` binary, one companion config/state directory, one protected usage-publisher credential when detailed reports are enabled, and the provider-owned `.codex` / `.claude` stores that are the source data. The companion config directory contains its JSON config, SQLite checkpoint/receipt state, lock, inbox, logs, safety backups, and detailed-report retry state; these are one managed runtime tree, not separate installs. The old `PersonalObservatory` or `~/.config/personal-hub/telemetry` tree is not part of v2.
+```powershell
+$companionExe = Join-Path $env:LOCALAPPDATA 'Programs\observatory\observatory.exe'
+$companionDir = Join-Path $env:USERPROFILE '.config\personal-hub\companion'
+& $companionExe --config-dir $companionDir status
+& $companionExe --config-dir $companionDir doctor
+```
+
+For a **new** install, after issuing a code in Connections:
+
+```powershell
+& $companionExe --config-dir $companionDir connect --url https://personal-observatory-jg.vercel.app --code XXXX-XXXX
+& $companionExe --config-dir $companionDir setup
+```
+
+Do not re-pair a working install for troubleshooting. After changing cadence in Settings, apply it to Task Scheduler with `& $companionExe --config-dir $companionDir service install`. Normal `run` fetches collection settings but does not rewrite the OS schedule. Inspect the next scheduled run and the detailed-report result separately.
+
+The supported local footprint is the installed `observatory` binary, one companion config/state directory, the detailed adapter/analyzer and protected usage-publisher credential when enabled, and the provider-owned `.codex` / `.claude` stores that are the source data. The companion config directory contains its JSON config, SQLite checkpoint/receipt state, lock, inbox, logs, safety backups, and detailed-report retry state; these are one managed runtime tree, not separate installs.
+
+The directory boundary must be verified per machine: `%LOCALAPPDATA%\PersonalObservatory` is the CLI's Windows **default v2** directory. Do not delete a directory by its name. This Windows install uses the explicit profile-root directory above.
+
+## Implemented versus selectable
+
+| Capability | Current implementation |
+| --- | --- |
+| Claude Code / Codex local counters | Implemented; optional request detail and hashed projects. |
+| Claude statusline / Codex embedded allowance | Implemented within the execution adapters. |
+| Claude OAuth, Codex app-server/web backend | Stub adapters; settings do not make them functional. |
+| Cursor local state and hosted history | Discovery and binding only; both collectors are stubs. |
+| Anthropic/OpenAI Admin usage and billing | Stubs. |
+| V2 browser collection | Not implemented. |
+| Tool extraction / Cursor project hooks / live `serve` | Not implemented. |
+| Detailed monthly analysis | Implemented adapter with external local dependencies; publication can fail independently. |
+
+For each setting's meaning and currently active values, see [the system guide](usage-system.md#settings--usagesettings). The technical roadmap belongs in [usage coverage](usage-coverage.md), not install promises.
 
 ## Detailed monthly report, refreshed hourly
 
@@ -37,6 +72,7 @@ The equivalent `detailed_report` block lives on the Codex binding in `companion.
 
 ```json
 "detailed_report": {
+  "script": "/absolute/path/to/current/detailed_report.py",
   "analyzer_path": "/absolute/path/analyze-monthly-token-usage/scripts/analyze_token_usage.py",
   "codex_home": "/absolute/path/.codex",
   "upload_config_path": "/absolute/path/token-usage-upload.json",
@@ -46,7 +82,7 @@ The equivalent `detailed_report` block lives on the Codex binding in `companion.
 
 For Claude Code, use its `claude_token_observatory.py` analyzer path and `analyzer_config_path` instead of `codex_home`. Pin the analyzer's Claude Code envelope identity, including its existing suffix. The separate upload config must already hold a usage-publisher credential for the same Observatory `/api/reports` origin; companion install keys cannot publish reports. Each computer must also have its analyzer, provider configuration, and publisher credential installed. Test with `observatory run --dry-run` before enabling the service.
 
-Analysis uses each analyzer's local calendar month. Unchanged measured content creates no revision. Changed snapshots use the existing immutable report store; exact attempted artifacts are persisted privately and retried before reanalysis after uncertain upload outcomes. The previously active month receives one final snapshot after rollover. Existing monthly finalizers remain unchanged. Detailed-report failures are logged separately and preserve the previous published snapshot; collector success alone does not prove detailed publication succeeded. Snapshot change time appears on each machine card.
+Analysis uses each analyzer's local calendar month. Unchanged measured content creates no revision. Changed snapshots use the existing immutable report store; exact attempted artifacts are persisted privately and retried before reanalysis after uncertain upload outcomes. The previously active month receives one final snapshot after rollover; this does not backfill arbitrary missed complete months. Redundant monthly finalizers are retirement candidates only after this behavior covers their responsibilities. Detailed-report failures are logged separately and preserve the previous published snapshot; collector success and an empty telemetry outbox do not prove detailed publication succeeded. Snapshot change time appears on each machine card.
 
 These reports cover available local logs and retained analyzer ledgers, not all possible browser/cloud activity. Missing source fields remain missing or labeled estimates. Never add these monthly snapshots to the separate hourly token ledger or invent hourly detail from daily totals.
 
@@ -71,10 +107,8 @@ The experimental cloud/uncollected token-equivalent card and calibration control
 
 ## Public reset feeds
 
-Allowlisted sources: Codex Reset `/api/timeline`, `/api/feed`, `/api/forecast`; Reset Radar `/feed.json`. Only reset history, reset/banked-reset announcements, expectations, and forecasts are shown. Unrelated posts and general model news are excluded. Feed code validates schema, bounds response size and runtime, rejects redirects, supports conditional requests, and keeps prior data on failure. A database lease prevents duplicate refreshes for 30 minutes.
+The active source allowlist, provider mappings, calendar behavior, normalization, failure handling, and verification evidence live in [reset feeds](reset-feeds.md). Keep that document authoritative instead of copying provider-specific instructions here. Current concurrent source changes select NextReset for Codex and retain Reset Radar for Claude; deployment of those changes was not verified by this usage audit.
 
-Vercel runs one daily feed check; the designated hourly local collector and opening the reset view provide more frequent checks. Feed runtime uses no AI. External sources may use their own models; their forecasts and classifications are attributed as external claims. Immutable normalized snapshots retain corrections; the current UI uses the newest snapshot. Source check times and upstream forecast timestamps are displayed separately. The reset page opens with a compact 300px calendar beside the event record, showing all reset types. Day cells contain date numbers and small type markers; provider and event type remain separate filters. Codex global resets, banked resets, announced updates, watches/signals, forecasts and credits are distinct. Claude counter events are labeled as allowance-window flushes, even when the source calls them broadly observed or “global”; they do not imply a Codex-style goodwill reset or that an individual weekly allowance reset. Banked lifecycle state, Codex global scope and verification metadata are retained from the source. Banked credits never count as an observed global reset. Announcements and later observations can share a source URL without one hiding the other; duplicate references within the same event stage prefer the curated timeline. Calendar and record dates use UTC: reported history uses effective time when available, and announcements/forecasts use publication time. Select a day for details or use Show more for older records. Empty days mean no matching saved entry, not proof that no reset occurred.
+Checked-in Vercel configuration schedules a daily feed check at 13:15 UTC. Opening Reset intelligence can request a refresh, constrained by a shared 30-minute lease. The v2 companion does not implement hourly feed refresh; that old claim referred to the v1 collector's `--refresh-feeds` option.
 
-The Codex Reset model's 24-hour and 48-hour global-reset probabilities appear in a small panel with the calendar. They are an external likelihood forecast, not an announced window and not a personal allowance reset. The previous large empty forecast card is removed. An announcement banner appears only when the forecast feed contains an active official signal. During local development, `?preview=announcement` shows sample banner copy for design review; the preview is disabled in production builds and never changes stored feed data.
-
-Normalizer version 5 triggers a bounded refresh of older saved payloads and omits their conditional upstream headers, so previously discarded or corrected type fields can be recovered. Failed upgrades keep the previous payload and normal retry delay; the error records the normalizer version. No database migration is required. Timeline and announcements use an attributed NextReset public-API fallback when Codex Reset fails; see [reset-feed recovery](reset-feeds.md) for source freshness, coverage limits and production verification.
+Feed fetching and normalization use no model calls. These are attributed public reset/announcement claims, never personal allowance observations, token counts, or permission to redeem a credit. Retained source snapshots are separate historical evidence.

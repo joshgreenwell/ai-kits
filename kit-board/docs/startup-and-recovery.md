@@ -1,5 +1,7 @@
 # Start or recover Personal Observatory
 
+For usage, [the current-system audit](usage-system.md) supersedes older machine-status notes here. Keep [v2 operation](usage-collection.md) separate from [v1 preservation and removal](usage-v1-retirement.md). A successful companion receipt does not establish detailed-report success or a complete migration.
+
 Updated 2026-09-10 for the move into `joshgreenwell/ai-kits`, at repository-root `kit-board/`. Commands below run from that directory unless stated otherwise. The npm package, database schema/role, cookie names, config directories and deployed URLs still use their existing names. No kit framework or AI execution harness was introduced.
 
 ## What this checkout provides
@@ -33,10 +35,11 @@ Fill the ignored `.env.local` before attempting sign-in or data access. Developm
 | `SITE_PASSWORD_HASH` | UI login | `scrypt:<32 hex salt>:<128 hex derived hash>` as produced by `hashPassword` in `lib/crypto.ts` |
 | `SESSION_SECRET` | Signed sessions | Independent cryptographically random secret |
 | `INGEST_KEYS_JSON` | Existing report publishers | Object mapping producer names to `{ "hash": "sha256 of key", "kinds": ["usage"] }`; other kinds are `tasks`, `standup`, `readings`, `audit` |
+| `USAGE_INGEST_KEYS_JSON` | Optional usage-publisher recovery or key rotation | Additive object in the same shape. It is consulted only for `usage`, so entries cannot authorize another report kind. Retain the producer name when rotating a key, verify the preserved pending artifact, then remove the old credential in a separate controlled change. |
 | `CRON_SECRET` | Optional deterministic cron endpoints | Separate random bearer secret |
 | `LEGACY_USAGE_CONFIG_JSON` | Optional old-site compatibility sync | `endpoint`, `api_key`, `sites_bypass_token`; endpoint is deliberately pinned in `lib/legacy-usage.ts` |
 
-Create login and publisher secrets in a protected local setup session, then store values through the local/hosting secret manager. The implementation in `lib/crypto.ts` is authoritative; the site password is scrypt, producer hashes are SHA-256. A telemetry connection key is created through the authenticated Connections UI and is not interchangeable with a report publisher key. Do not place secrets in shell history or `NEXT_PUBLIC_*` variables.
+Create login and publisher secrets in a protected local setup session, then store values through the local/hosting secret manager. The implementation in `lib/crypto.ts` is authoritative; the site password is scrypt, producer hashes are SHA-256. `USAGE_INGEST_KEYS_JSON` is an additive recovery path because some hosting secret types cannot be read back and safely merged in place; it does not replace the primary credential set. A telemetry connection key is created through the authenticated Connections UI and is not interchangeable with a report publisher key. Do not place secrets in shell history or `NEXT_PUBLIC_*` variables.
 
 ## Database bootstrap and recovery
 
@@ -78,7 +81,7 @@ Obsidian's local registration file is `~/Library/Application Support/obsidian/ob
 
 The complete instructions are in [usage collection](usage-collection.md). Install one `observatory` companion binary per machine, pair it from Usage → Connections, and run `observatory setup`. The same companion owns Codex and Claude collection, the Claude statusline hook, its hourly service, checkpoints, receipts, and retry state under one config directory.
 
-Do not reinstall the retired Python collector, schedule installer, or statusline script. Their local source credentials are disabled and local uploads to `POST /api/v1/telemetry` return `410 Gone`. Remove any remaining `Personal Observatory Usage ...` Task Scheduler tasks or `com.personal-observatory.usage.*` LaunchAgents, then archive the old `PersonalObservatory` or `~/.config/personal-hub/telemetry` tree after confirming a recent companion receipt and an empty outbox. Existing enabled v1 Claude browser extensions remain the temporary quota reader; preserve them until the v2 browser collector replaces them or the corresponding source is deliberately retired.
+Do not reinstall the retired Python collector, schedule installer, or statusline script. Local uploads to `POST /api/v1/telemetry` are retired. Follow [v1 retirement](usage-v1-retirement.md) to inventory/uninstall the old OS and AI schedules, preserve local/server data, and reconcile historical coverage before removing files. Never remove an entire `PersonalObservatory` tree by name: it can contain an active unpacked browser extension or the Windows default v2 state. Current detailed analyzers/adapter dependencies and v1 browser collection need explicit migration; an empty telemetry outbox is insufficient.
 
 ## Usage: external detailed analyzers and monthly jobs
 
@@ -129,6 +132,6 @@ Restore the Codex directory to `~/.codex/skills/analyze-monthly-token-usage/` an
 
 ## Hosting after relocation
 
-For a deliberate later Vercel reconnection, select the `ai-kits` repository and set **Root Directory: `kit-board`**, framework Next.js, Node 22, install `npm ci`, build `npm run build`. Restore the existing secret environment through the hosting UI and review domains/project ownership. The included `vercel.json` preserves daily legacy sync at 18:00 UTC and reset-feed sync at 13:15 UTC. These jobs need their configured secrets and source permissions; an unconfigured fresh site does not have working syncs.
+For a deliberate later Vercel reconnection, select the `ai-kits` repository and set **Root Directory: `kit-board`**, framework Next.js, Node 22, install `npm ci`, build `npm run build`. Restore the existing secret environment through the hosting UI and review domains/project ownership. The included `vercel.json` preserves daily legacy sync at 18:00 UTC, reset-feed sync at 13:15 UTC, and companion-release lookup at 13:45 UTC. These jobs need their configured secrets and source permissions; an unconfigured fresh site does not have working syncs.
 
 This migration does not reconnect Git integration, change project root settings, deploy, rotate credentials, reconfigure live schedules or migrate the database. The old `.vercel` project linkage is deliberately excluded. Confirm the existing live project's root and deployment before any later cutover, and retain rollback access to source history and private backups.

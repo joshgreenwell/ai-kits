@@ -1,7 +1,8 @@
 import 'server-only';
 import { cookies } from 'next/headers';
-import { digest, safeEqual, verifySession } from './crypto';
+import { verifySession } from './crypto';
 import { RequestError, type ReportKind } from './contracts';
+import { producerForToken } from './producer-credentials';
 
 export const cookieName = process.env.NODE_ENV === 'production' ? '__Host-personal-hub' : 'personal-hub';
 export async function authenticated() {
@@ -16,10 +17,12 @@ export function requireSameOrigin(request: Request) {
 export function requireProducer(request: Request, kind: ReportKind): string {
   const header = request.headers.get('authorization') ?? '';
   if (!header.startsWith('Bearer ') || header.length > 512) throw new RequestError('Unauthorized', 401);
-  const tokenHash = digest(header.slice(7));
-  const config = JSON.parse(process.env.INGEST_KEYS_JSON ?? '{}') as Record<string, { hash: string; kinds: string[] }>;
-  for (const [producer, value] of Object.entries(config)) {
-    if (safeEqual(value.hash, tokenHash) && value.kinds.includes(kind)) return producer;
-  }
+  const producer = producerForToken(
+    header.slice(7),
+    kind,
+    process.env.INGEST_KEYS_JSON,
+    process.env.USAGE_INGEST_KEYS_JSON,
+  );
+  if (producer) return producer;
   throw new RequestError('Unauthorized', 401);
 }

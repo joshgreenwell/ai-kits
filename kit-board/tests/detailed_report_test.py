@@ -1,13 +1,15 @@
 import copy
 import importlib.util
+from io import BytesIO
 import json
 from pathlib import Path
 import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from datetime import datetime, timezone
+from urllib.error import HTTPError
 
 spec = importlib.util.spec_from_file_location('detailed', Path(__file__).resolve().parents[1] / 'scripts/telemetry/detailed_report.py')
 d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)
@@ -57,6 +59,48 @@ class DetailedReports(unittest.TestCase):
         pending = json.loads((self.root / 'source.detailed/pending.json').read_text())
         self.fixture['generated_at_local'] = '2026-09-10T13:00:00Z'
         with patch.object(d.subprocess, 'run', self.run_analyzer), patch.object(d, 'upload', self.upload): self.refresh()
+        self.assertEqual(self.sent, [pending['envelope']])
+        self.assertFalse((self.root / 'source.detailed/pending.json').exists())
+
+    def test_http_error_reports_bounded_sanitized_detail(self):
+        body = json.dumps({'error': 'Unauthorized'}).encode()
+        response_error = HTTPError(self.publisher['endpoint'], 401, 'Unauthorized', None, BytesIO(body))
+        opener = SimpleNamespace(open=Mock(side_effect=response_error))
+        envelope = {'machine_id': 'mac', 'report': {'current': {'month': '2026-09'}}}
+        with patch.object(d, 'build_opener', return_value=opener):
+            with self.assertRaises(HTTPError) as caught:
+                d.upload(self.publisher, envelope)
+        result = d.failure_result(caught.exception)
+        self.assertEqual(result['http_status'], 401)
+        self.assertEqual(result['message'], 'Unauthorized')
+        self.assertNotIn(json.dumps(envelope), json.dumps(result))
+
+    def test_http_error_never_echoes_unknown_truncated_or_non_json_detail(self):
+        secret = self.publisher['api_key']
+        bodies = [
+            json.dumps({'error': f'private report title and {secret}'}).encode(),
+            json.dumps({'error': {}}).encode(),
+            json.dumps({'error': []}).encode(),
+            (b' ' * d.MAX_HTTP_ERROR_BYTES) + secret.encode(),
+            f'&quot;{secret}&quot;'.encode(),
+            b'private report title',
+        ]
+        for body in bodies:
+            with self.subTest(body_length=len(body)):
+                error = HTTPError(self.publisher['endpoint'], 400, 'Bad Request', None, BytesIO(body))
+                message = d.sanitize_http_error(error)
+                self.assertEqual(message, 'Response detail omitted')
+                self.assertNotIn(secret, message)
+                self.assertNotIn('private report title', message)
+
+    def test_http_error_preserves_exact_pending_artifact_for_retry(self):
+        response_error = HTTPError(self.publisher['endpoint'], 410, 'Gone', None, BytesIO(b'{"error":"Source retired"}'))
+        with patch.object(d.subprocess, 'run', self.run_analyzer), patch.object(d, 'upload', side_effect=response_error):
+            with self.assertRaises(HTTPError):
+                self.refresh()
+        pending = json.loads((self.root / 'source.detailed/pending.json').read_text())
+        with patch.object(d.subprocess, 'run', self.run_analyzer), patch.object(d, 'upload', self.upload):
+            self.refresh()
         self.assertEqual(self.sent, [pending['envelope']])
         self.assertFalse((self.root / 'source.detailed/pending.json').exists())
 

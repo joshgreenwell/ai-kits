@@ -17,6 +17,11 @@ use crate::config::LocalBinding;
 use crate::discovery::find_executable;
 use crate::paths::{home_dir, write_private};
 
+const MAX_ADAPTER_OUTPUT_BYTES: u64 = 256 * 1024;
+const MAX_FAILURE_CODE_CHARS: usize = 64;
+const SAFE_FAILURE_MESSAGES: [&str; 4] =
+    ["Unauthorized", "Invalid monthly usage envelope", "Report validation failed", "Report is too large"];
+
 /// Where a binding's analyzer lives; copied from a v1 connection or written by hand.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,8 +53,34 @@ fn failed(code: &str) -> Value {
     json!({ "status": "failed", "error": code })
 }
 
+fn adapter_failure(value: &Value) -> Value {
+    let error = value
+        .get("error")
+        .and_then(Value::as_str)
+        .filter(|code| {
+            (1..=MAX_FAILURE_CODE_CHARS).contains(&code.chars().count())
+                && code.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | ':' | '-')
+                })
+        })
+        .unwrap_or("exit_nonzero");
+    let mut result = json!({ "status": "failed", "error": error });
+    let Some(http_status) =
+        value.get("http_status").and_then(Value::as_u64).filter(|status| (100..=599).contains(status))
+    else {
+        return result;
+    };
+    result["http_status"] = json!(http_status);
+    if let Some(message) =
+        value.get("message").and_then(Value::as_str).filter(|message| SAFE_FAILURE_MESSAGES.contains(message))
+    {
+        result["message"] = json!(message);
+    }
+    result
+}
+
 /// Runs the adapter for one binding. Returns the adapter's JSON result, or a
-/// `{status: failed, error: <code>}` value; never the subprocess's text.
+/// bounded failure projection; never the subprocess's raw text.
 pub fn run(
     config_dir: &Path,
     url: &str,
@@ -97,7 +128,7 @@ pub fn run(
     let reader = std::thread::spawn(move || {
         let mut buffer = Vec::new();
         if let Some(handle) = stdout.as_mut() {
-            let _ = handle.by_ref().take(256 * 1024).read_to_end(&mut buffer);
+            let _ = handle.by_ref().take(MAX_ADAPTER_OUTPUT_BYTES).read_to_end(&mut buffer);
         }
         buffer
     });
@@ -120,8 +151,8 @@ pub fn run(
             if status.success() {
                 value
             } else {
-                // The adapter prints a bounded failure code before a non-zero exit.
-                json!({ "status": "failed", "error": value.get("error").and_then(Value::as_str).unwrap_or("exit_nonzero") })
+                // Store only the adapter's bounded failure fields, never its raw stdout.
+                adapter_failure(&value)
             }
         }
         _ => failed(if status.success() { "invalid_output" } else { "exit_nonzero" }),
@@ -223,6 +254,50 @@ mod tests {
         assert!(
             serde_json::from_str::<DetailedReportConfig>(&text.replace("machine_id", "machine")).is_err()
         );
+    }
+
+    #[test]
+    fn adapter_failure_preserves_valid_http_diagnostics() {
+        let result = adapter_failure(&json!({
+            "status": "failed",
+            "error": "HTTPError",
+            "http_status": 401,
+            "message": "Unauthorized",
+            "raw_stdout": "must not be retained",
+            "request_body": { "private": true },
+        }));
+        assert_eq!(
+            result,
+            json!({
+                "status": "failed",
+                "error": "HTTPError",
+                "http_status": 401,
+                "message": "Unauthorized",
+            })
+        );
+    }
+
+    #[test]
+    fn adapter_failure_accepts_old_output_and_rejects_unbounded_fields() {
+        assert_eq!(
+            adapter_failure(&json!({ "status": "failed", "error": "TimeoutError" })),
+            json!({ "status": "failed", "error": "TimeoutError" })
+        );
+        let result = adapter_failure(&json!({
+            "error": "x".repeat(MAX_FAILURE_CODE_CHARS + 1),
+            "http_status": 410,
+            "message": "private report title",
+        }));
+        assert_eq!(result["error"], "exit_nonzero");
+        assert_eq!(result["http_status"], 410);
+        assert!(result.get("message").is_none());
+
+        let invalid = adapter_failure(&json!({
+            "error": "HTTPError",
+            "http_status": 99,
+            "message": "line one\nline two",
+        }));
+        assert_eq!(invalid, json!({ "status": "failed", "error": "HTTPError" }));
     }
 
     #[test]

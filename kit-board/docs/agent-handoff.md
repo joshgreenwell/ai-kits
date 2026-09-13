@@ -2,6 +2,10 @@
 
 Updated September 13, 2026. Start with [startup and recovery](startup-and-recovery.md) for the repository relocation, external dependencies and private prerequisites. Historical operational notes below are dated evidence, not a fresh production verification.
 
+**Usage entrypoint:** read [the current-system audit](usage-system.md) before changing usage behavior. It separates working features, settings-only scaffolding, local scheduler evidence, and production receipts. [V2 collection](usage-collection.md) is the current operating guide; [v1 retirement](usage-v1-retirement.md) owns preservation, migration, and removal instructions. Do not infer v1 is fully retired from disabled source credentials.
+
+The September 13 audit found an active Windows v2 schedule plus two failing v1 schedules; a failing Windows detailed monthly upload; no September Windows report; active v1 Claude browser sources; Cursor and account/API readers still stubbed; and substantial v1-only hourly history. A later same-day [USG-002 recovery](usage-evidence/usg-002-2026-09-13.md) restored authenticated Windows detailed publication, published the preserved artifact, and passed a scheduler-context run. Production still uses `buckets_only` with project attribution off, and the broader historical and inaccessible-host gaps remain open. Older status notes below do not override this updated evidence.
+
 ## Scope and source
 
 - Repository: `/Users/joshgreenwell/github/ai-kits/kit-board`
@@ -19,7 +23,7 @@ One password-protected shell combines five report areas:
 
 | Area | Route | Data source and rendering |
 | --- | --- | --- |
-| Monthly AI usage | `/usage` | Full detailed monthly analysis; configured local sources refresh hourly |
+| Monthly AI usage | `/usage` | Detailed analyzer reports; Windows publication recovered September 13, with cross-host continuity and historical reconciliation still open |
 | Usage & pace | `/usage/live` | Hourly local telemetry and visual provider allowance forecasts |
 | Daily tasks | `/tasks` | Published report envelope; isolated report document |
 | Standup | `/standup` | Published report envelope; isolated report document |
@@ -41,7 +45,8 @@ The global shell and usage views are native React. Stored report HTML is intenti
 | Unified usage (envelope v2): contract, settings, ledgers, pairing | `lib/usage-contract.ts` (authority; `npm run usage-schema` writes `lib/generated/usage-v2.schema.json`), `lib/companion-settings.ts`, `lib/usage-store.ts`, `app/api/v1/companion/*`, `app/api/v1/usage/route.ts`, `app/api/companion-installs/route.ts`, `app/api/collection-settings/route.ts`, `app/api/usage-v2/route.ts`, `app/(private)/usage/settings/page.tsx`, `components/companion-installs.tsx` |
 | v1 reference implementations and browser bridge | `scripts/telemetry/collect.py`, `scripts/telemetry/statusline.py` are retired and retained only for parity tests; `browser/claude-quota/` remains temporarily authorized for quota-only uploads from existing enabled browser sources |
 | Companion (Rust, replaces the local collector scripts) | `companion/` (workspace, `companion/README.md`), `tests/fixtures/usage-v2/` (shared wire and parity corpus), `.github/workflows/companion.yml` |
-| Usage coverage matrix: what is and is not collected, per provider, surface, and process | `docs/usage-coverage.md` (living document; update it with any collector or provider change) |
+| Usage feature/status authority; v1 retirement | `docs/usage-system.md`, `docs/usage-collection.md` (v2), `docs/usage-v1-retirement.md` |
+| Usage capability and roadmap matrix, per provider, surface, and process | `docs/usage-coverage.md` (capability when enabled, not production status; update it with any collector or provider change) |
 | Reset feeds | `lib/reset-feeds.ts`, `lib/reset-feed-store.ts`, `app/api/reset-feeds/route.ts` |
 | Generic report ingestion | `lib/contracts.ts`, `lib/db.ts`, `app/api/v1/reports/[kind]/route.ts`, `scripts/publish.mjs` |
 | HTML report isolation and assets | `lib/artifact.ts`, `lib/artifact-runtime.ts`, `components/report-frame.tsx`, `app/api/artifacts/`, `scripts/publish-assets.mjs` |
@@ -59,6 +64,7 @@ The app uses these distinct credentials and never exposes them to browser code:
 
 - Login password hash and session secret for the site UI.
 - `INGEST_KEYS_JSON` producer credentials, scoped by report kind.
+- Optional `USAGE_INGEST_KEYS_JSON` additive credentials, accepted only for usage-report recovery or key rotation.
 - Per-source telemetry upload keys, stored only as hashes in Supabase.
 - Database URL and verified CA certificate, used only server-side.
 - `CRON_SECRET` for Vercel internal sync endpoints.
@@ -97,9 +103,9 @@ Keep schedules independent. The portal consumes their reports; it does not repla
 
 - The `observatory` companion under `companion/` replaces `collect.py`, `statusline.py`, and `install_schedule.py`: one binary per machine, adapters per provider, envelope v2 to `POST /api/v1/usage`. The server side and unified migration are live. The website no longer creates or serves v1 collectors. Legacy local telemetry receives 410, while enabled v1 browser sources may send quota-only Claude readings until the v2 browser collector ships. See `companion/README.md`.
 - The companion-managed Claude statusline hook writes provider rate-limit fields to its own inbox. Do not restore the old Python statusline hook.
-- Legacy local collector sources were disabled in production on September 13. Their schedules, connection files, and SQLite state may be removed after preserving any unrelated analyzer/publisher configuration. Existing enabled v1 browser quota sources remain manageable through the Browser collectors card; keep their unpacked extensions until the v2 replacement is live or the source is deliberately retired.
+- Legacy local collector sources were disabled in production on September 13. Remove their schedules through the retirement runbook; preserve and reconcile their SQLite events, pending uploads, inboxes, receipts, and analyzer ledgers before removing runtime files. A recent v2 receipt does not prove historical parity. Existing enabled v1 browser quota sources remain an explicit migration dependency.
 - `scripts/publish.mjs` publishes generic reports with a local outbox. `publish-assets.mjs` uploads audit linked files. Preserve observation timestamps and source coverage rather than substituting publication time.
-- Vercel runs the legacy usage compatibility sync daily at 18:00 UTC and reset feed sync daily at 13:15 UTC. The designated Codex local collector can additionally refresh feeds hourly.
+- Checked-in Vercel schedules are legacy usage compatibility sync at 18:00 UTC, reset feeds at 13:15 UTC, and companion-release lookup at 13:45 UTC. Opening Reset intelligence can also refresh feeds. The v2 companion has no hourly feed-refresh implementation; deployed cron execution must be verified separately.
 
 For Windows local collection, use one non-virtualized companion directory such as `%USERPROFILE%\.config\personal-hub\companion` and pass it consistently with `--config-dir`. Provider-owned `.codex` and `.claude` stores remain in place as inputs; do not copy them into the companion tree. See `docs/usage-collection.md` for exact commands.
 
@@ -122,6 +128,8 @@ Deployment is separate from this source relocation. Set the Vercel project Root 
 
 ## Current baseline and open work
 
+The historical commit list and release notes below explain earlier decisions. Current usage status and ordered work are maintained only in [the system audit](usage-system.md#reconciliation-order), including monthly-publication recovery, v1 data reconciliation, scheduler cleanup, and unimplemented provider readers.
+
 The latest application commits are:
 
 - `7462698 feat(usage): estimate uncollected cloud activity`
@@ -130,7 +138,7 @@ The latest application commits are:
 
 The site has a working shared shell, responsive report documents, full-depth audit selection, shadcn selects, authenticated assets, shared Supabase storage, hourly telemetry, reset intelligence, and a deployed cloud-estimate waiting state. Do not claim an estimate exists until Claude samples and a human-confirmed local-only baseline are present.
 
-Likely next operational work:
+Historical follow-ups (superseded for usage by the September 13 audit):
 
 1. Pair the new Claude browser extension with the intended personal account or trigger a local Claude Code response so allowance samples arrive.
 2. Confirm the Windows Task Scheduler tasks are installed and run hourly; a one-off collector check-in does not prove scheduling.
@@ -140,9 +148,10 @@ Likely next operational work:
 
 ## Fast triage checklist
 
-Reset-feed recovery uses an attributed NextReset fallback for the two failing
-Codex public feeds. See [reset-feed recovery](reset-feeds.md) for transport,
-freshness, classification and verification boundaries (September 12, 2026).
+NextReset is the primary and only Codex reset-feed provider. The retired Codex
+Reset endpoints (including forecast) are no longer polled or shown in feed health.
+See [reset-feed sources](reset-feeds.md) for transport, history preservation,
+freshness, classification and verification boundaries (September 13, 2026).
 
 | Symptom | First places to inspect |
 | --- | --- |

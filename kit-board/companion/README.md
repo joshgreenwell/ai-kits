@@ -1,17 +1,20 @@
 # `observatory`: the Personal Observatory companion
 
+Start with [Usage: features and verified state](../docs/usage-system.md). This README documents the implementation; [v2 operation](../docs/usage-collection.md) and [v1 retirement](../docs/usage-v1-retirement.md) own installation and removal procedures respectively.
+
 One static binary per machine that collects AI usage through internal adapters and publishes
 envelope v2 (`POST /api/v1/usage`) to the Observatory. It replaces `scripts/telemetry/collect.py`,
 `statusline.py`, and `install_schedule.py` on every machine. Rust stable, edition 2024,
 `#![forbid(unsafe_code)]`, no async runtime, SQLite statically linked, HTTPS through rustls with
 the platform trust store.
 
-**Status: phase 1 (core).** `claude_execution` and `codex_execution` are exact ports of
-`collect.py` v1.1.0 gated by a parity corpus; every other adapter is present as a
-contract-conformant stub that reports `failed` / `unrecognized_payload` at parser version `0`
-until its provider fixture exists (see "Adapters"). The server side (`/api/v1/companion/*`,
-`/api/v1/usage`) lands separately; until it is deployed, `run --dry-run --offline` exercises
-collection end to end without a network.
+**Status: core collection deployed; other readers unfinished.** `claude_execution` and
+`codex_execution` port `collect.py` v1.1.0 against a synthetic parity corpus. Other adapters
+are stubs at parser version `0`: current source reports a missing prerequisite or
+`not_implemented`, while older installed builds can report `failed / unrecognized_payload`.
+The server and unified schema are deployed, with Mac and Windows receipts verified on
+September 13. This does not prove complete backfill: the audit found substantial v1-only
+history. `run --dry-run --offline` exercises local collection without a network.
 
 ## Install
 
@@ -113,7 +116,9 @@ Store paths are discovered at setup, can be overridden per binding in `companion
 (`roots`, `codex_home`, `cursor_state_db`), and are never uploaded. `setup` copies a v1
 connection's `detailed_report` block into the binding (asking first) when it finds one; add it by
 hand otherwise (`python` optionally names the interpreter; `analyzer_config_path` replaces
-`codex_home` for the Claude analyzer).
+`codex_home` for the Claude analyzer). The example assumes the current Python adapter has been
+installed at its stated `script` path; the binary does not bundle it. Verify the migrated path
+and detailed publication before removing the old directory.
 
 ```json
 {
@@ -124,7 +129,7 @@ hand otherwise (`python` optionally names the interpreter; `analyzer_config_path
   "bindings": [
     { "binding_id": "…", "account_id": "claude-primary", "provider": "claude" },
     { "binding_id": "…", "account_id": "codex-primary", "provider": "codex", "codex_home": "/Users/me/.codex",
-      "detailed_report": { "script": "/Users/me/.config/personal-hub/telemetry/detailed_report.py",
+      "detailed_report": { "script": "/Users/me/.config/personal-hub/companion/detailed_report.py",
         "analyzer_path": "/Users/me/analyze-monthly-token-usage/scripts/analyze_token_usage.py",
         "codex_home": "/Users/me/.codex", "upload_config_path": "/Users/me/.config/personal-hub/token-usage-upload.json",
         "machine_id": "mac-personal" } }

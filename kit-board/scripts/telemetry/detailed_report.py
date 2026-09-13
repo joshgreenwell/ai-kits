@@ -16,10 +16,18 @@ import sys
 import tempfile
 import time
 from datetime import datetime
+from urllib.error import HTTPError
 from urllib.parse import urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 MAX_BYTES = 8 * 1024 * 1024
+MAX_HTTP_ERROR_BYTES = 2 * 1024
+SAFE_HTTP_ERROR_MESSAGES = frozenset({
+    'Unauthorized',
+    'Invalid monthly usage envelope',
+    'Report validation failed',
+    'Report is too large',
+})
 REQUIRED = ('totals', 'exclusive_composition', 'by_work_mode', 'by_project', 'by_theme',
             'top_root_tasks', 'daily', 'agent_orchestration', 'knowledge_brain', 'api_equivalent_cost')
 
@@ -126,17 +134,51 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def sanitize_http_error(error):
+    """Return only recognized application errors; never echo arbitrary response text."""
+    try:
+        raw = error.read(MAX_HTTP_ERROR_BYTES + 1)
+        if isinstance(raw, str):
+            raw = raw.encode('utf-8', errors='replace')
+    except Exception:
+        return 'Response body unavailable'
+    if len(raw) > MAX_HTTP_ERROR_BYTES:
+        return 'Response detail omitted'
+    try:
+        decoded = json.loads(raw.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return 'Response detail omitted'
+    if not isinstance(decoded, dict):
+        return 'Response detail omitted'
+    message = decoded.get('error')
+    return message if isinstance(message, str) and message in SAFE_HTTP_ERROR_MESSAGES else 'Response detail omitted'
+
+
 def upload(publisher, envelope):
     payload = json.dumps(envelope, separators=(',', ':')).encode()
     if len(payload) > MAX_BYTES: raise ValueError('Detailed report exceeds upload limit')
     headers = {'Authorization': 'Bearer ' + publisher['api_key'], 'Content-Type': 'application/json'}
     if publisher.get('sites_bypass_token'): headers['OAI-Sites-Authorization'] = 'Bearer ' + publisher['sites_bypass_token']
     request = Request(publisher['endpoint'], data=payload, headers=headers, method='POST')
-    with build_opener(NoRedirect).open(request, timeout=45) as response:
-        receipt = json.loads(response.read(256_000))
+    try:
+        with build_opener(NoRedirect).open(request, timeout=45) as response:
+            receipt = json.loads(response.read(256_000))
+    except HTTPError as error:
+        error.observatory_safe_message = sanitize_http_error(error)
+        raise
     if not receipt.get('ok') or not receipt.get('id') or receipt.get('machine_id') != envelope['machine_id'] or receipt.get('month') != envelope['report']['current']['month']:
         raise ValueError('Invalid detailed-report receipt; artifact retained for retry')
     return receipt
+
+
+def failure_result(error):
+    result = {'status': 'failed', 'error': type(error).__name__}
+    if isinstance(error, HTTPError):
+        result['http_status'] = error.code
+        message = getattr(error, 'observatory_safe_message', None)
+        if message:
+            result['message'] = message
+    return result
 
 
 def refresh_details(config_path, connection, dry_run=False, now=None):
@@ -196,5 +238,5 @@ if __name__ == '__main__':
         config_file = Path(arguments.config).expanduser().resolve()
         print(json.dumps(refresh_details(config_file, json.loads(config_file.read_text()), arguments.dry_run)))
     except Exception as error:
-        print(json.dumps({'status': 'failed', 'error': type(error).__name__}))
+        print(json.dumps(failure_result(error)))
         sys.exit(1)
