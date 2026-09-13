@@ -260,7 +260,7 @@ Historical monthly-only data remains usable at its recorded resolution. Preserve
 
 Detailed usage should refresh through regular deterministic collection and aggregation. Viewing a dashboard or selecting a month must not require a model session or a separate report-publication job. Saved reports, if added later, are outputs of the same data.
 
-The [September 13 audit](usage-system.md) records production request detail as `buckets_only`, project attribution as off, and richer tool/agent extraction as unfinished. The request contract also lacks some pricing dimensions retained by the monthly analyzer. These are delivery dependencies, not reasons to display empty cards as completed features. [Coverage matrix](usage-coverage.md), [request contract](../lib/usage-contract.ts)
+The [September 13 audit](usage-system.md) records production request detail as `buckets_only`, project attribution as off, and richer tool/agent extraction as unfinished. Envelope v2 can retain pricing and attribution detail, but current collectors do not emit those optional fields or event records. These are delivery dependencies, not reasons to display empty cards as completed features. [Coverage matrix](usage-coverage.md), [request contract](../lib/usage-contract.ts)
 
 No old collector, history store, report publisher, or schedule is retired until the replacement preserves the required data and its coverage has been reconciled. Follow the existing [preservation and retirement requirements](usage-v1-retirement.md).
 

@@ -275,9 +275,16 @@
                 ]
               },
               "model_actual": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 100
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "started_at": {
                 "anyOf": [
@@ -376,6 +383,207 @@
                 ],
                 "additionalProperties": false
               },
+              "token_accounting": {
+                "type": "object",
+                "properties": {
+                  "reported_total": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "unclassified": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "composition_state": {
+                    "type": "string",
+                    "enum": [
+                      "complete",
+                      "partial",
+                      "inconsistent",
+                      "unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "reported_total",
+                  "unclassified",
+                  "composition_state"
+                ],
+                "additionalProperties": false
+              },
+              "pricing": {
+                "type": "object",
+                "properties": {
+                  "reasoning_effort": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z0-9_.:-]{1,64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "service_tier": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z0-9_.:-]{1,64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "speed": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z0-9_.:-]{1,64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "context_window_tokens": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "cache_write_ttl": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z0-9_.:-]{1,64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "reasoning_effort",
+                  "service_tier",
+                  "speed",
+                  "context_window_tokens",
+                  "cache_write_ttl"
+                ],
+                "additionalProperties": false
+              },
+              "agent": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "identity_basis": {
+                    "type": "string",
+                    "enum": [
+                      "provider",
+                      "derived",
+                      "synthetic",
+                      "unknown"
+                    ]
+                  },
+                  "parent_key": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "parent_identity_basis": {
+                    "type": "string",
+                    "enum": [
+                      "provider",
+                      "derived",
+                      "synthetic",
+                      "none",
+                      "unknown"
+                    ]
+                  },
+                  "class": {
+                    "type": "string",
+                    "enum": [
+                      "main",
+                      "builtin",
+                      "custom",
+                      "unknown"
+                    ]
+                  },
+                  "name": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^([a-zA-Z0-9_.-]{1,80}|h:[a-f0-9]{16})$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "depth": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "identity_basis",
+                  "parent_key",
+                  "parent_identity_basis",
+                  "class",
+                  "name",
+                  "depth"
+                ],
+                "additionalProperties": false
+              },
               "tool_calls": {
                 "anyOf": [
                   {
@@ -410,6 +618,36 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "project": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "basis": {
+                    "type": "string",
+                    "enum": [
+                      "native",
+                      "working_directory",
+                      "none",
+                      "unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "basis"
+                ],
+                "additionalProperties": false
               },
               "project_hash": {
                 "anyOf": [
@@ -639,6 +877,75 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "pricing": {
+                    "type": "object",
+                    "properties": {
+                      "reasoning_effort": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[a-z0-9_.:-]{1,64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "service_tier": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[a-z0-9_.:-]{1,64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "speed": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[a-z0-9_.:-]{1,64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "context_window_tokens": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "cache_write_ttl": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[a-z0-9_.:-]{1,64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "reasoning_effort",
+                      "service_tier",
+                      "speed",
+                      "context_window_tokens",
+                      "cache_write_ttl"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -747,6 +1054,50 @@
                   "output_tokens",
                   "reasoning_tokens",
                   "total_tokens"
+                ],
+                "additionalProperties": false
+              },
+              "token_accounting": {
+                "type": "object",
+                "properties": {
+                  "reported_total": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "unclassified": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "composition_state": {
+                    "type": "string",
+                    "enum": [
+                      "complete",
+                      "partial",
+                      "inconsistent",
+                      "unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "reported_total",
+                  "unclassified",
+                  "composition_state"
                 ],
                 "additionalProperties": false
               },
@@ -1185,6 +1536,549 @@
               "model"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "binding_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "adapter": {
+                "type": "string",
+                "enum": [
+                  "claude_execution",
+                  "claude_account",
+                  "codex_execution",
+                  "codex_account",
+                  "cursor_account",
+                  "cursor_execution",
+                  "anthropic_api",
+                  "openai_api",
+                  "claude_browser",
+                  "codex_browser",
+                  "cursor_browser"
+                ]
+              },
+              "channel": {
+                "type": "string",
+                "enum": [
+                  "local_file",
+                  "local_db",
+                  "app_server",
+                  "provider_api",
+                  "hook_snapshot",
+                  "browser_session"
+                ]
+              },
+              "observed_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "exact",
+                  "reported",
+                  "estimated",
+                  "unknown"
+                ]
+              },
+              "parser_version": {
+                "type": "string",
+                "maxLength": 30
+              },
+              "record_type": {
+                "type": "string",
+                "const": "agent.event"
+              },
+              "semantic_key": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "event_kind": {
+                "type": "string",
+                "enum": [
+                  "spawn",
+                  "start",
+                  "resume",
+                  "finish"
+                ]
+              },
+              "session_hash": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "agent": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "identity_basis": {
+                    "type": "string",
+                    "enum": [
+                      "provider",
+                      "derived",
+                      "synthetic",
+                      "unknown"
+                    ]
+                  },
+                  "parent_key": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "parent_identity_basis": {
+                    "type": "string",
+                    "enum": [
+                      "provider",
+                      "derived",
+                      "synthetic",
+                      "none",
+                      "unknown"
+                    ]
+                  },
+                  "class": {
+                    "type": "string",
+                    "enum": [
+                      "main",
+                      "builtin",
+                      "custom",
+                      "unknown"
+                    ]
+                  },
+                  "name": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^([a-zA-Z0-9_.-]{1,80}|h:[a-f0-9]{16})$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "depth": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "identity_basis",
+                  "parent_key",
+                  "parent_identity_basis",
+                  "class",
+                  "name",
+                  "depth"
+                ],
+                "additionalProperties": false
+              },
+              "tool_invocation_key": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "succeeded",
+                  "failed",
+                  "denied",
+                  "cancelled",
+                  "unknown"
+                ]
+              }
+            },
+            "required": [
+              "record_id",
+              "binding_id",
+              "adapter",
+              "channel",
+              "observed_at",
+              "basis",
+              "parser_version",
+              "record_type",
+              "semantic_key",
+              "event_kind",
+              "session_hash",
+              "agent",
+              "tool_invocation_key",
+              "outcome"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "binding_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "adapter": {
+                "type": "string",
+                "enum": [
+                  "claude_execution",
+                  "claude_account",
+                  "codex_execution",
+                  "codex_account",
+                  "cursor_account",
+                  "cursor_execution",
+                  "anthropic_api",
+                  "openai_api",
+                  "claude_browser",
+                  "codex_browser",
+                  "cursor_browser"
+                ]
+              },
+              "channel": {
+                "type": "string",
+                "enum": [
+                  "local_file",
+                  "local_db",
+                  "app_server",
+                  "provider_api",
+                  "hook_snapshot",
+                  "browser_session"
+                ]
+              },
+              "observed_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "exact",
+                  "reported",
+                  "estimated",
+                  "unknown"
+                ]
+              },
+              "parser_version": {
+                "type": "string",
+                "maxLength": 30
+              },
+              "record_type": {
+                "type": "string",
+                "const": "tool.event"
+              },
+              "semantic_key": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "invocation_key": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "event_kind": {
+                "type": "string",
+                "enum": [
+                  "invocation",
+                  "result"
+                ]
+              },
+              "session_hash": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "caller_request_key": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "caller_agent_key": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "parent_invocation_key": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tool": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^([a-zA-Z0-9_.-]{1,80}|h:[a-f0-9]{16})$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "namespace": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z0-9_.:-]{1,64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "class": {
+                    "type": "string",
+                    "enum": [
+                      "builtin",
+                      "mcp",
+                      "function",
+                      "custom",
+                      "unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "namespace",
+                  "class"
+                ],
+                "additionalProperties": false
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "succeeded",
+                  "failed",
+                  "denied",
+                  "cancelled",
+                  "unknown"
+                ]
+              }
+            },
+            "required": [
+              "record_id",
+              "binding_id",
+              "adapter",
+              "channel",
+              "observed_at",
+              "basis",
+              "parser_version",
+              "record_type",
+              "semantic_key",
+              "invocation_key",
+              "event_kind",
+              "session_hash",
+              "caller_request_key",
+              "caller_agent_key",
+              "parent_invocation_key",
+              "tool",
+              "outcome"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "binding_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "adapter": {
+                "type": "string",
+                "enum": [
+                  "claude_execution",
+                  "claude_account",
+                  "codex_execution",
+                  "codex_account",
+                  "cursor_account",
+                  "cursor_execution",
+                  "anthropic_api",
+                  "openai_api",
+                  "claude_browser",
+                  "codex_browser",
+                  "cursor_browser"
+                ]
+              },
+              "channel": {
+                "type": "string",
+                "enum": [
+                  "local_file",
+                  "local_db",
+                  "app_server",
+                  "provider_api",
+                  "hook_snapshot",
+                  "browser_session"
+                ]
+              },
+              "observed_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "exact",
+                  "reported",
+                  "estimated",
+                  "unknown"
+                ]
+              },
+              "parser_version": {
+                "type": "string",
+                "maxLength": 30
+              },
+              "record_type": {
+                "type": "string",
+                "const": "resource.access"
+              },
+              "semantic_key": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "invocation_key": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "resource_key": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.:-]{1,64}$"
+              },
+              "configuration_version": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_.:-]{1,64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "access_kind": {
+                "type": "string",
+                "enum": [
+                  "read",
+                  "search",
+                  "write",
+                  "unknown"
+                ]
+              },
+              "evidence_basis": {
+                "type": "string",
+                "enum": [
+                  "explicit_argument",
+                  "connector",
+                  "indirect_shell",
+                  "unknown"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "succeeded",
+                  "failed",
+                  "denied",
+                  "cancelled",
+                  "unknown"
+                ]
+              }
+            },
+            "required": [
+              "record_id",
+              "binding_id",
+              "adapter",
+              "channel",
+              "observed_at",
+              "basis",
+              "parser_version",
+              "record_type",
+              "semantic_key",
+              "invocation_key",
+              "resource_key",
+              "configuration_version",
+              "access_kind",
+              "evidence_basis",
+              "outcome"
+            ],
+            "additionalProperties": false
           }
         ]
       }
@@ -1287,6 +2181,54 @@
           "parser_version": {
             "type": "string",
             "maxLength": 30
+          },
+          "capabilities": {
+            "maxItems": 7,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "dimension": {
+                  "type": "string",
+                  "enum": [
+                    "requests",
+                    "token_composition",
+                    "pricing",
+                    "project",
+                    "agent",
+                    "tool",
+                    "resource"
+                  ]
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "partial",
+                    "unsupported",
+                    "disabled_by_setting",
+                    "unknown"
+                  ]
+                },
+                "detail_code": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-z0-9_.:-]{1,64}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "dimension",
+                "state",
+                "detail_code"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [

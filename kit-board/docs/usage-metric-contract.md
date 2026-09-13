@@ -30,7 +30,7 @@ Read this with the [redesign direction](usage-direction.md), [current-system aud
 | Cache-write input tokens | Input recorded as creating or writing cache content. | Tokens. It is exclusive of fresh and cached input. |
 | Output tokens | All output reported by the source. | Tokens. Includes reasoning when the source reports reasoning as an output subset. |
 | Reasoning tokens | The supported subset of output identified as reasoning. | Tokens. Never added to total tokens separately. |
-| Unclassified tokens | The nonnegative remainder `reported total - known normalized exclusive components`. | Tokens. Visible in composition and included once. A negative remainder makes composition inconsistent and unavailable; it is never clamped to zero. |
+| Unclassified tokens | The nonnegative remainder `reported total - known normalized exclusive components`. | Tokens. Visible in composition and included once. A reported total below any known lower bound, including the reasoning subset, makes composition inconsistent and unavailable; it is never clamped to zero. |
 | Model call | One model response with explicit usage evidence, including an explicit zero-usage response. | Count. Streaming fragments, cumulative counters, mirrors, and retries for that response are one call. |
 | Successful model call | A model call with explicit completed/success evidence. | Count. Lack of an observed error is insufficient; unsupported outcome remains Unknown. |
 | Aggregate request count | A provider-reported request count without stable request identities. | Count at the provider's declared resolution. It does not create identifiable model calls or conversations. |
@@ -275,12 +275,12 @@ The [filesystem backlog](usage-tasks/README.md) contains full dependencies and a
 - Cloud sessions and browser chats can move account allowances without exposing exact tokens, projects, tools, or agents to current local collectors.
 - Cursor and the provider account/Admin readers are stubs until their follow-up tasks produce verified source implementations.
 - Provider aggregate/local-request overlap cannot be allocated without stable provider joins.
-- The request wire/storage contract lacks an independent reported total and unclassified remainder, so total-only or partially classified evidence cannot yet satisfy the normalization rule. USG-003 owns that change and the explicit inconsistent state.
-- Current Codex normalization clamps a negative fresh-input remainder; all-zero usage events are dropped; local request outcomes are hardcoded completed; absent model/surface facts can become string defaults. These are implementation gaps for USG-003 and USG-004, not evidence of success or zero.
+- The request wire/storage contract now retains independent reported totals, unclassified remainders, and explicit complete/partial/inconsistent/unknown composition. Existing producers omit that optional block until USG-004 updates their normalization.
+- Current Codex normalization clamps a negative fresh-input remainder; all-zero usage events are dropped; local request outcomes are hardcoded completed; absent model/surface facts can become string defaults. These are USG-004 collection gaps, not evidence of success or zero.
 - Provider aggregate read identity does not yet preserve `provider_event_id`/query-profile semantics, and monthly selection can regress a closed month from complete to a later partial revision. USG-011 and USG-012 own those corrections and the report-subject crosswalk.
-- Aggregated tool fields lack invocation identity, caller, outcome, time, wrapper relation, and resource evidence; `project_hash = null` conflates unavailable evidence, Unknown, and No project; current child attribution lacks a reliable independent child identity.
+- Envelope v2 and its append-only storage can represent independent agent lifecycle, tool invocation/result, project state, pricing dimensions, and configured resource-access evidence. Current collectors do not emit those optional blocks or event records; USG-004 through USG-008 own collection.
 - Existing coverage notes that attribute every call from a vault working directory conflict with this contract. USG-008 requires explicit resource/path/connector evidence; cwd alone never proves access.
-- Effort, service tier, speed, and context-window evidence needed by filters and pricing are not retained today.
+- Effort, service tier, speed, and context-window fields are retained when a producer supplies them; current request collectors leave the extension absent.
 - Allowance input accepts several basis values while current persistence reports all saved readings as provider-reported. USG-009 must preserve basis or narrow the accepted wire contract.
 - Indirect resource use through opaque scripts, symlinks outside configured roots, or ambiguous generic connector tools can remain unknown.
 - Actual datacenter, hardware, energy source, grid region, and cooling/watershed are unknown; environmental outputs remain scenario estimates.

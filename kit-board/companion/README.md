@@ -188,6 +188,21 @@ Beyond parity, `activity.request` records add `product`, `surface`, `execution_h
 `client_version`, `ended_at`, `outcome`, and `parent_session_hash` for Claude Code subagent
 transcripts (`.../<session>/subagents/*.jsonl`) when `include_subagents` is on.
 
+Envelope v2 also defines optional detail blocks for token accounting, pricing, agent attribution,
+and explicit project state, plus independent `agent.event`, `tool.event`, and `resource.access`
+records. Existing producers omit those blocks and remain wire-compatible. Missing blocks mean the
+producer did not report that capability; they are not zero, No project, a main agent, or success.
+The server and `20260913230451_extend_usage_detail_contract.sql` migration must be deployed before
+shipping a producer that emits the new variants. There is no runtime version negotiation inside
+schema version 2, so this server-first order prevents an older server from retaining an upgraded
+companion's outbox behind a contract error.
+
+The event semantic keys exclude collector identity and observation time. Invocation and result
+events share an invocation key but have distinct semantic keys, so several results or a revised
+outcome do not inflate call counts. Resource events upload only a configured key, version, typed
+access/evidence/outcome codes, and their invocation join; raw paths, arguments, results, and
+content remain local and fail strict validation if added to the wire object.
+
 `surface` follows what the provider wrote: Claude Code's per-line `entrypoint` (`cli`,
 `claude-desktop` → `desktop`, `claude-vscode` → `ide`, `sdk-*` → `sdk`; a transcript without the
 field counts as `cli`, which every transcript was before the field existed) and Codex's

@@ -146,6 +146,131 @@ string_enum! {
 }
 
 string_enum! {
+    /// Whether the exclusive token classes fully explain a reported total.
+    CompositionState {
+        Complete = "complete",
+        Partial = "partial",
+        Inconsistent = "inconsistent",
+        Unknown = "unknown",
+    }
+}
+
+string_enum! {
+    /// How a stable agent identity was obtained.
+    IdentityBasis {
+        Provider = "provider",
+        Derived = "derived",
+        Synthetic = "synthetic",
+        Unknown = "unknown",
+    }
+}
+
+string_enum! {
+    /// How a parent agent identity was obtained, including an explicit no-parent state.
+    ParentIdentityBasis {
+        Provider = "provider",
+        Derived = "derived",
+        Synthetic = "synthetic",
+        None = "none",
+        Unknown = "unknown",
+    }
+}
+
+string_enum! {
+    AgentClass {
+        Main = "main",
+        Builtin = "builtin",
+        Custom = "custom",
+        Unknown = "unknown",
+    }
+}
+
+string_enum! {
+    AgentEventKind {
+        Spawn = "spawn",
+        Start = "start",
+        Resume = "resume",
+        Finish = "finish",
+    }
+}
+
+string_enum! {
+    EventOutcome {
+        Succeeded = "succeeded",
+        Failed = "failed",
+        Denied = "denied",
+        Cancelled = "cancelled",
+        Unknown = "unknown",
+    }
+}
+
+string_enum! {
+    ToolEventKind {
+        Invocation = "invocation",
+        Result = "result",
+    }
+}
+
+string_enum! {
+    ToolClass {
+        Builtin = "builtin",
+        Mcp = "mcp",
+        Function = "function",
+        Custom = "custom",
+        Unknown = "unknown",
+    }
+}
+
+string_enum! {
+    ProjectBasis {
+        Native = "native",
+        WorkingDirectory = "working_directory",
+        None = "none",
+        Unknown = "unknown",
+    }
+}
+
+string_enum! {
+    AccessKind {
+        Read = "read",
+        Search = "search",
+        Write = "write",
+        Unknown = "unknown",
+    }
+}
+
+string_enum! {
+    AccessEvidenceBasis {
+        ExplicitArgument = "explicit_argument",
+        Connector = "connector",
+        IndirectShell = "indirect_shell",
+        Unknown = "unknown",
+    }
+}
+
+string_enum! {
+    CapabilityDimension {
+        Requests = "requests",
+        TokenComposition = "token_composition",
+        Pricing = "pricing",
+        Project = "project",
+        Agent = "agent",
+        Tool = "tool",
+        Resource = "resource",
+    }
+}
+
+string_enum! {
+    CapabilityState {
+        Complete = "complete",
+        Partial = "partial",
+        Unsupported = "unsupported",
+        DisabledBySetting = "disabled_by_setting",
+        Unknown = "unknown",
+    }
+}
+
+string_enum! {
     AllowanceKind {
         PercentUsed = "percent_used",
         CountRemaining = "count_remaining",
@@ -266,6 +391,9 @@ string_enum! {
         AccountUsageBucket = "account.usage_bucket",
         AllowanceReading = "allowance.reading",
         MoneyEntry = "money.entry",
+        AgentEvent = "agent.event",
+        ToolEvent = "tool.event",
+        ResourceAccess = "resource.access",
     }
 }
 

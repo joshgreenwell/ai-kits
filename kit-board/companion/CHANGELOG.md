@@ -4,6 +4,11 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
 
 ## Unreleased
 
+- Extended envelope v2 compatibly with optional reported-total accounting, pricing, agent, and
+  explicit project-state blocks; independent agent lifecycle, tool invocation/result, and
+  privacy-safe resource-access events; and per-adapter capability coverage. Legacy producers
+  continue to serialize the original shape until their collection stories are implemented.
+
 ### 2.0.0 (phase 1: core)
 
 - Workspace `kit-board/companion/` with four crates: `observatory` (binary), `observatory-contract`

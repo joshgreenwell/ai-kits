@@ -30,11 +30,13 @@ pub use api::{
     Rejection, SettingsResponse, UsageResponse,
 };
 pub use config::{BindingInfo, CompanionInfo, ConfigDocument, InstallInfo};
-pub use coverage::AdapterCoverage;
+pub use coverage::{AdapterCoverage, CapabilityCoverage};
 pub use enums::{
-    Adapter, AllowanceKind, AllowanceUnit, Arch, Basis, Channel, CoverageState, CursorState, DetailCode,
-    EntryKind, ExecutionHost, InstallKind, MoneyUnit, Platform, Provider, Reader, RecordType, ReferenceKind,
-    RejectionReason, RequestOutcome, SessionIdentity, Surface, UnknownVariant,
+    AccessEvidenceBasis, AccessKind, Adapter, AgentClass, AgentEventKind, AllowanceKind, AllowanceUnit, Arch,
+    Basis, CapabilityDimension, CapabilityState, Channel, CompositionState, CoverageState, CursorState,
+    DetailCode, EntryKind, EventOutcome, ExecutionHost, IdentityBasis, InstallKind, MoneyUnit,
+    ParentIdentityBasis, Platform, ProjectBasis, Provider, Reader, RecordType, ReferenceKind,
+    RejectionReason, RequestOutcome, SessionIdentity, Surface, ToolClass, ToolEventKind, UnknownVariant,
 };
 pub use envelope::{Bucket, BucketEntry, Envelope, Run, Violation};
 pub use newtypes::{
@@ -42,8 +44,9 @@ pub use newtypes::{
     Text, ToolName, Uuid, ValueError,
 };
 pub use records::{
-    AccountUsageBucket, ActivityRequest, AllowanceReading, Dimensions, Measures, MoneyEntry, Record,
-    Reference, Tokens, ToolCount,
+    AccountUsageBucket, ActivityRequest, AgentAttribution, AgentEvent, AllowanceReading, Dimensions,
+    Measures, MoneyEntry, PricingEvidence, ProjectAttribution, Record, Reference, ResourceAccess,
+    TokenAccounting, Tokens, ToolCount, ToolEvent, ToolIdentity,
 };
 pub use settings::{CollectionSettings, Gate, InstallOverride};
 

@@ -1,9 +1,20 @@
 //! Per-adapter coverage for one run. Codes only; never free text.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
-use crate::enums::{Adapter, CoverageState, CursorState, DetailCode};
-use crate::newtypes::{Counter, Nullable, Text};
+use crate::enums::{Adapter, CapabilityDimension, CapabilityState, CoverageState, CursorState, DetailCode};
+use crate::envelope::Violation;
+use crate::newtypes::{Code, Counter, Nullable, Text};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityCoverage {
+    pub dimension: CapabilityDimension,
+    pub state: CapabilityState,
+    pub detail_code: Nullable<Code>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,6 +33,12 @@ pub struct AdapterCoverage {
     pub cursor_state: CursorState,
     pub probe_requests: Counter,
     pub parser_version: Text<0, 30>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::newtypes::deserialize_optional_non_null"
+    )]
+    pub capabilities: Option<Vec<CapabilityCoverage>>,
 }
 
 impl AdapterCoverage {
@@ -46,6 +63,23 @@ impl AdapterCoverage {
             cursor_state: CursorState::Unknown,
             probe_requests: Counter::ZERO,
             parser_version,
+            capabilities: None,
+        }
+    }
+
+    pub fn validate(&self, path: &str, out: &mut Vec<Violation>) {
+        let Some(capabilities) = &self.capabilities else {
+            return;
+        };
+        if capabilities.len() > 7 {
+            out.push(Violation { path: format!("{path}.capabilities"), rule: "at most 7 capabilities" });
+        }
+        let mut dimensions = HashSet::new();
+        if capabilities.iter().any(|capability| !dimensions.insert(capability.dimension)) {
+            out.push(Violation {
+                path: format!("{path}.capabilities"),
+                rule: "capability dimensions must be unique",
+            });
         }
     }
 }

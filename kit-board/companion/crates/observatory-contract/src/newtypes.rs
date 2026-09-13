@@ -12,6 +12,17 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+/// Deserializes an optional extension field that may be missing but may not be
+/// explicitly `null`. Pair this with `#[serde(default)]` so legacy payloads that
+/// omit the field continue to produce `None`.
+pub(crate) fn deserialize_optional_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
 /// The largest integer the server accepts (`Number.MAX_SAFE_INTEGER`).
 pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 

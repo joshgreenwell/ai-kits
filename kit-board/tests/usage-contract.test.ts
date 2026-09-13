@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { adapterProvider, contentSubject, normalizePairingCode, usageEnvelopeSchema, usageSchemaJson, type UsageEnvelope } from '../lib/usage-contract';
+import { adapterProvider, contentSubject, normalizePairingCode, parseUsageEnvelope, usageEnvelopeSchema, usageSchemaJson, type UsageEnvelope } from '../lib/usage-contract';
 import { adapterGate, defaultCollectionSettings, getSetting, installOverrideSchema, mergeSettings, setSetting, collectionSettingsSchema } from '../lib/companion-settings';
 
 const corpus = join(import.meta.dirname, 'fixtures', 'usage-v2', 'wire');
@@ -45,6 +45,52 @@ test('adapters map to providers and the content subject drops observation identi
     assert.equal(subject.record_type, record.record_type);
   }
   assert.equal(normalizePairingCode('ab3d-ef7h'), 'AB3DEF7H');
+});
+
+test('detail records preserve zero, revisions, orphan evidence, and invocation cardinality', () => {
+  const envelope = usageEnvelopeSchema.parse(JSON.parse(readFileSync(join(corpus, 'valid', 'detail-contract-events.json'), 'utf8')));
+  const requests = envelope.records.filter(record => record.record_type === 'activity.request');
+  const explicitZero = requests.find(record => record.token_accounting?.reported_total === 0);
+  assert.ok(explicitZero);
+  assert.deepEqual(explicitZero.tokens, { input_fresh: 0, input_cached: 0, input_cache_write: 0, output: 0, reasoning: 0 });
+  assert.equal(explicitZero.model_actual, null, 'a recorded call may have an unknown resolved model');
+  const positiveRemainder = requests.find(record => record.token_accounting?.unclassified === 5);
+  assert.ok(positiveRemainder);
+  assert.equal(positiveRemainder.token_accounting?.reported_total, 155);
+  assert.equal((positiveRemainder.tokens.input_fresh ?? 0) + (positiveRemainder.tokens.input_cached ?? 0)
+    + (positiveRemainder.tokens.input_cache_write ?? 0) + (positiveRemainder.tokens.output ?? 0), 150);
+
+  const tools = envelope.records.filter(record => record.record_type === 'tool.event');
+  assert.equal(tools.filter(record => record.event_kind === 'invocation').length, 1, 'result and progress rows do not count as calls');
+  assert.equal(tools.filter(record => record.event_kind === 'result').length, 3, 'multiple and orphan results remain evidence');
+  assert.equal(envelope.records.filter(record => record.record_type === 'resource.access').length, 2, 'one invocation can touch multiple sources');
+  assert.ok(envelope.coverage[0].capabilities?.some(capability => capability.dimension === 'resource'));
+
+  const revised = { ...tools[0], record_id: '00000000-0000-4000-8000-000000000001', outcome: 'succeeded' as const };
+  assert.notDeepEqual(contentSubject(tools[0]), contentSubject(revised), 'outcome changes are revisions');
+  const repeated = { ...tools[0], record_id: '00000000-0000-4000-8000-000000000002' };
+  assert.deepEqual(contentSubject(tools[0]), contentSubject(repeated), 'observation identity does not create a revision');
+});
+
+test('reasoning tokens constrain a reported total even when output is unknown', () => {
+  const wrapper = JSON.parse(readFileSync(join(corpus, 'invalid', 'reasoning-above-reported-total.json'), 'utf8')) as {
+    envelope: { records: Record<string, unknown>[] };
+  };
+  assert.equal(usageEnvelopeSchema.safeParse(wrapper.envelope).success, false, 'partial accounting cannot understate reasoning evidence');
+  const record = wrapper.envelope.records[0] as Record<string, unknown>;
+  const tokenAccounting = record.token_accounting as Record<string, unknown>;
+  const inconsistent = { ...wrapper.envelope, records: [{ ...record,
+    token_accounting: { ...tokenAccounting, unclassified: null, composition_state: 'inconsistent' } }] };
+  assert.equal(usageEnvelopeSchema.safeParse(inconsistent).success, true, 'the same lower-bound conflict remains representable');
+});
+
+test('ingress rejects identifiable invalid records without discarding valid siblings', () => {
+  const source = JSON.parse(readFileSync(join(corpus, 'valid', 'companion-all-record-types.json'), 'utf8')) as { records: Record<string, unknown>[] };
+  const bad = { ...source.records[0], record_id: '00000000-0000-4000-8000-000000000099', private_path: '/synthetic/private.md' };
+  const parsed = parseUsageEnvelope({ ...source, records: [source.records[0], bad] });
+  assert.equal(parsed.envelope.records.length, 1);
+  assert.deepEqual(parsed.invalid, [{ record_id: bad.record_id, reason: 'invalid' }]);
+  assert.throws(() => parseUsageEnvelope({ ...source, records: [{ ...bad, record_id: 'missing' }] }));
 });
 
 test('settings merge with defaults, overrides replace whole groups, and gates follow the mode', () => {

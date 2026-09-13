@@ -137,6 +137,9 @@ impl Envelope {
         for (index, record) in self.records.iter().enumerate() {
             record.validate(now, &format!("records[{index}]"), &mut out);
         }
+        for (index, coverage) in self.coverage.iter().enumerate() {
+            coverage.validate(&format!("coverage[{index}]"), &mut out);
+        }
         if out.is_empty() { Ok(()) } else { Err(out) }
     }
 

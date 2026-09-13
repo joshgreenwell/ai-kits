@@ -157,7 +157,12 @@ pub fn content_hash(record: &Record) -> serde_json::Result<Sha256Hex> {
 
 /// `sha256(stableJson(dimensions))`, the scope key for a usage bucket revision.
 pub fn dimensions_hash(dimensions: &Dimensions) -> serde_json::Result<Sha256Hex> {
-    let value = serde_json::to_value(dimensions)?;
+    let mut value = serde_json::to_value(dimensions)?;
+    if dimensions.pricing.as_ref().is_none_or(|pricing| !pricing.has_evidence())
+        && let Value::Object(map) = &mut value
+    {
+        map.remove("pricing");
+    }
     Ok(Sha256Hex::digest(stable_json(&value).as_bytes()))
 }
 

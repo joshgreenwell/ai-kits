@@ -376,6 +376,7 @@ fn coverage_entry(
             cursor_state: outcome.cursor_state,
             probe_requests: count(outcome.probe_requests),
             parser_version: parser,
+            capabilities: None,
         },
         None => AdapterCoverage {
             duration_ms: count(duration.as_millis() as u64),

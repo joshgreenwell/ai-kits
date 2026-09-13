@@ -1,4 +1,4 @@
-//! The four record types and the union over `record_type`.
+//! Usage records and the union over `record_type`.
 //!
 //! Every counter that is unknown is `null`, never `0`. Observation identity
 //! (`record_id`, which collector saw it) is separate from semantic identity
@@ -8,8 +8,10 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::enums::{
-    Adapter, AllowanceKind, AllowanceUnit, Basis, Channel, EntryKind, ExecutionHost, MoneyUnit, Reader,
-    RecordType, ReferenceKind, RequestOutcome, SessionIdentity, Surface,
+    AccessEvidenceBasis, AccessKind, Adapter, AgentClass, AgentEventKind, AllowanceKind, AllowanceUnit,
+    Basis, Channel, CompositionState, EntryKind, EventOutcome, ExecutionHost, IdentityBasis, MoneyUnit,
+    ParentIdentityBasis, ProjectBasis, Reader, RecordType, ReferenceKind, RequestOutcome, SessionIdentity,
+    Surface, ToolClass, ToolEventKind,
 };
 use crate::envelope::Violation;
 use crate::newtypes::{
@@ -37,6 +39,67 @@ impl Tokens {
         output: Nullable::NULL,
         reasoning: Nullable::NULL,
     };
+}
+
+/// Provider pricing dimensions that materially affect the cost of a request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PricingEvidence {
+    pub reasoning_effort: Nullable<Code>,
+    pub service_tier: Nullable<Code>,
+    pub speed: Nullable<Code>,
+    pub context_window_tokens: Nullable<Counter>,
+    pub cache_write_ttl: Nullable<Code>,
+}
+
+impl PricingEvidence {
+    /// True when the block carries evidence beyond its presence on the wire.
+    pub fn has_evidence(&self) -> bool {
+        self.reasoning_effort.as_ref().is_some()
+            || self.service_tier.as_ref().is_some()
+            || self.speed.as_ref().is_some()
+            || self.context_window_tokens.as_ref().is_some()
+            || self.cache_write_ttl.as_ref().is_some()
+    }
+}
+
+/// Reconciliation between a reported token total and the known exclusive classes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenAccounting {
+    pub reported_total: Nullable<Counter>,
+    pub unclassified: Nullable<Counter>,
+    pub composition_state: CompositionState,
+}
+
+/// Stable, privacy-preserving attribution for an agent participating in a request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentAttribution {
+    pub key: Nullable<Sha256Hex>,
+    pub identity_basis: IdentityBasis,
+    pub parent_key: Nullable<Sha256Hex>,
+    pub parent_identity_basis: ParentIdentityBasis,
+    pub class: AgentClass,
+    pub name: Nullable<ToolName>,
+    pub depth: Nullable<Counter>,
+}
+
+/// Stable project attribution. The basis says whether the provider supplied the
+/// identity or the collector derived it from the working directory.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectAttribution {
+    pub key: Nullable<Sha256Hex>,
+    pub basis: ProjectBasis,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolIdentity {
+    pub name: Nullable<ToolName>,
+    pub namespace: Nullable<Code>,
+    pub class: ToolClass,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,14 +130,42 @@ pub struct ActivityRequest {
     pub session_identity: SessionIdentity,
     pub parent_session_hash: Nullable<Sha256Hex>,
     pub model_requested: Nullable<Text<0, 100>>,
-    pub model_actual: Text<1, 100>,
+    pub model_actual: Nullable<Text<1, 100>>,
     pub started_at: Nullable<Stamp>,
     pub ended_at: Nullable<Stamp>,
     pub tokens: Tokens,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::newtypes::deserialize_optional_non_null"
+    )]
+    pub token_accounting: Option<TokenAccounting>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::newtypes::deserialize_optional_non_null"
+    )]
+    pub pricing: Option<PricingEvidence>,
     pub tool_calls: Nullable<Counter>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::newtypes::deserialize_optional_non_null"
+    )]
     pub tools: Option<Vec<ToolCount>>,
     pub project_hash: Nullable<Sha256Hex>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::newtypes::deserialize_optional_non_null"
+    )]
+    pub project: Option<ProjectAttribution>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::newtypes::deserialize_optional_non_null"
+    )]
+    pub agent: Option<AgentAttribution>,
     pub client_version: Nullable<Text<0, 40>>,
     pub latency_ms: Nullable<Counter>,
     pub outcome: RequestOutcome,
@@ -89,6 +180,12 @@ pub struct Dimensions {
     pub user_ref: Nullable<Sha256Hex>,
     pub workspace_ref: Nullable<Sha256Hex>,
     pub api_key_ref: Nullable<Sha256Hex>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::newtypes::deserialize_optional_non_null"
+    )]
+    pub pricing: Option<PricingEvidence>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,8 +218,75 @@ pub struct AccountUsageBucket {
     pub provider_timezone: Nullable<Text<0, 40>>,
     pub dimensions: Dimensions,
     pub measures: Measures,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::newtypes::deserialize_optional_non_null"
+    )]
+    pub token_accounting: Option<TokenAccounting>,
     pub provider_event_id: Nullable<Text<0, 120>>,
     pub provider_refreshed_at: Nullable<Stamp>,
+}
+
+/// One lifecycle event for a provider or collector-visible agent.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentEvent {
+    pub record_id: Uuid,
+    pub binding_id: Uuid,
+    pub adapter: Adapter,
+    pub channel: Channel,
+    pub observed_at: Stamp,
+    pub basis: Basis,
+    pub parser_version: Text<0, 30>,
+    pub semantic_key: Sha256Hex,
+    pub event_kind: AgentEventKind,
+    pub session_hash: Nullable<Sha256Hex>,
+    pub agent: AgentAttribution,
+    pub tool_invocation_key: Nullable<Sha256Hex>,
+    pub outcome: EventOutcome,
+}
+
+/// One invocation or result event for a tool call.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolEvent {
+    pub record_id: Uuid,
+    pub binding_id: Uuid,
+    pub adapter: Adapter,
+    pub channel: Channel,
+    pub observed_at: Stamp,
+    pub basis: Basis,
+    pub parser_version: Text<0, 30>,
+    pub semantic_key: Sha256Hex,
+    pub invocation_key: Sha256Hex,
+    pub event_kind: ToolEventKind,
+    pub session_hash: Nullable<Sha256Hex>,
+    pub caller_request_key: Nullable<Sha256Hex>,
+    pub caller_agent_key: Nullable<Sha256Hex>,
+    pub parent_invocation_key: Nullable<Sha256Hex>,
+    pub tool: ToolIdentity,
+    pub outcome: EventOutcome,
+}
+
+/// One resource access attributed to a tool invocation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceAccess {
+    pub record_id: Uuid,
+    pub binding_id: Uuid,
+    pub adapter: Adapter,
+    pub channel: Channel,
+    pub observed_at: Stamp,
+    pub basis: Basis,
+    pub parser_version: Text<0, 30>,
+    pub semantic_key: Sha256Hex,
+    pub invocation_key: Sha256Hex,
+    pub resource_key: Code,
+    pub configuration_version: Nullable<Code>,
+    pub access_kind: AccessKind,
+    pub evidence_basis: AccessEvidenceBasis,
+    pub outcome: EventOutcome,
 }
 
 /// `window_minutes`: a positive integer up to one year.
@@ -226,6 +390,12 @@ pub enum Record {
     AllowanceReading(AllowanceReading),
     #[serde(rename = "money.entry")]
     MoneyEntry(MoneyEntry),
+    #[serde(rename = "agent.event")]
+    AgentEvent(AgentEvent),
+    #[serde(rename = "tool.event")]
+    ToolEvent(ToolEvent),
+    #[serde(rename = "resource.access")]
+    ResourceAccess(ResourceAccess),
 }
 
 fn future(stamp: &Stamp, now: Timestamp, path: &str, field: &str, out: &mut Vec<Violation>) {
@@ -237,6 +407,144 @@ fn future(stamp: &Stamp, now: Timestamp, path: &str, field: &str, out: &mut Vec<
     }
 }
 
+fn counter_value(value: &Nullable<Counter>) -> Option<u64> {
+    value.as_ref().map(|counter| counter.get())
+}
+
+impl AgentAttribution {
+    fn validate(&self, path: &str, out: &mut Vec<Violation>) {
+        let key_absent = self.key.as_ref().is_none();
+        if (self.identity_basis == IdentityBasis::Unknown) != key_absent {
+            out.push(Violation {
+                path: format!("{path}.key"),
+                rule: "agent key must match its identity basis",
+            });
+        }
+
+        let parent_absent =
+            matches!(self.parent_identity_basis, ParentIdentityBasis::None | ParentIdentityBasis::Unknown);
+        if parent_absent != self.parent_key.as_ref().is_none() {
+            out.push(Violation {
+                path: format!("{path}.parent_key"),
+                rule: "parent agent key must match its identity basis",
+            });
+        }
+    }
+}
+
+impl ProjectAttribution {
+    fn validate(&self, path: &str, out: &mut Vec<Violation>) {
+        let requires_key = matches!(self.basis, ProjectBasis::Native | ProjectBasis::WorkingDirectory);
+        if requires_key != self.key.as_ref().is_some() {
+            out.push(Violation {
+                path: format!("{path}.key"),
+                rule: "project key must match its attribution basis",
+            });
+        }
+    }
+}
+
+impl TokenAccounting {
+    fn validate(
+        &self,
+        components: [&Nullable<Counter>; 4],
+        reasoning: &Nullable<Counter>,
+        path: &str,
+        out: &mut Vec<Violation>,
+    ) {
+        let output = counter_value(components[3]);
+        let known: Vec<u64> = components.into_iter().filter_map(counter_value).collect();
+        let known_sum: u64 = known.iter().sum();
+        let all_known = known.len() == 4;
+        let none_known = known.is_empty();
+        let reasoning = counter_value(reasoning);
+        let minimum_feasible_total = known_sum + if output.is_none() { reasoning.unwrap_or(0) } else { 0 };
+        let no_token_evidence = none_known && reasoning.is_none();
+        let reported = counter_value(&self.reported_total);
+        let unclassified = counter_value(&self.unclassified);
+        let exceeds_reported = reported.is_some_and(|total| minimum_feasible_total > total);
+
+        match self.composition_state {
+            CompositionState::Complete => {
+                if !all_known {
+                    out.push(Violation {
+                        path: format!("{path}.composition_state"),
+                        rule: "complete composition requires all exclusive token components",
+                    });
+                }
+                if let Some(total) = reported {
+                    if exceeds_reported {
+                        out.push(Violation {
+                            path: format!("{path}.composition_state"),
+                            rule: "known token evidence exceeds the reported total",
+                        });
+                    }
+                    if known_sum > total || unclassified != Some(total - known_sum) {
+                        out.push(Violation {
+                            path: format!("{path}.unclassified"),
+                            rule: "unclassified tokens must equal the reported remainder",
+                        });
+                    }
+                } else if unclassified.is_some() {
+                    out.push(Violation {
+                        path: format!("{path}.unclassified"),
+                        rule: "unclassified tokens must equal the reported remainder",
+                    });
+                }
+            }
+            CompositionState::Partial => {
+                if all_known || (no_token_evidence && reported.is_none()) {
+                    out.push(Violation {
+                        path: format!("{path}.composition_state"),
+                        rule: "partial composition requires incomplete token evidence",
+                    });
+                }
+                if let Some(total) = reported {
+                    if exceeds_reported {
+                        out.push(Violation {
+                            path: format!("{path}.composition_state"),
+                            rule: "known token evidence exceeds the reported total",
+                        });
+                    }
+                    if known_sum > total || unclassified != Some(total - known_sum) {
+                        out.push(Violation {
+                            path: format!("{path}.unclassified"),
+                            rule: "unclassified tokens must equal the reported remainder",
+                        });
+                    }
+                } else if unclassified.is_some() {
+                    out.push(Violation {
+                        path: format!("{path}.unclassified"),
+                        rule: "a partial composition without a reported total has no known remainder",
+                    });
+                }
+            }
+            CompositionState::Inconsistent => {
+                if reported.is_none() || !exceeds_reported {
+                    out.push(Violation {
+                        path: format!("{path}.composition_state"),
+                        rule: "inconsistent composition requires known token evidence above a reported total",
+                    });
+                }
+                if unclassified.is_some() {
+                    out.push(Violation {
+                        path: format!("{path}.unclassified"),
+                        rule: "inconsistent composition cannot have a remainder",
+                    });
+                }
+            }
+            CompositionState::Unknown => {
+                if !no_token_evidence || reported.is_some() || unclassified.is_some() {
+                    out.push(Violation {
+                        path: format!("{path}.composition_state"),
+                        rule: "unknown composition cannot contain token evidence",
+                    });
+                }
+            }
+        }
+    }
+}
+
 impl Record {
     pub fn record_type(&self) -> RecordType {
         match self {
@@ -244,6 +552,9 @@ impl Record {
             Record::AccountUsageBucket(_) => RecordType::AccountUsageBucket,
             Record::AllowanceReading(_) => RecordType::AllowanceReading,
             Record::MoneyEntry(_) => RecordType::MoneyEntry,
+            Record::AgentEvent(_) => RecordType::AgentEvent,
+            Record::ToolEvent(_) => RecordType::ToolEvent,
+            Record::ResourceAccess(_) => RecordType::ResourceAccess,
         }
     }
 
@@ -253,6 +564,9 @@ impl Record {
             Record::AccountUsageBucket(r) => &r.record_id,
             Record::AllowanceReading(r) => &r.record_id,
             Record::MoneyEntry(r) => &r.record_id,
+            Record::AgentEvent(r) => &r.record_id,
+            Record::ToolEvent(r) => &r.record_id,
+            Record::ResourceAccess(r) => &r.record_id,
         }
     }
 
@@ -262,6 +576,9 @@ impl Record {
             Record::AccountUsageBucket(r) => &r.binding_id,
             Record::AllowanceReading(r) => &r.binding_id,
             Record::MoneyEntry(r) => &r.binding_id,
+            Record::AgentEvent(r) => &r.binding_id,
+            Record::ToolEvent(r) => &r.binding_id,
+            Record::ResourceAccess(r) => &r.binding_id,
         }
     }
 
@@ -271,6 +588,9 @@ impl Record {
             Record::AccountUsageBucket(r) => r.adapter,
             Record::AllowanceReading(r) => r.adapter,
             Record::MoneyEntry(r) => r.adapter,
+            Record::AgentEvent(r) => r.adapter,
+            Record::ToolEvent(r) => r.adapter,
+            Record::ResourceAccess(r) => r.adapter,
         }
     }
 
@@ -280,6 +600,9 @@ impl Record {
             Record::AccountUsageBucket(r) => r.channel,
             Record::AllowanceReading(r) => r.channel,
             Record::MoneyEntry(r) => r.channel,
+            Record::AgentEvent(r) => r.channel,
+            Record::ToolEvent(r) => r.channel,
+            Record::ResourceAccess(r) => r.channel,
         }
     }
 
@@ -289,6 +612,9 @@ impl Record {
             Record::AccountUsageBucket(r) => &r.observed_at,
             Record::AllowanceReading(r) => &r.observed_at,
             Record::MoneyEntry(r) => &r.observed_at,
+            Record::AgentEvent(r) => &r.observed_at,
+            Record::ToolEvent(r) => &r.observed_at,
+            Record::ResourceAccess(r) => &r.observed_at,
         }
     }
 
@@ -298,17 +624,23 @@ impl Record {
             Record::AccountUsageBucket(r) => r.parser_version.as_str(),
             Record::AllowanceReading(r) => r.parser_version.as_str(),
             Record::MoneyEntry(r) => r.parser_version.as_str(),
+            Record::AgentEvent(r) => r.parser_version.as_str(),
+            Record::ToolEvent(r) => r.parser_version.as_str(),
+            Record::ResourceAccess(r) => r.parser_version.as_str(),
         }
     }
 
     /// The semantic identity used for local deduplication: `semantic_key` for
-    /// requests, the record id otherwise.
+    /// request and event records, the record id for the legacy ledgers.
     pub fn semantic_key(&self) -> String {
         match self {
             Record::ActivityRequest(r) => r.semantic_key.as_str().to_owned(),
             Record::AccountUsageBucket(r) => r.record_id.as_str().to_owned(),
             Record::AllowanceReading(r) => r.record_id.as_str().to_owned(),
             Record::MoneyEntry(r) => r.record_id.as_str().to_owned(),
+            Record::AgentEvent(r) => r.semantic_key.as_str().to_owned(),
+            Record::ToolEvent(r) => r.semantic_key.as_str().to_owned(),
+            Record::ResourceAccess(r) => r.semantic_key.as_str().to_owned(),
         }
     }
 
@@ -336,6 +668,37 @@ impl Record {
                 if r.tools.as_ref().is_some_and(|tools| tools.len() > MAX_TOOLS_PER_REQUEST) {
                     out.push(Violation { path: format!("{path}.tools"), rule: "at most 50 tools" });
                 }
+                if let Some(accounting) = &r.token_accounting {
+                    accounting.validate(
+                        [
+                            &r.tokens.input_fresh,
+                            &r.tokens.input_cached,
+                            &r.tokens.input_cache_write,
+                            &r.tokens.output,
+                        ],
+                        &r.tokens.reasoning,
+                        &format!("{path}.token_accounting"),
+                        out,
+                    );
+                }
+                if let Some(agent) = &r.agent {
+                    agent.validate(&format!("{path}.agent"), out);
+                }
+                if let Some(project) = &r.project {
+                    project.validate(&format!("{path}.project"), out);
+                    let alias_matches = match project.basis {
+                        ProjectBasis::WorkingDirectory => project.key == r.project_hash,
+                        ProjectBasis::Native | ProjectBasis::None | ProjectBasis::Unknown => {
+                            r.project_hash.as_ref().is_none()
+                        }
+                    };
+                    if !alias_matches {
+                        out.push(Violation {
+                            path: format!("{path}.project_hash"),
+                            rule: "legacy project hash must match project attribution",
+                        });
+                    }
+                }
             }
             Record::AccountUsageBucket(r) => {
                 future(&r.bucket_start, now, path, "bucket_start", out);
@@ -345,6 +708,34 @@ impl Record {
                 }
                 if r.bucket_end.timestamp() <= r.bucket_start.timestamp() {
                     out.push(Violation { path: format!("{path}.bucket_end"), rule: "empty bucket" });
+                }
+                if let (Some(reasoning), Some(output)) =
+                    (r.measures.reasoning_tokens.as_ref(), r.measures.output_tokens.as_ref())
+                    && reasoning > output
+                {
+                    out.push(Violation {
+                        path: format!("{path}.measures.reasoning_tokens"),
+                        rule: "reasoning is a subset of output",
+                    });
+                }
+                if let Some(accounting) = &r.token_accounting {
+                    if accounting.reported_total != r.measures.total_tokens {
+                        out.push(Violation {
+                            path: format!("{path}.token_accounting.reported_total"),
+                            rule: "accounting total must match the provider measure",
+                        });
+                    }
+                    accounting.validate(
+                        [
+                            &r.measures.input_tokens,
+                            &r.measures.cached_tokens,
+                            &r.measures.cache_write_tokens,
+                            &r.measures.output_tokens,
+                        ],
+                        &r.measures.reasoning_tokens,
+                        &format!("{path}.token_accounting"),
+                        out,
+                    );
                 }
             }
             Record::AllowanceReading(r) => {
@@ -380,6 +771,27 @@ impl Record {
                     future(end, now, path, "period_end", out);
                 }
             }
+            Record::AgentEvent(r) => {
+                r.agent.validate(&format!("{path}.agent"), out);
+                let child_must_exist =
+                    r.event_kind != AgentEventKind::Spawn || r.outcome == EventOutcome::Succeeded;
+                if child_must_exist && r.agent.key.as_ref().is_none() {
+                    out.push(Violation {
+                        path: format!("{path}.agent.key"),
+                        rule: "observed agent lifecycle events require an agent key",
+                    });
+                }
+            }
+            Record::ToolEvent(r) => {
+                let is_invocation_identity = r.semantic_key == r.invocation_key;
+                if (r.event_kind == ToolEventKind::Invocation) != is_invocation_identity {
+                    out.push(Violation {
+                        path: format!("{path}.semantic_key"),
+                        rule: "invocation and result event identities must remain distinct",
+                    });
+                }
+            }
+            Record::ResourceAccess(_) => {}
         }
     }
 }

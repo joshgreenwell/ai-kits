@@ -2,7 +2,7 @@
 
 Created: 2026-09-13
 
-**34 filesystem tasks: 26 core delivery tasks, seven follow-ups, and one optional task awaiting a decision.** USG-001 is complete and USG-002 is in progress; the remaining tasks are unstarted unless their files say otherwise. Creating and maintaining this backlog does not itself run collection, change settings, schedule work, or authorize a deployment.
+**34 filesystem tasks: 26 core delivery tasks, seven follow-ups, and one optional task awaiting a decision.** USG-001 and USG-003 are complete, and USG-002 is in progress; the remaining tasks are unstarted unless their files say otherwise. Creating and maintaining this backlog does not itself run collection, change settings, schedule work, or authorize a deployment.
 
 Planning and tracking for this work live in these files. Do not use Jira. The USG identifiers are local backlog IDs, not Linear issue IDs. If the user later chooses Linear, carry these scopes and acceptance criteria across and record the mapping rather than creating duplicate sources of truth.
 
@@ -52,7 +52,7 @@ Every implementation task inherits these requirements:
 | --- | --- | --- | --- |
 | [USG-001: Define metric semantics, source precedence, and remaining display decisions](usg-001-metric-and-source-contract.md) | P0 | None | Done |
 | [USG-002: Preserve usage history and recover missing current collection evidence](usg-002-preserve-history-and-recover-publication.md) | P0 | None | In progress |
-| [USG-003: Extend the usage contract and storage for the missing attribution detail](usg-003-extend-detail-contract-and-storage.md) | P0 | [USG-001](usg-001-metric-and-source-contract.md) | Planned |
+| [USG-003: Extend the usage contract and storage for the missing attribution detail](usg-003-extend-detail-contract-and-storage.md) | P0 | [USG-001](usg-001-metric-and-source-contract.md) | Done |
 
 ## 2. Collection
 
@@ -163,4 +163,4 @@ The placeholder live `serve` mode is not needed for scheduled collection and rem
 
 ## Execution record
 
-USG-001 was completed in the filesystem with the shared metric/source contract and domain glossary. No runtime implementation, external issues, app tasks, automations, commits, or pull requests were created by preparing or beginning this backlog.
+USG-001 was completed in the filesystem with the shared metric/source contract and domain glossary. USG-003 completed the compatible envelope-v2 detail contract, cross-language fixtures, append-only storage migration, and server ingestion boundary; its collectors and production activation remain in their dependent stories. USG-002 has verified unattended Windows publication and remains open for the inaccessible-host inventory and production-wide reconciliation. No external issue tracker is used.

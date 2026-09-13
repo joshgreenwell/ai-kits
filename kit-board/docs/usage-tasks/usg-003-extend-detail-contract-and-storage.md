@@ -2,7 +2,7 @@
 
 [Backlog index](README.md) · [Direction](../usage-direction.md)
 
-Status: Planned
+Status: Done
 Priority: P0
 Scope: Core
 Stage: 1. Foundations
@@ -29,7 +29,7 @@ The request contract lacks retained effort/tier/context dimensions and complete 
 
 Run focused cross-language wire and store tests for old/new payloads, invalid data, duplicate identities, orphan events, permission boundaries, and migration compatibility. All fixtures are synthetic or sanitized with provenance.
 
-Apply the common completion requirements in the [backlog index](README.md). This file is a planned task, not evidence of implementation.
+Apply the common completion requirements in the [backlog index](README.md).
 
 ## Starting points
 
@@ -43,4 +43,16 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+Completed September 13, 2026 in the repository.
+
+- Kept envelope `schema_version: 2` and `/api/v1/usage`. Request pricing, token accounting, agent attribution, explicit project state, and adapter capability coverage are optional outer blocks whose inner fields are strict. An absent block means an older producer did not report the capability.
+- Added independent `agent.event`, `tool.event`, and `resource.access` records to the TypeScript authority, generated schema, vendored schema, and Rust contract. Stable semantic keys exclude binding and observation identity. Invocation/result rows share an invocation key while retaining distinct event keys, so retries, revisions, several results, and orphan evidence remain representable without increasing the invocation count.
+- Added reported-total, unclassified, complete/partial/inconsistent/unknown accounting rules. Positive unclassified remainders reconcile to the reported total, and reasoning remains a non-additive output subset and a lower bound on any reported total. Explicit component zeroes are retained as a call; missing evidence remains null or a typed Unknown state.
+- Added privacy-safe agent/project/resource fields. Raw resource paths, arguments, results, and content fail the strict wire schema. No semantic join has a database foreign key because a parent or token row may be unavailable.
+- Added `20260913230451_extend_usage_detail_contract.sql`. It leaves legacy extension columns null, preserves the old provider-dimension hash when pricing is absent or all null, adds generated activity/observed-total columns, creates the three append-only event ledgers, and grants `personal_hub_app` only select/insert access to them under RLS. The new provider reasoning-subset check is enforced for new writes but left unvalidated so a legacy row accepted by the prior schema cannot block the additive upgrade.
+- Updated ingestion to store every new field and event, reject identifiable invalid records independently, and permit browser installs to ingest only `allowance.reading`. Existing v2 fixtures and producers remain valid.
+- Added synthetic cross-language fixtures for pricing, zero/derived/total-only/inconsistent accounting, positive remainders, reasoning-only lower bounds, nested and rejected agent events, invocation revisions and multiple/orphan results, overlapping resources, capability coverage, explicit-null parity, and invalid privacy/identity/state combinations.
+
+Verification passed: `npm test` (75 passed, four database-only skips), `npm run test:db` (all eight migrations and the database integration suite), `npm run typecheck`, `npm run build`, `python companion/scripts/fixtures.py check`, `cargo test --workspace` (64 tests), `cargo fmt --all --check`, and `cargo clippy --workspace --all-targets -- -D warnings`. Direct PostgreSQL probes also covered a preexisting legacy reasoning-subset violation, deferred constraint validation, new-write enforcement, accounting and identity constraints, the project-alias null edge, semantic event constraints, grants, and RLS.
+
+The server migration must deploy before a companion emits the new variants because v2 has no runtime negotiation. USG-004 through USG-008 own actual request/pricing, agent, tool, project, and knowledge-source collection; USG-025 owns production activation and end-to-end release evidence.

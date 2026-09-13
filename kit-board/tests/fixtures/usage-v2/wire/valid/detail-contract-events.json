@@ -1,0 +1,578 @@
+{
+  "schema_version": 2,
+  "run": {
+    "run_id": "9c0f1a2b-3d4e-4f50-8a6b-7c8d9e0f1a2b",
+    "started_at": "2026-09-02T04:00:00.000Z",
+    "finished_at": "2026-09-02T04:00:02.500Z",
+    "companion_version": "2.0.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "settings_version": 3
+  },
+  "buckets": [],
+  "records": [
+    {
+      "record_id": "0e33e3d9-a661-5489-adf2-c31338333900",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:15:30.500Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "activity.request",
+      "semantic_key": "fbd78011537a520eaa45b42d40a6d525fbd78011537a520eaa45b42d40a6d525",
+      "product": "claude_code",
+      "surface": "cli",
+      "execution_host": "local",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "session_identity": "provider",
+      "parent_session_hash": null,
+      "model_requested": null,
+      "model_actual": "claude-sonnet-4",
+      "started_at": null,
+      "ended_at": "2026-09-02T03:15:30.500Z",
+      "tokens": {
+        "input_fresh": 100,
+        "input_cached": 0,
+        "input_cache_write": 0,
+        "output": 50,
+        "reasoning": 10
+      },
+      "tool_calls": null,
+      "project_hash": "1bf4020ce93a5501bce3600d96e92a781bf4020ce93a5501bce3600d96e92a78",
+      "client_version": "1.0.101",
+      "latency_ms": null,
+      "outcome": "completed",
+      "token_accounting": {
+        "reported_total": 155,
+        "unclassified": 5,
+        "composition_state": "complete"
+      },
+      "pricing": {
+        "reasoning_effort": "high",
+        "service_tier": "standard",
+        "speed": null,
+        "context_window_tokens": 200000,
+        "cache_write_ttl": "5m"
+      },
+      "agent": {
+        "key": "bcfc9e378a41576595699e49424e069cbcfc9e378a41576595699e49424e069c",
+        "identity_basis": "provider",
+        "parent_key": null,
+        "parent_identity_basis": "none",
+        "class": "main",
+        "name": null,
+        "depth": 0
+      },
+      "project": {
+        "key": "1bf4020ce93a5501bce3600d96e92a781bf4020ce93a5501bce3600d96e92a78",
+        "basis": "working_directory"
+      }
+    },
+    {
+      "record_id": "ba829f19-d6bc-5539-ad90-35998c8bedcf",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:15:30.500Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "activity.request",
+      "semantic_key": "5220e5c25e845122ba8c5d219a764d7f5220e5c25e845122ba8c5d219a764d7f",
+      "product": "claude_code",
+      "surface": "cli",
+      "execution_host": "local",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "session_identity": "provider",
+      "parent_session_hash": null,
+      "model_requested": null,
+      "model_actual": null,
+      "started_at": null,
+      "ended_at": "2026-09-02T03:15:30.500Z",
+      "tokens": {
+        "input_fresh": 0,
+        "input_cached": 0,
+        "input_cache_write": 0,
+        "output": 0,
+        "reasoning": 0
+      },
+      "tool_calls": null,
+      "project_hash": null,
+      "client_version": "1.0.101",
+      "latency_ms": null,
+      "outcome": "completed",
+      "token_accounting": {
+        "reported_total": 0,
+        "unclassified": 0,
+        "composition_state": "complete"
+      },
+      "project": {
+        "key": null,
+        "basis": "none"
+      }
+    },
+    {
+      "record_id": "7f9d9115-f801-5f24-a432-97b9a3499f7b",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:15:30.500Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "activity.request",
+      "semantic_key": "42ceb97a20ca5f4895d7b91c5ad35a4742ceb97a20ca5f4895d7b91c5ad35a47",
+      "product": "claude_code",
+      "surface": "cli",
+      "execution_host": "local",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "session_identity": "provider",
+      "parent_session_hash": null,
+      "model_requested": null,
+      "model_actual": "claude-sonnet-4",
+      "started_at": null,
+      "ended_at": "2026-09-02T03:15:30.500Z",
+      "tokens": {
+        "input_fresh": null,
+        "input_cached": null,
+        "input_cache_write": null,
+        "output": null,
+        "reasoning": null
+      },
+      "tool_calls": null,
+      "project_hash": null,
+      "client_version": "1.0.101",
+      "latency_ms": null,
+      "outcome": "completed",
+      "token_accounting": {
+        "reported_total": 42,
+        "unclassified": 42,
+        "composition_state": "partial"
+      },
+      "project": {
+        "key": null,
+        "basis": "unknown"
+      }
+    },
+    {
+      "record_id": "50f1fc51-267f-5e00-ab95-a1eaa0666783",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:15:30.500Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "activity.request",
+      "semantic_key": "8161578970c954d0b30dd485599290788161578970c954d0b30dd48559929078",
+      "product": "claude_code",
+      "surface": "cli",
+      "execution_host": "local",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "session_identity": "provider",
+      "parent_session_hash": null,
+      "model_requested": null,
+      "model_actual": "claude-sonnet-4",
+      "started_at": null,
+      "ended_at": "2026-09-02T03:15:30.500Z",
+      "tokens": {
+        "input_fresh": 100,
+        "input_cached": 0,
+        "input_cache_write": 0,
+        "output": 50,
+        "reasoning": null
+      },
+      "tool_calls": null,
+      "project_hash": null,
+      "client_version": "1.0.101",
+      "latency_ms": null,
+      "outcome": "completed",
+      "token_accounting": {
+        "reported_total": null,
+        "unclassified": null,
+        "composition_state": "complete"
+      }
+    },
+    {
+      "record_id": "43747729-e01c-5d59-80b4-553fa7be8706",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:15:30.500Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "activity.request",
+      "semantic_key": "8173f7d112ee505fb2a3eb2cf8aee2a58173f7d112ee505fb2a3eb2cf8aee2a5",
+      "product": "claude_code",
+      "surface": "cli",
+      "execution_host": "local",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "session_identity": "provider",
+      "parent_session_hash": null,
+      "model_requested": null,
+      "model_actual": "claude-sonnet-4",
+      "started_at": null,
+      "ended_at": "2026-09-02T03:15:30.500Z",
+      "tokens": {
+        "input_fresh": 100,
+        "input_cached": 0,
+        "input_cache_write": 0,
+        "output": 50,
+        "reasoning": null
+      },
+      "tool_calls": null,
+      "project_hash": null,
+      "client_version": "1.0.101",
+      "latency_ms": null,
+      "outcome": "completed",
+      "token_accounting": {
+        "reported_total": 140,
+        "unclassified": null,
+        "composition_state": "inconsistent"
+      }
+    },
+    {
+      "record_id": "0e395a13-a558-5a3d-9e7c-a92c9678d19e",
+      "binding_id": "7f3d4e5a-6b72-4c8d-ae9f-2a3b4c5d6e7f",
+      "adapter": "cursor_account",
+      "channel": "provider_api",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "reported",
+      "parser_version": "1",
+      "record_type": "account.usage_bucket",
+      "report_source": "cursor_usage_events",
+      "bucket_start": "2026-09-02T03:00:00.000Z",
+      "bucket_end": "2026-09-02T03:00:01.000Z",
+      "provider_timezone": null,
+      "dimensions": {
+        "model": "claude-sonnet-4",
+        "product": "cursor",
+        "client": null,
+        "user_ref": null,
+        "workspace_ref": null,
+        "api_key_ref": null,
+        "pricing": {
+          "reasoning_effort": "high",
+          "service_tier": "standard",
+          "speed": null,
+          "context_window_tokens": 200000,
+          "cache_write_ttl": "5m"
+        }
+      },
+      "measures": {
+        "requests": 1,
+        "input_tokens": 1200,
+        "cached_tokens": 800,
+        "cache_write_tokens": 0,
+        "output_tokens": 300,
+        "reasoning_tokens": null,
+        "total_tokens": 2300
+      },
+      "provider_event_id": "evt_synthetic_000001",
+      "provider_refreshed_at": "2026-09-02T03:19:00.000Z",
+      "token_accounting": {
+        "reported_total": 2300,
+        "unclassified": 0,
+        "composition_state": "complete"
+      }
+    },
+    {
+      "record_id": "3ce28150-6162-5176-8c9d-f29c19fc32ea",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "agent.event",
+      "semantic_key": "1e2345bee9ea55bda22faa6f05fec4fc1e2345bee9ea55bda22faa6f05fec4fc",
+      "event_kind": "spawn",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "agent": {
+        "key": "246fe983435c5f72b3b1f9c7a80566bb246fe983435c5f72b3b1f9c7a80566bb",
+        "identity_basis": "provider",
+        "parent_key": "bcfc9e378a41576595699e49424e069cbcfc9e378a41576595699e49424e069c",
+        "parent_identity_basis": "provider",
+        "class": "builtin",
+        "name": "Explore",
+        "depth": 1
+      },
+      "tool_invocation_key": "43e574b6219956b9a756f62ca8892b4043e574b6219956b9a756f62ca8892b40",
+      "outcome": "succeeded"
+    },
+    {
+      "record_id": "84ecce8d-15a7-5326-8594-b0267a5b45c5",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "agent.event",
+      "semantic_key": "8a5b92c0b130521390460bd7cad360668a5b92c0b130521390460bd7cad36066",
+      "event_kind": "start",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "agent": {
+        "key": "246fe983435c5f72b3b1f9c7a80566bb246fe983435c5f72b3b1f9c7a80566bb",
+        "identity_basis": "provider",
+        "parent_key": "bcfc9e378a41576595699e49424e069cbcfc9e378a41576595699e49424e069c",
+        "parent_identity_basis": "provider",
+        "class": "builtin",
+        "name": "Explore",
+        "depth": 1
+      },
+      "tool_invocation_key": null,
+      "outcome": "succeeded"
+    },
+    {
+      "record_id": "43e331d2-8540-514e-9d5e-c5a8c376c53c",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "agent.event",
+      "semantic_key": "d2592bd445485fd59cfe12080aaf30e9d2592bd445485fd59cfe12080aaf30e9",
+      "event_kind": "resume",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "agent": {
+        "key": "246fe983435c5f72b3b1f9c7a80566bb246fe983435c5f72b3b1f9c7a80566bb",
+        "identity_basis": "provider",
+        "parent_key": "bcfc9e378a41576595699e49424e069cbcfc9e378a41576595699e49424e069c",
+        "parent_identity_basis": "provider",
+        "class": "builtin",
+        "name": "Explore",
+        "depth": 1
+      },
+      "tool_invocation_key": null,
+      "outcome": "succeeded"
+    },
+    {
+      "record_id": "5b179e34-7ea4-5e20-9c75-b8dc23ed8e55",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "agent.event",
+      "semantic_key": "dc35b67b3d6e57fb92111b87efb59b50dc35b67b3d6e57fb92111b87efb59b50",
+      "event_kind": "start",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "agent": {
+        "key": "ccf3b203e0865ae481f655c947d230abccf3b203e0865ae481f655c947d230ab",
+        "identity_basis": "provider",
+        "parent_key": "246fe983435c5f72b3b1f9c7a80566bb246fe983435c5f72b3b1f9c7a80566bb",
+        "parent_identity_basis": "provider",
+        "class": "custom",
+        "name": null,
+        "depth": 2
+      },
+      "tool_invocation_key": null,
+      "outcome": "succeeded"
+    },
+    {
+      "record_id": "590fe276-c2b5-5493-9664-3fbf6cd022f2",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "agent.event",
+      "semantic_key": "48611106264c5ebda6445fd887a20a7448611106264c5ebda6445fd887a20a74",
+      "event_kind": "spawn",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "agent": {
+        "key": null,
+        "identity_basis": "unknown",
+        "parent_key": "bcfc9e378a41576595699e49424e069cbcfc9e378a41576595699e49424e069c",
+        "parent_identity_basis": "provider",
+        "class": "unknown",
+        "name": null,
+        "depth": null
+      },
+      "tool_invocation_key": null,
+      "outcome": "denied"
+    },
+    {
+      "record_id": "1213cb08-b673-5a52-95df-63354718fb2b",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "tool.event",
+      "semantic_key": "43e574b6219956b9a756f62ca8892b4043e574b6219956b9a756f62ca8892b40",
+      "invocation_key": "43e574b6219956b9a756f62ca8892b4043e574b6219956b9a756f62ca8892b40",
+      "event_kind": "invocation",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "caller_request_key": "fbd78011537a520eaa45b42d40a6d525fbd78011537a520eaa45b42d40a6d525",
+      "caller_agent_key": "246fe983435c5f72b3b1f9c7a80566bb246fe983435c5f72b3b1f9c7a80566bb",
+      "parent_invocation_key": null,
+      "tool": {
+        "name": "Read",
+        "namespace": null,
+        "class": "builtin"
+      },
+      "outcome": "unknown"
+    },
+    {
+      "record_id": "52cc27db-60d7-5ab9-b713-cdf4f363b12b",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "tool.event",
+      "semantic_key": "a12f5edabb695668bad044cf121f83bfa12f5edabb695668bad044cf121f83bf",
+      "invocation_key": "43e574b6219956b9a756f62ca8892b4043e574b6219956b9a756f62ca8892b40",
+      "event_kind": "result",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "caller_request_key": "fbd78011537a520eaa45b42d40a6d525fbd78011537a520eaa45b42d40a6d525",
+      "caller_agent_key": "246fe983435c5f72b3b1f9c7a80566bb246fe983435c5f72b3b1f9c7a80566bb",
+      "parent_invocation_key": null,
+      "tool": {
+        "name": "Read",
+        "namespace": null,
+        "class": "builtin"
+      },
+      "outcome": "succeeded"
+    },
+    {
+      "record_id": "c5fffb2a-767d-5edb-8a4a-9e638789270a",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "tool.event",
+      "semantic_key": "5745c7e2ed8f5dd087bbe1e8717047c25745c7e2ed8f5dd087bbe1e8717047c2",
+      "invocation_key": "43e574b6219956b9a756f62ca8892b4043e574b6219956b9a756f62ca8892b40",
+      "event_kind": "result",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "caller_request_key": "fbd78011537a520eaa45b42d40a6d525fbd78011537a520eaa45b42d40a6d525",
+      "caller_agent_key": "246fe983435c5f72b3b1f9c7a80566bb246fe983435c5f72b3b1f9c7a80566bb",
+      "parent_invocation_key": null,
+      "tool": {
+        "name": "Read",
+        "namespace": null,
+        "class": "builtin"
+      },
+      "outcome": "succeeded"
+    },
+    {
+      "record_id": "2737a9e6-8a1a-5c12-8894-90eebdd85e64",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "tool.event",
+      "semantic_key": "914bb13b35e153f68c5d103f6ffe8c94914bb13b35e153f68c5d103f6ffe8c94",
+      "invocation_key": "573d07c6be2250fa8913300e17dc0652573d07c6be2250fa8913300e17dc0652",
+      "event_kind": "result",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "caller_request_key": null,
+      "caller_agent_key": "246fe983435c5f72b3b1f9c7a80566bb246fe983435c5f72b3b1f9c7a80566bb",
+      "parent_invocation_key": null,
+      "tool": {
+        "name": "Read",
+        "namespace": null,
+        "class": "builtin"
+      },
+      "outcome": "failed"
+    },
+    {
+      "record_id": "f548152b-0936-5191-bee9-197dfa49e775",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "resource.access",
+      "semantic_key": "090f1d3dcfcf58d5a0f775c74da76c9e090f1d3dcfcf58d5a0f775c74da76c9e",
+      "invocation_key": "43e574b6219956b9a756f62ca8892b4043e574b6219956b9a756f62ca8892b40",
+      "resource_key": "obsidian.primary",
+      "configuration_version": "resources.v1",
+      "access_kind": "read",
+      "evidence_basis": "explicit_argument",
+      "outcome": "succeeded"
+    },
+    {
+      "record_id": "0698a265-9fca-597c-9525-6b38d9cfeb86",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:20:00.000Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "resource.access",
+      "semantic_key": "a671a5df9cd254b2bcf7168033913b1fa671a5df9cd254b2bcf7168033913b1f",
+      "invocation_key": "43e574b6219956b9a756f62ca8892b4043e574b6219956b9a756f62ca8892b40",
+      "resource_key": "obsidian.reference",
+      "configuration_version": "resources.v1",
+      "access_kind": "search",
+      "evidence_basis": "explicit_argument",
+      "outcome": "succeeded"
+    }
+  ],
+  "coverage": [
+    {
+      "adapter": "claude_execution",
+      "state": "ok",
+      "detail_code": null,
+      "stores_discovered": 0,
+      "files": 0,
+      "bytes_read": 0,
+      "records_emitted": 17,
+      "malformed": 0,
+      "rejected_by_server": 0,
+      "duration_ms": 1,
+      "cursor_state": "complete",
+      "probe_requests": 0,
+      "parser_version": "2.0.0+v1.1.0",
+      "capabilities": [
+        {
+          "dimension": "requests",
+          "state": "complete",
+          "detail_code": null
+        },
+        {
+          "dimension": "token_composition",
+          "state": "complete",
+          "detail_code": null
+        },
+        {
+          "dimension": "pricing",
+          "state": "partial",
+          "detail_code": "missing_effort"
+        },
+        {
+          "dimension": "project",
+          "state": "partial",
+          "detail_code": null
+        },
+        {
+          "dimension": "agent",
+          "state": "complete",
+          "detail_code": null
+        },
+        {
+          "dimension": "tool",
+          "state": "complete",
+          "detail_code": null
+        },
+        {
+          "dimension": "resource",
+          "state": "partial",
+          "detail_code": "indirect_access_unknown"
+        }
+      ]
+    }
+  ]
+}

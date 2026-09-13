@@ -14,6 +14,43 @@ const run = promisify(execFile);
 const root = process.cwd();
 const port = String(55440 + Math.floor(Math.random() * 100));
 const databaseName = 'personal_hub_test';
+const usageDetailMigration = '20260913230451_extend_usage_detail_contract.sql';
+
+async function seedUsageDetailUpgradeFixture(db) {
+  // Synthetic row accepted by the original bucket schema. Its reasoning count is
+  // intentionally above output so the next migration must preserve it without
+  // weakening enforcement for subsequent writes.
+  await db.unsafe(`
+    INSERT INTO personal_hub.usage_accounts (id, provider, label)
+      VALUES ('migration-upgrade-legacy', 'claude', 'Migration upgrade legacy fixture');
+    INSERT INTO personal_hub.telemetry_sources
+      (id, account_id, machine_label, mode, key_hash)
+      VALUES ('00000000-0000-4000-8000-000000000301', 'migration-upgrade-legacy',
+        'Synthetic upgrade fixture', 'companion', repeat('1', 64));
+    INSERT INTO personal_hub.companion_installs
+      (id, machine_label, kind, platform, arch, key_hash)
+      VALUES ('00000000-0000-4000-8000-000000000302', 'Synthetic upgrade fixture',
+        'companion', 'linux', 'amd64', repeat('2', 64));
+    INSERT INTO personal_hub.companion_bindings
+      (id, install_id, account_id, source_id, provider, identity_hash)
+      VALUES ('00000000-0000-4000-8000-000000000303',
+        '00000000-0000-4000-8000-000000000302', 'migration-upgrade-legacy',
+        '00000000-0000-4000-8000-000000000301', 'claude', repeat('3', 64));
+    INSERT INTO personal_hub.account_usage_buckets
+      (id, account_id, binding_id, provider, adapter, report_source,
+       bucket_start, bucket_end, provider_timezone, model, product, client,
+       user_ref, workspace_ref, api_key_ref, dimensions_hash, requests,
+       input_tokens, cached_tokens, cache_write_tokens, output_tokens,
+       reasoning_tokens, total_tokens, provider_event_id, provider_refreshed_at,
+       basis, observed_at, content_hash)
+      VALUES ('00000000-0000-4000-8000-000000000304', 'migration-upgrade-legacy',
+        '00000000-0000-4000-8000-000000000303', 'claude', 'claude_account',
+        'migration_upgrade_probe', '2026-09-01T00:00:00Z', '2026-09-01T01:00:00Z',
+        'UTC', 'synthetic-model', 'claude_code', NULL, NULL, NULL, NULL,
+        repeat('4', 64), 1, 0, 0, 0, 1, 2, 1, 'legacy-reasoning-above-output',
+        '2026-09-01T01:01:00Z', 'reported', '2026-09-01T01:01:00Z', repeat('5', 64));
+  `);
+}
 
 async function onPath(file) {
   try { await run(process.platform === 'win32' ? 'where' : 'which', [file]); return true; } catch { return false; }
@@ -78,7 +115,10 @@ try {
   await admin.end({ timeout: 1 });
   const db = postgres({ ...options, database: databaseName, prepare: false });
   const migrations = (await readdir(join(root, 'supabase/migrations'))).filter(file => file.endsWith('.sql')).sort();
-  for (const migration of migrations) await db.file(join(root, 'supabase/migrations', migration));
+  for (const migration of migrations) {
+    if (migration === usageDetailMigration) await seedUsageDetailUpgradeFixture(db);
+    await db.file(join(root, 'supabase/migrations', migration));
+  }
   await db.end({ timeout: 1 });
   console.log(`Applied ${migrations.length} migrations.`);
   const tests = (await readdir(join(root, 'tests'))).filter(file => file.endsWith('.integration.test.ts') || file.endsWith('-contract.test.ts')).sort().map(file => `tests/${file}`);

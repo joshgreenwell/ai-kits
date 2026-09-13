@@ -5,7 +5,7 @@ import { readCache } from './read-cache';
 import { collectionSettingsSchema, installOverrideSchema, mergeSettings, type CollectionSettings, type InstallOverride } from './companion-settings';
 import {
   adapterProvider, bindingRequestSchema, contentSubject, identityRequestSchema, isBrowserAdapter, issuePairingCodeSchema,
-  normalizePairingCode, pairRequestSchema, PAIRING_ALPHABET, type AdapterCoverage, type RejectionReason, type UsageEnvelope, type UsageRecord,
+  normalizePairingCode, pairRequestSchema, PAIRING_ALPHABET, type AdapterCoverage, type InvalidUsageRecord, type RejectionReason, type UsageEnvelope, type UsageRecord,
 } from './usage-contract';
 
 type Sql = ReturnType<typeof postgres>;
@@ -13,6 +13,11 @@ type Row = Record<string, unknown>;
 const hash = (value: unknown) => createHash('sha256').update(typeof value === 'string' ? value : stableJson(value)).digest('hex');
 const isUuid = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f-]{36}$/.test(value);
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const dimensionsSubject = (dimensions: Record<string, unknown>) => {
+  const { pricing, ...legacy } = dimensions;
+  if (!pricing || Object.values(pricing as Record<string, unknown>).every(value => value === null)) return legacy;
+  return dimensions;
+};
 
 export type CompanionInstallRow = {
   id: string; kind: 'companion' | 'browser'; machine_label: string; platform: string; arch: string;
@@ -172,7 +177,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
     if (!binding.enabled) return 'binding_not_enabled';
     if (binding.identity_hash === null && binding.identity_reset_at !== null) return 'identity_changed';
     if (isBrowserAdapter(record.adapter) !== (install.kind === 'browser')) return 'adapter_not_allowed_for_install';
-    if (install.kind === 'browser' && record.record_type === 'activity.request') return 'record_type_not_allowed_for_install';
+    if (install.kind === 'browser' && record.record_type !== 'allowance.reading') return 'record_type_not_allowed_for_install';
     if (adapterProvider(record.adapter) !== binding.provider) return 'adapter_provider_mismatch';
     return null;
   }
@@ -187,8 +192,8 @@ export function createUsageStore(getDatabase?: () => Sql) {
       adapters: entries };
   }
 
-  /** One transaction: buckets into the v1 ledger, records into the four ledgers, coverage into the run record. */
-  async function ingestUsage(install: CompanionInstallRow, envelope: UsageEnvelope) {
+  /** One transaction: buckets into v1, records into the seven v2 ledgers, coverage into the run record. */
+  async function ingestUsage(install: CompanionInstallRow, envelope: UsageEnvelope, invalid: InvalidUsageRecord[] = []) {
     const db = await sql();
     return db.begin(async transaction => {
       const tx = transaction as unknown as Sql;
@@ -212,8 +217,9 @@ export function createUsageStore(getDatabase?: () => Sql) {
         }
       }
 
-      const rejected: { record_id: string; reason: RejectionReason }[] = [];
+      const rejected: { record_id: string; reason: RejectionReason }[] = [...invalid];
       const requests: Row[] = [], usage: Row[] = [], readings: Row[] = [], money: Row[] = [];
+      const agentEvents: Row[] = [], toolEvents: Row[] = [], resourceAccesses: Row[] = [];
       for (const record of envelope.records) {
         const binding = bindings.get(record.binding_id);
         const reason = rejection(install, binding, record);
@@ -227,14 +233,30 @@ export function createUsageStore(getDatabase?: () => Sql) {
               parent_session_hash: record.parent_session_hash, model_requested: record.model_requested, model_actual: record.model_actual,
               started_at: record.started_at, ended_at: record.ended_at, input_fresh_tokens: record.tokens.input_fresh, input_cached_tokens: record.tokens.input_cached,
               input_cache_write_tokens: record.tokens.input_cache_write, output_tokens: record.tokens.output, reasoning_tokens: record.tokens.reasoning,
+              reported_total_tokens: record.token_accounting?.reported_total ?? null,
+              unclassified_tokens: record.token_accounting?.unclassified ?? null, token_state: record.token_accounting?.composition_state ?? null,
+              reasoning_effort: record.pricing?.reasoning_effort ?? null, service_tier: record.pricing?.service_tier ?? null,
+              speed: record.pricing?.speed ?? null, context_window_tokens: record.pricing?.context_window_tokens ?? null,
+              cache_write_ttl: record.pricing?.cache_write_ttl ?? null,
+              agent_key: record.agent?.key ?? null, agent_identity_basis: record.agent?.identity_basis ?? null,
+              parent_agent_key: record.agent?.parent_key ?? null, parent_agent_identity_basis: record.agent?.parent_identity_basis ?? null,
+              agent_class: record.agent?.class ?? null, agent_name: record.agent?.name ?? null, agent_depth: record.agent?.depth ?? null,
               tool_calls: record.tool_calls, tools: tx.json((record.tools ?? null) as postgres.JSONValue), project_hash: record.project_hash, client_version: record.client_version,
+              project_key: record.project?.key ?? null, project_basis: record.project?.basis ?? null,
               latency_ms: record.latency_ms, outcome: record.outcome, parser_version: record.parser_version });
             break;
-          case 'account.usage_bucket':
+          case 'account.usage_bucket': {
+            const { pricing, ...legacyDimensions } = record.dimensions;
             usage.push({ ...base, report_source: record.report_source, bucket_start: record.bucket_start, bucket_end: record.bucket_end,
-              provider_timezone: record.provider_timezone, ...record.dimensions, dimensions_hash: hash(record.dimensions), ...record.measures,
+              provider_timezone: record.provider_timezone, ...legacyDimensions,
+              reasoning_effort: pricing?.reasoning_effort ?? null, service_tier: pricing?.service_tier ?? null,
+              speed: pricing?.speed ?? null, context_window_tokens: pricing?.context_window_tokens ?? null,
+              cache_write_ttl: pricing?.cache_write_ttl ?? null,
+              dimensions_hash: hash(dimensionsSubject(record.dimensions)), ...record.measures,
+              unclassified_tokens: record.token_accounting?.unclassified ?? null, token_state: record.token_accounting?.composition_state ?? null,
               provider_event_id: record.provider_event_id, provider_refreshed_at: record.provider_refreshed_at });
             break;
+          }
           case 'allowance.reading': {
             // The readings ledger has no basis column: a reading is always provider-reported.
             const { basis: _basis, ...reading } = base;
@@ -248,6 +270,28 @@ export function createUsageStore(getDatabase?: () => Sql) {
               price_basis: record.price_basis, period_start: record.period_start, period_end: record.period_end,
               reference_kind: record.reference.kind, reference_key: record.reference.key, sku: record.sku, model: record.model });
             break;
+          case 'agent.event':
+            agentEvents.push({ ...base, channel: record.channel, record_id: record.record_id, semantic_key: record.semantic_key,
+              event_kind: record.event_kind, session_hash: record.session_hash, agent_key: record.agent.key,
+              agent_identity_basis: record.agent.identity_basis, parent_agent_key: record.agent.parent_key,
+              parent_agent_identity_basis: record.agent.parent_identity_basis, agent_class: record.agent.class,
+              agent_name: record.agent.name, agent_depth: record.agent.depth, tool_invocation_key: record.tool_invocation_key,
+              outcome: record.outcome, parser_version: record.parser_version });
+            break;
+          case 'tool.event':
+            toolEvents.push({ ...base, channel: record.channel, record_id: record.record_id, semantic_key: record.semantic_key,
+              invocation_key: record.invocation_key, event_kind: record.event_kind, session_hash: record.session_hash,
+              caller_request_key: record.caller_request_key, caller_agent_key: record.caller_agent_key,
+              parent_invocation_key: record.parent_invocation_key, tool_name: record.tool.name,
+              tool_namespace: record.tool.namespace, tool_class: record.tool.class, outcome: record.outcome,
+              parser_version: record.parser_version });
+            break;
+          case 'resource.access':
+            resourceAccesses.push({ ...base, channel: record.channel, record_id: record.record_id, semantic_key: record.semantic_key,
+              invocation_key: record.invocation_key, resource_key: record.resource_key,
+              configuration_version: record.configuration_version, access_kind: record.access_kind,
+              evidence_basis: record.evidence_basis, outcome: record.outcome, parser_version: record.parser_version });
+            break;
         }
       }
       let acceptedRecords = 0;
@@ -258,6 +302,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
       };
       await insert('activity_requests', requests); await insert('account_usage_buckets', usage);
       await insert('allowance_readings', readings); await insert('money_entries', money);
+      await insert('agent_events', agentEvents); await insert('tool_events', toolEvents); await insert('resource_accesses', resourceAccesses);
 
       await tx`INSERT INTO personal_hub.companion_runs (id, install_id, run_id, started_at, finished_at, companion_version, settings_version, coverage,
           accepted_buckets, accepted_records, rejected_records)
@@ -385,7 +430,10 @@ export function createUsageStore(getDatabase?: () => Sql) {
         (SELECT count(*)::int FROM personal_hub.activity_requests WHERE observed_at >= now() - interval '35 days') AS activity_requests,
         (SELECT count(*)::int FROM personal_hub.account_usage_buckets WHERE observed_at >= now() - interval '35 days') AS account_usage_buckets,
         (SELECT count(*)::int FROM personal_hub.allowance_readings WHERE observed_at >= now() - interval '35 days') AS allowance_readings,
-        (SELECT count(*)::int FROM personal_hub.money_entries WHERE observed_at >= now() - interval '35 days') AS money_entries`,
+        (SELECT count(*)::int FROM personal_hub.money_entries WHERE observed_at >= now() - interval '35 days') AS money_entries,
+        (SELECT count(*)::int FROM personal_hub.agent_events WHERE observed_at >= now() - interval '35 days') AS agent_events,
+        (SELECT count(*)::int FROM personal_hub.tool_events WHERE observed_at >= now() - interval '35 days') AS tool_events,
+        (SELECT count(*)::int FROM personal_hub.resource_accesses WHERE observed_at >= now() - interval '35 days') AS resource_accesses`,
       // Current reading per meter: reader rank, then the freshest observation within two hours of the newest.
       db`WITH ranked AS (
         SELECT r.account_id, r.meter_key, r.label, r.kind, r.value, r.unit, r.capacity, r.window_minutes, r.resets_at, r.reader, r.observed_at,
@@ -414,7 +462,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
         WHERE r.account_id = $1 AND r.observed_at >= $2 AND r.observed_at < $3
         ORDER BY r.semantic_key, ${CHANNEL_RANK}, ${IDENTITY_RANK}, r.observed_at DESC)
       SELECT count(*)::int AS requests, sum(input_fresh_tokens)::float8 AS input_fresh, sum(input_cached_tokens)::float8 AS input_cached,
-        sum(input_cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, sum(total_tokens)::float8 AS total
+        sum(input_cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, sum(observed_total_tokens)::float8 AS total
       FROM canonical`, [accountId, start, end]);
     const [usage] = await db.unsafe(`WITH canonical AS (
         SELECT DISTINCT ON (u.report_source, u.bucket_start, u.bucket_end, u.dimensions_hash) u.*
