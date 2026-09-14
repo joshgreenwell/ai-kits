@@ -48,6 +48,9 @@ pub struct Ctx {
     /// v2 only: the contract surface derived from the Codex `originator` or `source`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<String>,
+    /// v3: the effort recorded on the current Codex turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 impl Ctx {
@@ -63,6 +66,7 @@ impl Ctx {
             client_version: None,
             cwd: None,
             surface: None,
+            reasoning_effort: None,
         }
     }
 }
@@ -73,6 +77,9 @@ pub struct ScanMetrics {
     pub files: u64,
     pub bytes_read: u64,
     pub malformed_lines: u64,
+    /// Files with an unresolved malformed relevant line, including gaps found
+    /// on an earlier run whose checkpoint was reused.
+    pub history_gap_files: u64,
     pub unavailable_roots: u64,
     /// v2 only: roots that existed.
     pub stores_discovered: u64,
@@ -92,6 +99,25 @@ pub struct EventExtras {
 pub struct Attribution<'a> {
     pub cwd: Option<&'a str>,
     pub surface: Option<&'a str>,
+}
+
+/// Nullable request facts retained alongside the legacy counters. Missing or
+/// invalid fields stay unknown; they are never converted to zero.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RequestEvidence {
+    pub input_fresh: Option<i64>,
+    pub input_cached: Option<i64>,
+    pub input_cache_write: Option<i64>,
+    pub output: Option<i64>,
+    pub reasoning: Option<i64>,
+    pub reported_total: Option<i64>,
+    pub model_requested: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub service_tier: Option<String>,
+    pub speed: Option<String>,
+    pub context_window_tokens: Option<i64>,
+    pub cache_write_ttl: Option<String>,
+    pub outcome: Option<String>,
 }
 
 /// A working directory as a project key: trailing separators trimmed, bounded, otherwise as
@@ -177,6 +203,93 @@ fn is_int_not_bool(value: Option<&Value>) -> Option<i64> {
     }
 }
 
+fn non_negative(value: Option<&Value>) -> Option<i64> {
+    is_int_not_bool(value).filter(|value| *value >= 0)
+}
+
+fn bounded_code(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(50).collect())
+}
+
+fn claude_evidence(object: &Map<String, Value>, usage: &Value) -> RequestEvidence {
+    let input_fresh = non_negative(get(usage, "input_tokens").ok().flatten());
+    let input_cached = non_negative(get(usage, "cache_read_input_tokens").ok().flatten());
+    let input_cache_write = non_negative(get(usage, "cache_creation_input_tokens").ok().flatten());
+    let output = non_negative(get(usage, "output_tokens").ok().flatten());
+    let reasoning = get(usage, "output_tokens_details")
+        .ok()
+        .flatten()
+        .and_then(|details| get(details, "thinking_tokens").ok().flatten())
+        .and_then(|value| non_negative(Some(value)))
+        .filter(|value| output.is_none_or(|output| *value <= output));
+    let cache_creation = get(usage, "cache_creation").ok().flatten();
+    let five_minute = cache_creation
+        .and_then(|value| get(value, "ephemeral_5m_input_tokens").ok().flatten())
+        .and_then(|value| non_negative(Some(value)))
+        .unwrap_or(0);
+    let one_hour = cache_creation
+        .and_then(|value| get(value, "ephemeral_1h_input_tokens").ok().flatten())
+        .and_then(|value| non_negative(Some(value)))
+        .unwrap_or(0);
+    let cache_write_ttl = match (five_minute > 0, one_hour > 0) {
+        (true, true) => Some("mixed".to_owned()),
+        (true, false) => Some("5m".to_owned()),
+        (false, true) => Some("1h".to_owned()),
+        (false, false) => None,
+    };
+    RequestEvidence {
+        input_fresh,
+        input_cached,
+        input_cache_write,
+        output,
+        reasoning,
+        reasoning_effort: bounded_code(object.get("effort")),
+        service_tier: bounded_code(get(usage, "service_tier").ok().flatten()),
+        speed: bounded_code(get(usage, "speed").ok().flatten()),
+        cache_write_ttl,
+        outcome: Some(
+            if object.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true) {
+                "failed"
+            } else {
+                "completed"
+            }
+            .to_owned(),
+        ),
+        ..RequestEvidence::default()
+    }
+}
+
+fn codex_evidence(ctx: &Ctx, info: &Value, usage: &Value) -> RequestEvidence {
+    let input_total = non_negative(get(usage, "input_tokens").ok().flatten());
+    let input_cached = non_negative(get(usage, "cached_input_tokens").ok().flatten());
+    let input_cache_write = non_negative(get(usage, "cache_write_input_tokens").ok().flatten());
+    let input_fresh = match (input_total, input_cached, input_cache_write) {
+        (Some(total), Some(cached), Some(written)) => {
+            Some(total.saturating_sub(cached.saturating_add(written)))
+        }
+        _ => None,
+    };
+    let output = non_negative(get(usage, "output_tokens").ok().flatten());
+    let reasoning = non_negative(get(usage, "reasoning_output_tokens").ok().flatten())
+        .filter(|value| output.is_none_or(|output| *value <= output));
+    RequestEvidence {
+        input_fresh,
+        input_cached,
+        input_cache_write,
+        output,
+        reasoning,
+        reported_total: non_negative(get(usage, "total_tokens").ok().flatten()),
+        reasoning_effort: ctx.reasoning_effort.clone(),
+        context_window_tokens: non_negative(get(info, "model_context_window").ok().flatten()),
+        outcome: Some("completed".to_owned()),
+        ..RequestEvidence::default()
+    }
+}
+
 /// `components(provider, usage)`: the four exclusive classes.
 pub fn components(provider: Provider, usage: &Value) -> Result<[i64; 4], Malformed> {
     let field = |key: &str| get(usage, key);
@@ -208,14 +321,26 @@ pub fn save_event(
     timestamp_text: &str,
     model: &str,
     values: [i64; 4],
+    evidence: &RequestEvidence,
     extras: &EventExtras,
     client_version: Option<&str>,
     attribution: Attribution<'_>,
 ) -> Result<(), AdapterError> {
-    if values.iter().sum::<i64>() == 0 {
+    let Some(hour) = iso(hour_floor(timestamp) as f64) else { return Ok(()) };
+    let bucket_eligible = values.iter().sum::<i64>() != 0;
+    let has_token_evidence = [
+        evidence.input_fresh,
+        evidence.input_cached,
+        evidence.input_cache_write,
+        evidence.output,
+        evidence.reasoning,
+        evidence.reported_total,
+    ]
+    .iter()
+    .any(Option::is_some);
+    if !bucket_eligible && !has_token_evidence {
         return Ok(());
     }
-    let Some(hour) = iso(hour_floor(timestamp) as f64) else { return Ok(()) };
     let project = attribution.cwd.and_then(normalize_cwd).map(|cwd| (project_hash(&cwd), cwd));
     if let Some((hash, cwd)) = &project {
         state.upsert_project(binding, hash.as_str(), cwd, timestamp_text)?;
@@ -223,18 +348,55 @@ pub fn save_event(
     let hash_text = project.as_ref().map(|(hash, _)| hash.as_str().to_owned());
     match state.event(binding, event_id)? {
         Some(old) => {
-            let merged = [
-                old.input_tokens.max(values[0]),
-                old.cached_tokens.max(values[1]),
-                old.cache_write_tokens.max(values[2]),
-                old.output_tokens.max(values[3]),
-            ];
-            state.update_event_tokens(binding, event_id, merged)?;
-            let fills_project = old.project_hash.is_none() && hash_text.is_some();
-            let fills_surface = old.surface.is_none() && attribution.surface.is_some();
-            if fills_project || fills_surface {
-                state.fill_event_attribution(binding, event_id, hash_text.as_deref(), attribution.surface)?;
-            }
+            let max_option = |old: Option<i64>, new: Option<i64>| match (old, new) {
+                (Some(old), Some(new)) => Some(old.max(new)),
+                (old, new) => old.or(new),
+            };
+            state.insert_event(
+                binding,
+                &EventRow {
+                    id: old.id,
+                    session: old.session,
+                    hour: old.hour,
+                    model: if old.model == "unknown" && model != "unknown" {
+                        model.to_owned()
+                    } else {
+                        old.model
+                    },
+                    input_tokens: old.input_tokens.max(values[0]),
+                    cached_tokens: old.cached_tokens.max(values[1]),
+                    cache_write_tokens: old.cache_write_tokens.max(values[2]),
+                    output_tokens: old.output_tokens.max(values[3]),
+                    session_identity: old.session_identity,
+                    timestamp: old.timestamp,
+                    product: old.product,
+                    client_version: old.client_version.or_else(|| client_version.map(str::to_owned)),
+                    parent_session: old.parent_session.or_else(|| extras.parent_session.clone()),
+                    project_hash: old.project_hash.or(hash_text),
+                    surface: old.surface.or_else(|| attribution.surface.map(str::to_owned)),
+                    detail_observed: true,
+                    bucket_eligible: old.bucket_eligible || bucket_eligible,
+                    detail_input_fresh: max_option(old.detail_input_fresh, evidence.input_fresh),
+                    detail_input_cached: max_option(old.detail_input_cached, evidence.input_cached),
+                    detail_input_cache_write: max_option(
+                        old.detail_input_cache_write,
+                        evidence.input_cache_write,
+                    ),
+                    detail_output: max_option(old.detail_output, evidence.output),
+                    detail_reasoning: max_option(old.detail_reasoning, evidence.reasoning),
+                    reported_total: max_option(old.reported_total, evidence.reported_total),
+                    model_requested: old.model_requested.or_else(|| evidence.model_requested.clone()),
+                    reasoning_effort: old.reasoning_effort.or_else(|| evidence.reasoning_effort.clone()),
+                    service_tier: old.service_tier.or_else(|| evidence.service_tier.clone()),
+                    speed: old.speed.or_else(|| evidence.speed.clone()),
+                    context_window_tokens: max_option(
+                        old.context_window_tokens,
+                        evidence.context_window_tokens,
+                    ),
+                    cache_write_ttl: old.cache_write_ttl.or_else(|| evidence.cache_write_ttl.clone()),
+                    outcome: evidence.outcome.clone().or(old.outcome),
+                },
+            )?;
         }
         None => {
             state.insert_event(
@@ -259,6 +421,21 @@ pub fn save_event(
                     parent_session: extras.parent_session.clone(),
                     project_hash: hash_text,
                     surface: attribution.surface.map(str::to_owned),
+                    detail_observed: true,
+                    bucket_eligible,
+                    detail_input_fresh: evidence.input_fresh,
+                    detail_input_cached: evidence.input_cached,
+                    detail_input_cache_write: evidence.input_cache_write,
+                    detail_output: evidence.output,
+                    detail_reasoning: evidence.reasoning,
+                    reported_total: evidence.reported_total,
+                    model_requested: evidence.model_requested.clone(),
+                    reasoning_effort: evidence.reasoning_effort.clone(),
+                    service_tier: evidence.service_tier.clone(),
+                    speed: evidence.speed.clone(),
+                    context_window_tokens: evidence.context_window_tokens,
+                    cache_write_ttl: evidence.cache_write_ttl.clone(),
+                    outcome: evidence.outcome.clone(),
                 },
             )?;
         }
@@ -387,6 +564,7 @@ pub fn process_line(
                     _ => "unknown".to_owned(),
                 };
                 ctx.model = truncate100(chosen);
+                ctx.reasoning_effort = bounded_code(get(&payload, "effort").ok().flatten());
                 if let Ok(Some(Value::String(cwd))) = get(&payload, "cwd") {
                     ctx.cwd = Some(cwd.chars().take(400).collect());
                 }
@@ -426,6 +604,7 @@ pub fn process_line(
                         let Ok(usage) = get(&info, "last_token_usage") else { return Ok(Err(Malformed)) };
                         let Some(usage) = usage.filter(|v| v.is_object()) else { return Ok(Ok(())) };
                         let mut usage_value = usage.clone();
+                        let mut legacy_delta_accepted = false;
                         let previous_truthy = previous.as_ref().is_some_and(py_truthy);
                         if cumulative_truthy && previous_truthy {
                             let (Some(cumulative_value), Some(previous_value)) =
@@ -436,7 +615,10 @@ pub fn process_line(
                             if cumulative_value == previous_value {
                                 return Ok(Ok(()));
                             }
-                            let keys = [
+                            // Keep the compatibility delta exactly aligned with v1.
+                            // Nullable reasoning evidence must not decide whether
+                            // the legacy token counters use cumulative deltas.
+                            let legacy_keys = [
                                 "input_tokens",
                                 "cached_input_tokens",
                                 "cache_write_input_tokens",
@@ -445,7 +627,7 @@ pub fn process_line(
                             ];
                             let mut deltas = Map::new();
                             let mut all_non_negative = true;
-                            for key in keys {
+                            for key in legacy_keys {
                                 let Ok(current) = get(cumulative_value, key) else {
                                     return Ok(Err(Malformed));
                                 };
@@ -458,7 +640,57 @@ pub fn process_line(
                             }
                             if all_non_negative {
                                 usage_value = Value::Object(deltas);
+                                legacy_delta_accepted = true;
                             }
+                        }
+                        let mut detail_usage_value = usage.clone();
+                        if cumulative_truthy && previous_truthy {
+                            let (Some(cumulative_value), Some(previous_value)) =
+                                (cumulative.as_ref(), previous.as_ref())
+                            else {
+                                return Ok(Err(Malformed));
+                            };
+                            let mut detail_deltas = Map::new();
+                            let core_keys = [
+                                "input_tokens",
+                                "cached_input_tokens",
+                                "cache_write_input_tokens",
+                                "output_tokens",
+                                "total_tokens",
+                            ];
+                            for key in core_keys {
+                                let delta = legacy_delta_accepted
+                                    .then(|| {
+                                        let current =
+                                            non_negative(get(cumulative_value, key).ok().flatten())?;
+                                        let before = non_negative(get(previous_value, key).ok().flatten())?;
+                                        (current >= before).then_some(current - before)
+                                    })
+                                    .flatten();
+                                if let Some(value) =
+                                    delta.or_else(|| non_negative(get(usage, key).ok().flatten()))
+                                {
+                                    detail_deltas.insert(key.to_owned(), Value::from(value));
+                                }
+                            }
+                            let reasoning_delta = legacy_delta_accepted
+                                .then(|| {
+                                    let current = non_negative(
+                                        get(cumulative_value, "reasoning_output_tokens").ok().flatten(),
+                                    )?;
+                                    let before = non_negative(
+                                        get(previous_value, "reasoning_output_tokens").ok().flatten(),
+                                    )?;
+                                    (current >= before).then_some(current - before)
+                                })
+                                .flatten();
+                            if let Some(value) = reasoning_delta.or_else(|| {
+                                non_negative(get(usage, "reasoning_output_tokens").ok().flatten())
+                            }) {
+                                detail_deltas
+                                    .insert("reasoning_output_tokens".to_owned(), Value::from(value));
+                            }
+                            detail_usage_value = Value::Object(detail_deltas);
                         }
                         let session_hash = digest(&json!([provider_text, account, ctx.session]));
                         let raw_timestamp = object.get("timestamp").cloned().unwrap_or(Value::Null);
@@ -477,6 +709,7 @@ pub fn process_line(
                         let Ok(values) = components(provider, &usage_value) else {
                             return Ok(Err(Malformed));
                         };
+                        let evidence = codex_evidence(ctx, &info, &detail_usage_value);
                         let model =
                             if ctx.model.is_empty() { "unknown".to_owned() } else { ctx.model.clone() };
                         let timestamp_text = raw_timestamp.as_str().unwrap_or("").to_owned();
@@ -490,6 +723,7 @@ pub fn process_line(
                             &timestamp_text,
                             &model,
                             values,
+                            &evidence,
                             extras,
                             ctx.client_version.as_deref(),
                             Attribution { cwd: ctx.cwd.as_deref(), surface: ctx.surface.as_deref() },
@@ -529,6 +763,7 @@ pub fn process_line(
         _ => "unknown".to_owned(),
     });
     let Ok(values) = components(provider, usage) else { return Ok(Err(Malformed)) };
+    let evidence = claude_evidence(object, usage);
     let client_version =
         object.get("version").and_then(Value::as_str).map(|v| v.chars().take(40).collect::<String>());
     let timestamp_text = object.get("timestamp").and_then(Value::as_str).unwrap_or("").to_owned();
@@ -546,6 +781,7 @@ pub fn process_line(
         &timestamp_text,
         &model_text,
         values,
+        &evidence,
         extras,
         client_version.as_deref(),
         attribution,
@@ -616,6 +852,7 @@ pub fn scan(
     let account = binding.account_id.as_str();
     let since = ctx_run.since;
     let now = ctx_run.now_seconds;
+    state.prepare_file_scan(binding_id, crate::EXECUTION_PARSER_VERSION)?;
     'roots: for root in &binding.roots {
         let root = expand_user(root);
         if !root.is_dir() {
@@ -669,6 +906,7 @@ pub fn scan(
                 continue;
             }
             let resume = old.as_ref().is_some_and(|old| old.inode == inode && size >= old.size);
+            let mut found_parse_gap = false;
             let stem = resolved.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
             let mut offset = if resume { old.as_ref().map_or(0, |old| old.offset) } else { 0 };
             let mut ctx = if resume {
@@ -709,9 +947,15 @@ pub fn scan(
                             state, binding_id, &data, &mut ctx, provider, account, since, now, &extras,
                         )? {
                             Ok(()) => {}
-                            Err(Malformed) => metrics.malformed_lines += 1,
+                            Err(Malformed) => {
+                                metrics.malformed_lines += 1;
+                                found_parse_gap = true;
+                            }
                         },
-                        Err(_) => metrics.malformed_lines += 1,
+                        Err(_) => {
+                            metrics.malformed_lines += 1;
+                            found_parse_gap = true;
+                        }
                     }
                 }
                 let context = serde_json::to_string(&ctx).map_err(|_| AdapterError::Io)?;
@@ -726,6 +970,11 @@ pub fn scan(
                         context,
                     },
                 )?;
+                if found_parse_gap {
+                    state.mark_file_parse_gap(binding_id, &path_text)?;
+                } else if !resume {
+                    state.clear_file_parse_gap(binding_id, &path_text)?;
+                }
                 Ok(())
             })();
             match scan_result {
@@ -741,6 +990,7 @@ pub fn scan(
             }
         }
     }
+    metrics.history_gap_files = state.file_parse_gap_count(binding_id)?;
     Ok(metrics)
 }
 

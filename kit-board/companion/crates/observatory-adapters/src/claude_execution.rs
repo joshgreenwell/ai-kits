@@ -11,7 +11,7 @@ use observatory_core::adapter::{Adapter, AdapterError, Cursor, Outcome, Prefligh
 
 use crate::jsonl::{expand_user, scan};
 use crate::readings::{emit_dirty_slots, ingest_statusline_inbox};
-use crate::requests::request_from_event;
+use crate::requests::{EvidenceSummary, execution_capabilities, request_from_event};
 
 #[derive(Debug, Default)]
 pub struct ClaudeExecution;
@@ -49,11 +49,14 @@ impl Adapter for ClaudeExecution {
         let include_subagents = ctx.settings.execution.include_subagents;
         let read_inbox = ctx.settings.allowance.claude_reader != ClaudeReader::Off;
         let mut inbox_bound = false;
+        let mut evidence = EvidenceSummary::default();
+        let mut history_has_parse_gaps = false;
         for binding in ctx.bindings_for(Provider::Claude).filter(|binding| binding.runnable()) {
             let metrics = scan(&state, ctx, binding, Provider::Claude, "claude_code", include_subagents)?;
             outcome.files += metrics.files;
             outcome.bytes_read += metrics.bytes_read;
             outcome.malformed += metrics.malformed_lines;
+            history_has_parse_gaps |= metrics.history_gap_files > 0;
             outcome.stores_discovered += metrics.stores_discovered;
             if metrics.unavailable_roots > 0 {
                 outcome.state = CoverageState::Partial;
@@ -79,7 +82,8 @@ impl Adapter for ClaudeExecution {
                 )?;
             }
             if ctx.settings.execution.detail_level != DetailLevel::BucketsOnly {
-                for event in state.events(binding.binding_id.as_str())? {
+                for event in state.request_events(binding.binding_id.as_str())? {
+                    evidence.observe(&event);
                     if let Some(record) = request_from_event(
                         &binding.binding_id,
                         AdapterId::ClaudeExecution,
@@ -93,6 +97,14 @@ impl Adapter for ClaudeExecution {
                 }
             }
         }
+        if history_has_parse_gaps && outcome.state == CoverageState::Ok {
+            outcome.state = CoverageState::Partial;
+            outcome.detail = Some(DetailCode::ParseError);
+        }
+        let scan_partial =
+            outcome.state != CoverageState::Ok || outcome.malformed > 0 || history_has_parse_gaps;
+        outcome.capabilities =
+            Some(execution_capabilities(ctx.settings.execution.detail_level, scan_partial, evidence));
         Ok(outcome)
     }
 }

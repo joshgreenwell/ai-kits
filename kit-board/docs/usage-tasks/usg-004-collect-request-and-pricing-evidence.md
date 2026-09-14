@@ -2,7 +2,7 @@
 
 [Backlog index](README.md) · [Direction](../usage-direction.md)
 
-Status: Planned
+Status: Done
 Priority: P0
 Scope: Core
 Stage: 2. Collection
@@ -29,7 +29,7 @@ Production is bucket-only; normal request collection does not yet replace the ri
 
 Use representative sanitized local fixtures for both providers, replay twice, compare request-derived totals with canonical hourly totals, and verify effort/tier/context cases and missing fields.
 
-Apply the common completion requirements in the [backlog index](README.md). This file is a planned task, not evidence of implementation.
+Apply the common completion requirements in the [backlog index](README.md).
 
 ## Starting points
 
@@ -42,4 +42,13 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+Completed September 13, 2026 on `kit-board/usg-004-request-pricing-collection`.
+
+- State schema 3 retains nullable request components, reasoning, reported totals, and pricing dimensions separately from the v1 bucket counters. Explicit zero-token requests remain visible without changing the legacy hourly calls or totals.
+- Claude collection maps recorded effort, tier, speed, reasoning, cache-write TTL, response outcome, actual model, surface, and exclusive token counters. Codex collection maps effort, model context size, reasoning, reported totals, actual model, surface, and cumulative deltas. Neither local request row distinguishes requested from resolved model, so requested model remains unknown.
+- A detail parser generation invalidates binding checkpoints once and replays eligible retained files. Rotation, archives, canonical file mirrors, partial trailing lines, coherent cumulative resets, and subagent inclusion retain the existing parity behavior. Unresolved malformed-file gaps survive unchanged scans, checkpoint invalidation, and source deletion until a successful full replay clears them. Missing roots, files outside `since`, and deleted source evidence remain unrecoverable and are reported as coverage limits.
+- Adapter coverage now reports request, token-composition, and pricing capabilities, including `buckets_only` gating, incomplete token fields, missing pricing evidence, malformed input, and partial source history.
+- Added a provenance-declared synthetic Claude/Codex request-detail corpus plus focused checks for exact/partial/zero tokens, pricing fields, nullable and reset cumulative deltas, replay identity, request-to-hour totals, detail gating, unavailable history, persistent parse gaps, privacy, contract validation, and checkpoint backfill. The existing v1 parity corpus remains unchanged.
+- Verification passed: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, all 73 workspace tests, fixture-manifest validation, `npm test` (75 passed with four database-gated skips), `npm run typecheck`, `npm run build`, and `git diff --check`. A fresh high-effort Astra review found no remaining actionable issues after its cumulative-reset and coverage findings were fixed.
+
+Deployment remains server-first because the compatible envelope has no runtime negotiation. USG-025 owns activating request detail and proving production source-to-screen receipts; this task does not change production settings.

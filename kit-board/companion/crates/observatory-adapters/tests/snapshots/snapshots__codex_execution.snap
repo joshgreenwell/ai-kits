@@ -51,11 +51,11 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
   ],
   "coverage": {
     "bytes_read": 7514,
-    "detail": null,
+    "detail": "parse_error",
     "files": 4,
     "malformed": 1,
     "records_emitted": 10,
-    "state": "ok",
+    "state": "partial",
     "stores_discovered": 2
   },
   "records": [
@@ -68,12 +68,19 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "ended_at": "2026-09-03T10:00:05.000Z",
       "execution_host": "local",
       "latency_ms": null,
-      "model_actual": "unknown",
+      "model_actual": null,
       "model_requested": null,
       "observed_at": "2026-09-03T10:00:05.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0",
+      "parser_version": "2.0.0+v1.1.0-detail1",
+      "pricing": {
+        "cache_write_ttl": null,
+        "context_window_tokens": 400000,
+        "reasoning_effort": null,
+        "service_tier": null,
+        "speed": null
+      },
       "product": "codex_cli",
       "project_hash": null,
       "record_id": "02552c03-56c5-59a6-8442-4c43d3a7dbda",
@@ -83,12 +90,17 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "session_identity": "synthetic",
       "started_at": null,
       "surface": "cli",
+      "token_accounting": {
+        "composition_state": "complete",
+        "reported_total": 12,
+        "unclassified": 0
+      },
       "tokens": {
         "input_cache_write": 0,
         "input_cached": 0,
         "input_fresh": 10,
         "output": 2,
-        "reasoning": null
+        "reasoning": 0
       },
       "tool_calls": null
     },
@@ -106,7 +118,14 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-02T01:01:00.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0",
+      "parser_version": "2.0.0+v1.1.0-detail1",
+      "pricing": {
+        "cache_write_ttl": null,
+        "context_window_tokens": 400000,
+        "reasoning_effort": null,
+        "service_tier": null,
+        "speed": null
+      },
       "product": "codex_cli",
       "project_hash": null,
       "record_id": "1db2a24c-59ab-5710-b149-89ec736003f9",
@@ -116,12 +135,17 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "session_identity": "provider",
       "started_at": null,
       "surface": "cli",
+      "token_accounting": {
+        "composition_state": "complete",
+        "reported_total": 100,
+        "unclassified": 30
+      },
       "tokens": {
         "input_cache_write": 0,
         "input_cached": 30,
         "input_fresh": 30,
         "output": 10,
-        "reasoning": null
+        "reasoning": 0
       },
       "tool_calls": null
     },
@@ -139,7 +163,14 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-02T02:00:10.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0",
+      "parser_version": "2.0.0+v1.1.0-detail1",
+      "pricing": {
+        "cache_write_ttl": null,
+        "context_window_tokens": 400000,
+        "reasoning_effort": null,
+        "service_tier": null,
+        "speed": null
+      },
       "product": "codex_cli",
       "project_hash": null,
       "record_id": "2d7c71fd-a54e-5a0d-a2df-00aeca5dbdf0",
@@ -149,12 +180,17 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "session_identity": "provider",
       "started_at": null,
       "surface": "cli",
+      "token_accounting": {
+        "composition_state": "complete",
+        "reported_total": 40,
+        "unclassified": 0
+      },
       "tokens": {
         "input_cache_write": 0,
         "input_cached": 0,
         "input_fresh": 30,
         "output": 10,
-        "reasoning": null
+        "reasoning": 0
       },
       "tool_calls": null
     },
@@ -172,7 +208,14 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-02T01:04:00.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0",
+      "parser_version": "2.0.0+v1.1.0-detail1",
+      "pricing": {
+        "cache_write_ttl": null,
+        "context_window_tokens": 400000,
+        "reasoning_effort": null,
+        "service_tier": null,
+        "speed": null
+      },
       "product": "codex_cli",
       "project_hash": null,
       "record_id": "68e11bca-b825-5aec-b0c6-fbf158684109",
@@ -182,12 +225,17 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "session_identity": "provider",
       "started_at": null,
       "surface": "cli",
+      "token_accounting": {
+        "composition_state": "partial",
+        "reported_total": 22,
+        "unclassified": 1
+      },
       "tokens": {
         "input_cache_write": 5,
         "input_cached": 10,
-        "input_fresh": 0,
+        "input_fresh": null,
         "output": 6,
-        "reasoning": null
+        "reasoning": 0
       },
       "tool_calls": null
     },
@@ -201,7 +249,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "label": "Codex · weekly",
       "meter_key": "codex:10080",
       "observed_at": "2026-09-02T01:00:10.250Z",
-      "parser_version": "2.0.0+v1.1.0",
+      "parser_version": "2.0.0+v1.1.0-detail1",
       "raw_window_id": "secondary",
       "reader": "embedded",
       "record_id": "add83de6-9b1f-5a73-babd-c0276fd60bff",
@@ -226,7 +274,14 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-02T02:10:00.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0",
+      "parser_version": "2.0.0+v1.1.0-detail1",
+      "pricing": {
+        "cache_write_ttl": null,
+        "context_window_tokens": 400000,
+        "reasoning_effort": null,
+        "service_tier": null,
+        "speed": null
+      },
       "product": "codex_cli",
       "project_hash": null,
       "record_id": "afcd6601-9cde-59f1-af16-9a7ba83920e8",
@@ -236,12 +291,17 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "session_identity": "provider",
       "started_at": null,
       "surface": "cli",
+      "token_accounting": {
+        "composition_state": "complete",
+        "reported_total": 110,
+        "unclassified": 0
+      },
       "tokens": {
         "input_cache_write": 0,
         "input_cached": 0,
         "input_fresh": 100,
         "output": 10,
-        "reasoning": null
+        "reasoning": 0
       },
       "tool_calls": null
     },
@@ -259,7 +319,14 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-02T01:03:00.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0",
+      "parser_version": "2.0.0+v1.1.0-detail1",
+      "pricing": {
+        "cache_write_ttl": null,
+        "context_window_tokens": 400000,
+        "reasoning_effort": null,
+        "service_tier": null,
+        "speed": null
+      },
       "product": "codex_cli",
       "project_hash": null,
       "record_id": "b41f1510-1181-5bff-9795-18fec6b6ac59",
@@ -269,12 +336,17 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "session_identity": "provider",
       "started_at": null,
       "surface": "cli",
+      "token_accounting": {
+        "composition_state": "complete",
+        "reported_total": 60,
+        "unclassified": 15
+      },
       "tokens": {
         "input_cache_write": 5,
         "input_cached": 10,
         "input_fresh": 25,
         "output": 5,
-        "reasoning": null
+        "reasoning": 0
       },
       "tool_calls": null
     },
@@ -292,7 +364,14 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-02T01:00:10.250Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0",
+      "parser_version": "2.0.0+v1.1.0-detail1",
+      "pricing": {
+        "cache_write_ttl": null,
+        "context_window_tokens": 400000,
+        "reasoning_effort": null,
+        "service_tier": null,
+        "speed": null
+      },
       "product": "codex_cli",
       "project_hash": null,
       "record_id": "b516313c-17be-5b75-aa13-2fe06b9489e7",
@@ -302,12 +381,17 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "session_identity": "provider",
       "started_at": null,
       "surface": "cli",
+      "token_accounting": {
+        "composition_state": "complete",
+        "reported_total": 100,
+        "unclassified": 0
+      },
       "tokens": {
         "input_cache_write": 0,
         "input_cached": 0,
         "input_fresh": 100,
         "output": 0,
-        "reasoning": null
+        "reasoning": 0
       },
       "tool_calls": null
     },
@@ -321,7 +405,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "label": "Codex · 5h",
       "meter_key": "codex:300",
       "observed_at": "2026-09-02T01:03:00.000Z",
-      "parser_version": "2.0.0+v1.1.0",
+      "parser_version": "2.0.0+v1.1.0-detail1",
       "raw_window_id": "primary",
       "reader": "embedded",
       "record_id": "cf888f12-2c76-578f-a105-e36781120101",
@@ -342,7 +426,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "label": "Codex · weekly",
       "meter_key": "codex:10080",
       "observed_at": "2026-09-02T02:10:00.000Z",
-      "parser_version": "2.0.0+v1.1.0",
+      "parser_version": "2.0.0+v1.1.0-detail1",
       "raw_window_id": "secondary",
       "reader": "embedded",
       "record_id": "d8400a6d-9f92-572f-8697-e650c6282e12",

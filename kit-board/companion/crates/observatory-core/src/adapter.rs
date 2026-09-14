@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use jiff::Timestamp;
 use observatory_contract::{
-    AccountId, CollectionSettings, ConfigDocument, CoverageState, CursorState, DetailCode, Provider, Record,
-    Sha256Hex, Uuid,
+    AccountId, CapabilityCoverage, CollectionSettings, ConfigDocument, CoverageState, CursorState,
+    DetailCode, Provider, Record, Sha256Hex, Uuid,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -191,6 +191,7 @@ pub struct Outcome {
     pub cursor_state: CursorState,
     pub probe_requests: u64,
     pub next_cursor: Option<Cursor>,
+    pub capabilities: Option<Vec<CapabilityCoverage>>,
 }
 
 impl Outcome {
@@ -206,6 +207,7 @@ impl Outcome {
             cursor_state: CursorState::Complete,
             probe_requests: 0,
             next_cursor: None,
+            capabilities: None,
         }
     }
 

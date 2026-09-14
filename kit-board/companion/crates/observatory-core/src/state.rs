@@ -12,7 +12,7 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: &str = "2";
+pub const SCHEMA_VERSION: &str = "3";
 
 #[derive(Debug, Error)]
 pub enum StateError {
@@ -33,11 +33,18 @@ CREATE TABLE IF NOT EXISTS adapter_state (adapter TEXT PRIMARY KEY, effective TE
 CREATE TABLE IF NOT EXISTS files (binding_id TEXT NOT NULL, path TEXT NOT NULL, size INTEGER NOT NULL,
   mtime INTEGER NOT NULL, inode TEXT NOT NULL, offset INTEGER NOT NULL, context TEXT NOT NULL,
   PRIMARY KEY (binding_id, path));
+CREATE TABLE IF NOT EXISTS file_parse_gaps (binding_id TEXT NOT NULL, path TEXT NOT NULL,
+  PRIMARY KEY (binding_id, path));
 CREATE TABLE IF NOT EXISTS events (binding_id TEXT NOT NULL, id TEXT NOT NULL, session TEXT NOT NULL,
   hour TEXT NOT NULL, model TEXT NOT NULL, input_tokens INTEGER NOT NULL, cached_tokens INTEGER NOT NULL,
   cache_write_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, session_identity TEXT NOT NULL,
   timestamp TEXT NOT NULL, product TEXT NOT NULL, client_version TEXT, parent_session TEXT,
-  project_hash TEXT, surface TEXT,
+  project_hash TEXT, surface TEXT, detail_observed INTEGER NOT NULL DEFAULT 0,
+  bucket_eligible INTEGER NOT NULL DEFAULT 1, detail_input_fresh INTEGER,
+  detail_input_cached INTEGER, detail_input_cache_write INTEGER, detail_output INTEGER,
+  detail_reasoning INTEGER, reported_total INTEGER, model_requested TEXT,
+  reasoning_effort TEXT, service_tier TEXT, speed TEXT, context_window_tokens INTEGER,
+  cache_write_ttl TEXT, outcome TEXT,
   PRIMARY KEY (binding_id, id));
 CREATE INDEX IF NOT EXISTS event_hours ON events(binding_id, hour, session, model);
 CREATE TABLE IF NOT EXISTS projects (binding_id TEXT NOT NULL, project_hash TEXT NOT NULL, path TEXT NOT NULL,
@@ -86,8 +93,10 @@ pub struct FileCheckpoint {
     pub context: String,
 }
 
-/// One counted provider event (a Codex `token_count` or a Claude assistant
-/// message), keyed by its v1 event digest.
+/// One provider request event (a Codex `token_count` or a Claude assistant
+/// message), keyed by its stable event digest. The non-null counters preserve
+/// v1 hourly parity; nullable detail fields preserve what the source actually
+/// reported for request records.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventRow {
     pub id: String,
@@ -107,6 +116,24 @@ pub struct EventRow {
     pub project_hash: Option<String>,
     /// v2 only: the contract surface the provider's entrypoint or originator maps to.
     pub surface: Option<String>,
+    /// v3: true when nullable request evidence was parsed from retained source.
+    pub detail_observed: bool,
+    /// v3: false for explicit zero-usage calls, which v1 omitted from hourly buckets.
+    pub bucket_eligible: bool,
+    pub detail_input_fresh: Option<i64>,
+    pub detail_input_cached: Option<i64>,
+    pub detail_input_cache_write: Option<i64>,
+    pub detail_output: Option<i64>,
+    /// A subset of `detail_output` when the provider reports it.
+    pub detail_reasoning: Option<i64>,
+    pub reported_total: Option<i64>,
+    pub model_requested: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub service_tier: Option<String>,
+    pub speed: Option<String>,
+    pub context_window_tokens: Option<i64>,
+    pub cache_write_ttl: Option<String>,
+    pub outcome: Option<String>,
 }
 
 /// One working directory this binding has seen, kept locally so a hash can be
@@ -196,14 +223,39 @@ impl State {
         Ok(state)
     }
 
-    /// Forward migrations. Version 1 predates project attribution: its `events`
-    /// table lacks `project_hash` and `surface`, which `CREATE TABLE IF NOT EXISTS`
-    /// cannot add. Every step is idempotent, so an interrupted upgrade resumes.
+    /// Forward migrations. Version 1 predates project attribution and version 2
+    /// predates nullable request and pricing evidence. Every step is idempotent,
+    /// so an interrupted upgrade resumes.
     fn migrate(&self) -> Result<(), StateError> {
-        if self.meta("schema_version")?.as_deref() == Some("1") {
+        let version = self.meta("schema_version")?;
+        if version.as_deref() == Some("1") {
             for column in ["project_hash", "surface"] {
                 if !self.has_column("events", column)? {
                     self.conn.execute(&format!("ALTER TABLE events ADD COLUMN {column} TEXT"), [])?;
+                }
+            }
+        }
+        if matches!(version.as_deref(), Some("1" | "2")) {
+            let columns = [
+                ("detail_observed", "INTEGER NOT NULL DEFAULT 0"),
+                ("bucket_eligible", "INTEGER NOT NULL DEFAULT 1"),
+                ("detail_input_fresh", "INTEGER"),
+                ("detail_input_cached", "INTEGER"),
+                ("detail_input_cache_write", "INTEGER"),
+                ("detail_output", "INTEGER"),
+                ("detail_reasoning", "INTEGER"),
+                ("reported_total", "INTEGER"),
+                ("model_requested", "TEXT"),
+                ("reasoning_effort", "TEXT"),
+                ("service_tier", "TEXT"),
+                ("speed", "TEXT"),
+                ("context_window_tokens", "INTEGER"),
+                ("cache_write_ttl", "TEXT"),
+                ("outcome", "TEXT"),
+            ];
+            for (column, definition) in columns {
+                if !self.has_column("events", column)? {
+                    self.conn.execute(&format!("ALTER TABLE events ADD COLUMN {column} {definition}"), [])?;
                 }
             }
         }
@@ -380,6 +432,58 @@ impl State {
         Ok(count.max(0) as u64)
     }
 
+    pub fn mark_file_parse_gap(&self, binding: &str, path: &str) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO file_parse_gaps (binding_id, path) VALUES (?1, ?2)",
+            params![binding, path],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_file_parse_gap(&self, binding: &str, path: &str) -> Result<(), StateError> {
+        self.conn.execute(
+            "DELETE FROM file_parse_gaps WHERE binding_id = ?1 AND path = ?2",
+            params![binding, path],
+        )?;
+        Ok(())
+    }
+
+    pub fn file_parse_gap_count(&self, binding: &str) -> Result<u64, StateError> {
+        let count: i64 = self.conn.query_row(
+            "SELECT count(*) FROM file_parse_gaps WHERE binding_id = ?1",
+            params![binding],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as u64)
+    }
+
+    /// Invalidates file offsets once for a new parser generation so retained
+    /// histories are replayed and newly supported fields can be backfilled.
+    /// The generation marker and checkpoint deletion are one transaction; an
+    /// interrupted later scan resumes from the new checkpoints it completed.
+    pub fn prepare_file_scan(&self, binding: &str, generation: &str) -> Result<bool, StateError> {
+        let key = format!("file_parser:{binding}");
+        if self.meta(&key)?.as_deref() == Some(generation) {
+            return Ok(false);
+        }
+        self.begin()?;
+        let result = (|| {
+            self.conn.execute("DELETE FROM files WHERE binding_id = ?1", params![binding])?;
+            self.set_meta(&key, generation)?;
+            Ok::<(), StateError>(())
+        })();
+        match result {
+            Ok(()) => {
+                self.commit()?;
+                Ok(true)
+            }
+            Err(error) => {
+                self.rollback()?;
+                Err(error)
+            }
+        }
+    }
+
     // --- events -------------------------------------------------------------
 
     pub fn event(&self, binding: &str, id: &str) -> Result<Option<EventRow>, StateError> {
@@ -387,7 +491,10 @@ impl State {
             .conn
             .query_row(
                 "SELECT id, session, hour, model, input_tokens, cached_tokens, cache_write_tokens, output_tokens,
-                        session_identity, timestamp, product, client_version, parent_session, project_hash, surface
+                        session_identity, timestamp, product, client_version, parent_session, project_hash, surface,
+                        detail_observed, bucket_eligible, detail_input_fresh, detail_input_cached,
+                        detail_input_cache_write, detail_output, detail_reasoning, reported_total, model_requested,
+                        reasoning_effort, service_tier, speed, context_window_tokens, cache_write_ttl, outcome
                    FROM events WHERE binding_id = ?1 AND id = ?2",
                 params![binding, id],
                 event_from_row,
@@ -397,10 +504,14 @@ impl State {
 
     pub fn insert_event(&self, binding: &str, row: &EventRow) -> Result<(), StateError> {
         self.conn.execute(
-            "INSERT INTO events (binding_id, id, session, hour, model, input_tokens, cached_tokens, cache_write_tokens,
+            "INSERT OR REPLACE INTO events (binding_id, id, session, hour, model, input_tokens, cached_tokens, cache_write_tokens,
                                  output_tokens, session_identity, timestamp, product, client_version, parent_session,
-                                 project_hash, surface)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                                 project_hash, surface, detail_observed, bucket_eligible, detail_input_fresh,
+                                 detail_input_cached, detail_input_cache_write, detail_output, detail_reasoning,
+                                 reported_total, model_requested, reasoning_effort, service_tier, speed,
+                                 context_window_tokens, cache_write_ttl, outcome)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                     ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)",
             params![
                 binding,
                 row.id,
@@ -417,7 +528,22 @@ impl State {
                 row.client_version,
                 row.parent_session,
                 row.project_hash,
-                row.surface
+                row.surface,
+                row.detail_observed,
+                row.bucket_eligible,
+                row.detail_input_fresh,
+                row.detail_input_cached,
+                row.detail_input_cache_write,
+                row.detail_output,
+                row.detail_reasoning,
+                row.reported_total,
+                row.model_requested,
+                row.reasoning_effort,
+                row.service_tier,
+                row.speed,
+                row.context_window_tokens,
+                row.cache_write_ttl,
+                row.outcome
             ],
         )?;
         Ok(())
@@ -454,7 +580,8 @@ impl State {
         let mut statement = self.conn.prepare(
             "SELECT session, hour, model, sum(input_tokens), sum(cached_tokens), sum(cache_write_tokens),
                     sum(output_tokens), count(*)
-               FROM events WHERE binding_id = ?1 GROUP BY session, hour, model ORDER BY hour, session, model",
+               FROM events WHERE binding_id = ?1 AND bucket_eligible = 1
+               GROUP BY session, hour, model ORDER BY hour, session, model",
         )?;
         let rows = statement.query_map(params![binding], |row| {
             let input: i64 = row.get(3)?;
@@ -479,7 +606,25 @@ impl State {
     pub fn events(&self, binding: &str) -> Result<Vec<EventRow>, StateError> {
         let mut statement = self.conn.prepare(
             "SELECT id, session, hour, model, input_tokens, cached_tokens, cache_write_tokens, output_tokens,
-                    session_identity, timestamp, product, client_version, parent_session, project_hash, surface
+                    session_identity, timestamp, product, client_version, parent_session, project_hash, surface,
+                    detail_observed, bucket_eligible, detail_input_fresh, detail_input_cached,
+                    detail_input_cache_write, detail_output, detail_reasoning, reported_total, model_requested,
+                    reasoning_effort, service_tier, speed, context_window_tokens, cache_write_ttl, outcome
+               FROM events WHERE binding_id = ?1 AND bucket_eligible = 1 ORDER BY hour, session, id",
+        )?;
+        let rows = statement.query_map(params![binding], event_from_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Every request event, including explicit zero-usage calls excluded from
+    /// the legacy hourly bucket ledger.
+    pub fn request_events(&self, binding: &str) -> Result<Vec<EventRow>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, session, hour, model, input_tokens, cached_tokens, cache_write_tokens, output_tokens,
+                    session_identity, timestamp, product, client_version, parent_session, project_hash, surface,
+                    detail_observed, bucket_eligible, detail_input_fresh, detail_input_cached,
+                    detail_input_cache_write, detail_output, detail_reasoning, reported_total, model_requested,
+                    reasoning_effort, service_tier, speed, context_window_tokens, cache_write_ttl, outcome
                FROM events WHERE binding_id = ?1 ORDER BY hour, session, id",
         )?;
         let rows = statement.query_map(params![binding], event_from_row)?;
@@ -807,6 +952,21 @@ fn event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EventRow> {
         parent_session: row.get(12)?,
         project_hash: row.get(13)?,
         surface: row.get(14)?,
+        detail_observed: row.get(15)?,
+        bucket_eligible: row.get(16)?,
+        detail_input_fresh: row.get(17)?,
+        detail_input_cached: row.get(18)?,
+        detail_input_cache_write: row.get(19)?,
+        detail_output: row.get(20)?,
+        detail_reasoning: row.get(21)?,
+        reported_total: row.get(22)?,
+        model_requested: row.get(23)?,
+        reasoning_effort: row.get(24)?,
+        service_tier: row.get(25)?,
+        speed: row.get(26)?,
+        context_window_tokens: row.get(27)?,
+        cache_write_ttl: row.get(28)?,
+        outcome: row.get(29)?,
     })
 }
 
@@ -846,6 +1006,21 @@ mod tests {
             parent_session: None,
             project_hash: None,
             surface: None,
+            detail_observed: true,
+            bucket_eligible: true,
+            detail_input_fresh: Some(2),
+            detail_input_cached: Some(20),
+            detail_input_cache_write: Some(8),
+            detail_output: Some(output),
+            detail_reasoning: None,
+            reported_total: None,
+            model_requested: None,
+            reasoning_effort: None,
+            service_tier: None,
+            speed: None,
+            context_window_tokens: None,
+            cache_write_ttl: None,
+            outcome: Some("completed".into()),
         }
     }
 
@@ -861,7 +1036,50 @@ mod tests {
         assert_eq!(rows[0].calls, 2);
         assert_eq!(rows[0].total_tokens, 2 * 30 + 25);
         assert!(state.bucket_rows("other").unwrap().is_empty());
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("2"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn zero_usage_requests_do_not_change_legacy_buckets() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        let mut zero = event("zero", 0);
+        zero.input_tokens = 0;
+        zero.cached_tokens = 0;
+        zero.cache_write_tokens = 0;
+        zero.detail_input_fresh = Some(0);
+        zero.detail_input_cached = Some(0);
+        zero.detail_input_cache_write = Some(0);
+        zero.detail_output = Some(0);
+        zero.bucket_eligible = false;
+        state.insert_event("b", &zero).unwrap();
+        assert!(state.events("b").unwrap().is_empty());
+        assert!(state.bucket_rows("b").unwrap().is_empty());
+        assert_eq!(state.request_events("b").unwrap(), vec![zero]);
+    }
+
+    #[test]
+    fn parser_generation_replays_checkpoints_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        let checkpoint = FileCheckpoint {
+            path: "history.jsonl".into(),
+            size: 10,
+            mtime_ns: 20,
+            inode: "file-1".into(),
+            offset: 10,
+            context: "{}".into(),
+        };
+        state.save_file_checkpoint("b", &checkpoint).unwrap();
+        state.mark_file_parse_gap("b", "history.jsonl").unwrap();
+        assert!(state.prepare_file_scan("b", "parser-1").unwrap());
+        assert_eq!(state.file_count("b").unwrap(), 0);
+        assert_eq!(state.file_parse_gap_count("b").unwrap(), 1);
+        state.save_file_checkpoint("b", &checkpoint).unwrap();
+        assert!(!state.prepare_file_scan("b", "parser-1").unwrap());
+        assert_eq!(state.file_count("b").unwrap(), 1);
+        assert!(state.prepare_file_scan("b", "parser-2").unwrap());
+        assert_eq!(state.file_count("b").unwrap(), 0);
     }
 
     #[test]
@@ -882,7 +1100,7 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("2"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("3"));
         let mut row = event("a", 10);
         row.project_hash = Some("h".repeat(64));
         row.surface = Some("desktop".into());

@@ -163,8 +163,8 @@ state in coverage (`disabled_by_setting`, `denied_locally`, `prerequisite_missin
 
 | Adapter | Phase | In this version |
 | --- | --- | --- |
-| `claude_execution` | 1 | Ported. Buckets; `allowance.reading` from the statusline inbox (reader `statusline`, meters `five_hour`, `seven_day`, and every model-scoped weekly window `seven_day_<model>`, labelled `Claude · weekly · <Model>`); `activity.request` at `detail_level` `requests`. |
-| `codex_execution` | 1 | Ported. Buckets; embedded `rate_limits` as `allowance.reading` (reader `embedded`, meter `<limit_id>:<minutes>`); `activity.request` at `requests`. |
+| `claude_execution` | 1 | Ported. Buckets; `allowance.reading` from the statusline inbox (reader `statusline`, meters `five_hour`, `seven_day`, and every model-scoped weekly window `seven_day_<model>`, labelled `Claude · weekly · <Model>`); nullable token accounting and recorded effort, tier, speed, reasoning, and cache TTL on `activity.request` at `detail_level` `requests`. |
+| `codex_execution` | 1 | Ported. Buckets; embedded `rate_limits` as `allowance.reading` (reader `embedded`, meter `<limit_id>:<minutes>`); nullable token accounting and recorded effort, context size, reasoning, and reported totals on `activity.request` at `requests`. |
 | `claude_account` | 2 | Stub. Preflight reports the Keychain item or `.credentials.json` state; collect reports `unrecognized_payload` until `provider/claude/*` fixtures exist. |
 | `codex_account` | 2 | Stub. Preflight reports whether `codex` is on `PATH`. |
 | `cursor_execution`, `cursor_account` | 3 | Stubs. Preflight reports whether `state.vscdb` exists. |
@@ -186,12 +186,32 @@ synthetic corpus; `cargo test -p observatory-adapters` fails when the port drift
 
 Beyond parity, `activity.request` records add `product`, `surface`, `execution_host`,
 `client_version`, `ended_at`, `outcome`, and `parent_session_hash` for Claude Code subagent
-transcripts (`.../<session>/subagents/*.jsonl`) when `include_subagents` is on.
+transcripts (`.../<session>/subagents/*.jsonl`) when `include_subagents` is on. State schema 3
+keeps nullable request counters and pricing evidence beside the non-null v1 counters. Explicit
+zero-token Claude calls remain request rows but are excluded from the legacy bucket query; a Codex
+token-count row with no numeric token evidence is not counted as a request.
+
+Claude maps the four `usage` token counters directly, `output_tokens_details.thinking_tokens` to
+reasoning, top-level `effort` plus `usage.service_tier` and `usage.speed` to pricing evidence, and
+positive `cache_creation` TTL counters to `5m`, `1h`, or `mixed`. Codex subtracts cached and written
+input from inclusive input, keeps `reasoning_output_tokens` and `total_tokens`, and maps
+`turn_context.effort` plus `model_context_window`. Neither request source separately records a
+requested model, so `model_requested` remains null. Missing counters and pricing fields remain null.
+
+The parser version includes a detail generation. When it changes, the state atomically removes the
+binding's file checkpoints so retained files still eligible under `since` are replayed; interrupted
+replays resume normally. Unresolved parse gaps are stored separately, survive a deleted source or
+checkpoint invalidation, and clear only after that file is successfully replayed from the start.
+Hourly identities and values remain under the v1 parity gate. Coverage adds request,
+token-composition, and pricing capability states, including detail-level gating and partial source
+history.
 
 Envelope v2 also defines optional detail blocks for token accounting, pricing, agent attribution,
 and explicit project state, plus independent `agent.event`, `tool.event`, and `resource.access`
-records. Existing producers omit those blocks and remain wire-compatible. Missing blocks mean the
-producer did not report that capability; they are not zero, No project, a main agent, or success.
+records. The two execution adapters now emit token accounting and available pricing fields; agent,
+tool, and resource collection remains separate follow-up work. Existing producers omit those blocks
+and remain wire-compatible. Missing blocks mean the producer did not report that capability; they
+are not zero, No project, a main agent, or success.
 The server and `20260913230451_extend_usage_detail_contract.sql` migration must be deployed before
 shipping a producer that emits the new variants. There is no runtime version negotiation inside
 schema version 2, so this server-first order prevents an older server from retaining an upgraded
