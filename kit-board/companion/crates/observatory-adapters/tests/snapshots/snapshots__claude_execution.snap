@@ -1,5 +1,6 @@
 ---
 source: crates/observatory-adapters/tests/snapshots.rs
+assertion_line: 89
 expression: "snapshot(&ClaudeExecution, &ctx, id)"
 ---
 {
@@ -65,7 +66,7 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
     "detail": "parse_error",
     "files": 3,
     "malformed": 3,
-    "records_emitted": 9,
+    "records_emitted": 10,
     "state": "partial",
     "stores_discovered": 1
   },
@@ -80,7 +81,7 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
       "label": "Claude · 5h",
       "meter_key": "five_hour",
       "observed_at": "2026-09-02T03:10:00Z",
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "raw_window_id": "five_hour",
       "reader": "statusline",
       "record_id": "13486486-5651-5cb2-a493-e9ecf4ea64c7",
@@ -93,6 +94,15 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
     },
     {
       "adapter": "claude_execution",
+      "agent": {
+        "class": "main",
+        "depth": 0,
+        "identity_basis": "provider",
+        "key": "9eaea4d85533ad773e399c650db6a934ed513d1b2222c35224c7ef0944841b9a",
+        "name": null,
+        "parent_identity_basis": "none",
+        "parent_key": null
+      },
       "basis": "exact",
       "binding_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       "channel": "local_file",
@@ -105,7 +115,7 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
       "observed_at": "2026-09-02T03:15:30.500Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "product": "claude_code",
       "project_hash": null,
       "record_id": "43889a02-7678-548d-b9c2-15ce12b1b1a2",
@@ -139,7 +149,7 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
       "label": "Claude · 5h",
       "meter_key": "five_hour",
       "observed_at": "2026-09-02T02:10:00Z",
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "raw_window_id": "five_hour",
       "reader": "statusline",
       "record_id": "4f435274-a28d-5069-b767-4e12fbc7c053",
@@ -152,6 +162,39 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
     },
     {
       "adapter": "claude_execution",
+      "agent": {
+        "class": "unknown",
+        "depth": null,
+        "identity_basis": "provider",
+        "key": "9b4b17b6d825b06f553677974cb131ecb4257eda89dc206153db2a18a1c11cde",
+        "name": null,
+        "parent_identity_basis": "provider",
+        "parent_key": "9eaea4d85533ad773e399c650db6a934ed513d1b2222c35224c7ef0944841b9a"
+      },
+      "basis": "exact",
+      "binding_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "channel": "local_file",
+      "event_kind": "start",
+      "observed_at": "2026-09-02T02:05:00.000Z",
+      "outcome": "succeeded",
+      "parser_version": "2.0.0+v1.1.0-detail2",
+      "record_id": "9d7b71f1-4851-5244-8fbb-4df7fe4ae285",
+      "record_type": "agent.event",
+      "semantic_key": "d2eefe74c041d79094606f8a19490befe02146245597d86d94736cc11c25e94e",
+      "session_hash": "2bd994de2308f696f3159843f649260e2950b6480bce1725eae878230f4f0bcb",
+      "tool_invocation_key": null
+    },
+    {
+      "adapter": "claude_execution",
+      "agent": {
+        "class": "unknown",
+        "depth": null,
+        "identity_basis": "provider",
+        "key": "9b4b17b6d825b06f553677974cb131ecb4257eda89dc206153db2a18a1c11cde",
+        "name": null,
+        "parent_identity_basis": "provider",
+        "parent_key": "9eaea4d85533ad773e399c650db6a934ed513d1b2222c35224c7ef0944841b9a"
+      },
       "basis": "exact",
       "binding_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       "channel": "local_file",
@@ -164,7 +207,7 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
       "observed_at": "2026-09-02T02:05:00.000Z",
       "outcome": "completed",
       "parent_session_hash": "2bd994de2308f696f3159843f649260e2950b6480bce1725eae878230f4f0bcb",
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "product": "claude_code",
       "project_hash": null,
       "record_id": "a3f6d2e6-d6ff-54e5-a0e3-7aa4da6cf81d",
@@ -190,6 +233,15 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
     },
     {
       "adapter": "claude_execution",
+      "agent": {
+        "class": "main",
+        "depth": 0,
+        "identity_basis": "provider",
+        "key": "9eaea4d85533ad773e399c650db6a934ed513d1b2222c35224c7ef0944841b9a",
+        "name": null,
+        "parent_identity_basis": "none",
+        "parent_key": null
+      },
       "basis": "exact",
       "binding_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       "channel": "local_file",
@@ -202,7 +254,7 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
       "observed_at": "2026-09-02T02:00:00.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "product": "claude_code",
       "project_hash": null,
       "record_id": "ac2b7cf7-12dd-5c19-93dd-26c3b0b6c6ad",
@@ -236,7 +288,7 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
       "label": "Claude · weekly",
       "meter_key": "seven_day",
       "observed_at": "2026-09-02T02:10:00Z",
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "raw_window_id": "seven_day",
       "reader": "statusline",
       "record_id": "b977bc9d-4bbf-5cf7-863b-c1bc580a45cc",
@@ -249,6 +301,15 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
     },
     {
       "adapter": "claude_execution",
+      "agent": {
+        "class": "main",
+        "depth": 0,
+        "identity_basis": "provider",
+        "key": "7328bebcf066b0b62ba08d2181dab25b3aa4b495255efb78f4721b871ad55463",
+        "name": null,
+        "parent_identity_basis": "none",
+        "parent_key": null
+      },
       "basis": "exact",
       "binding_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       "channel": "local_file",
@@ -261,7 +322,7 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
       "observed_at": "2026-09-02T03:30:00.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "product": "claude_code",
       "project_hash": null,
       "record_id": "c47c36d0-f479-5aec-8660-3b5cd3ee8ba4",
@@ -287,6 +348,15 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
     },
     {
       "adapter": "claude_execution",
+      "agent": {
+        "class": "unknown",
+        "depth": null,
+        "identity_basis": "unknown",
+        "key": null,
+        "name": null,
+        "parent_identity_basis": "unknown",
+        "parent_key": null
+      },
       "basis": "exact",
       "binding_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       "channel": "local_file",
@@ -299,7 +369,7 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
       "observed_at": "2026-09-02T03:20:00.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "product": "claude_code",
       "project_hash": null,
       "record_id": "e01407be-2a4c-521b-87f7-a9e950721597",
@@ -325,6 +395,15 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
     },
     {
       "adapter": "claude_execution",
+      "agent": {
+        "class": "main",
+        "depth": 0,
+        "identity_basis": "provider",
+        "key": "9eaea4d85533ad773e399c650db6a934ed513d1b2222c35224c7ef0944841b9a",
+        "name": null,
+        "parent_identity_basis": "none",
+        "parent_key": null
+      },
       "basis": "exact",
       "binding_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       "channel": "local_file",
@@ -337,7 +416,7 @@ expression: "snapshot(&ClaudeExecution, &ctx, id)"
       "observed_at": "2026-09-02T03:31:00.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "product": "claude_code",
       "project_hash": null,
       "record_id": "fb242c44-ab56-5a34-b877-6faa68bf20cc",

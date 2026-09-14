@@ -2,7 +2,7 @@
 
 [Backlog index](README.md) · [Direction](../usage-direction.md)
 
-Status: Planned
+Status: Done
 Priority: P0
 Scope: Core
 Stage: 2. Collection
@@ -29,7 +29,7 @@ Current local buckets fold subagent usage into parent sessions, and the request 
 
 Reconcile parent/child totals with and without subagent collection, and test nested, custom-role, missing-parent, duplicate-notification, and resumed-child fixtures.
 
-Apply the common completion requirements in the [backlog index](README.md). This file is a planned task, not evidence of implementation.
+Apply the common completion requirements in the [backlog index](README.md).
 
 ## Starting points
 
@@ -40,4 +40,8 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+Completed September 13, 2026 on `kit-board/usg-005-agent-lineage`. The local state schema now keeps hashed agent profiles, lifecycle events, parent-evidence precedence, and direct/inferred/invalidated depth provenance. Claude and Codex histories populate main, child, nested, resumed, attempted, completed, failed, denied, cancelled, and unknown evidence without exposing provider IDs or custom names. Late sidecars and stronger parent evidence reconcile earlier rows, while direct provider depth remains authoritative.
+
+Current settings are applied again when pending records and hourly buckets are assembled, including subagent inclusion, detail level, project attribution, and agent-name policy. Offline envelopes rebuild data under those settings while retaining prior run coverage in data-free envelopes. Synthetic fixtures cover inline sidechains, child files, nested delegation, missing parents, late spawn evidence, replay, disabled subagents, legacy child rows, missing Codex session IDs, depth correction/invalidation, and queued policy changes.
+
+Verification passed with `cargo test --workspace`, `cargo fmt --all --check`, workspace clippy with warnings denied, `cargo deny check`, `python scripts/fixtures.py check`, `npm test` (75 passed and four expected database skips), `npm run typecheck`, `npm run build`, and `git diff --check`. An independent high-effort review reproduced several ordering and policy edge cases; regressions were added for each, and the final review reported no actionable findings.

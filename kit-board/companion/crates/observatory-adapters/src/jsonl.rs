@@ -21,6 +21,12 @@ use observatory_core::state::{EventRow, FileCheckpoint, State};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use crate::agents::{
+    AgentEvidence, agent_key, classify_claude, classify_codex, complete_spawn, enrich_profile,
+    invocation_key, is_known_child, save_observed_spawn, save_observed_start, save_profile,
+    save_spawn_attempt,
+};
+
 /// A line `collect.py` would have counted as malformed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Malformed;
@@ -51,6 +57,9 @@ pub struct Ctx {
     /// v3: the effort recorded on the current Codex turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    /// v4: privacy-safe agent attribution for the current file/thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentEvidence>,
 }
 
 impl Ctx {
@@ -67,6 +76,7 @@ impl Ctx {
             cwd: None,
             surface: None,
             reasoning_effort: None,
+            agent: None,
         }
     }
 }
@@ -92,6 +102,7 @@ pub struct ScanMetrics {
 pub struct EventExtras {
     pub product: &'static str,
     pub parent_session: Option<String>,
+    pub include_subagents: bool,
 }
 
 /// Per-line attribution beyond v1: where the request ran and from which surface.
@@ -99,6 +110,7 @@ pub struct EventExtras {
 pub struct Attribution<'a> {
     pub cwd: Option<&'a str>,
     pub surface: Option<&'a str>,
+    pub agent: Option<&'a AgentEvidence>,
 }
 
 /// Nullable request facts retained alongside the legacy counters. Missing or
@@ -213,6 +225,290 @@ fn bounded_code(value: Option<&Value>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.chars().take(50).collect())
+}
+
+fn bounded_text(value: Option<&Value>, limit: usize) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(limit).collect())
+}
+
+fn claude_file_agent(path: &Path, account: &str) -> Option<AgentEvidence> {
+    let stem = path.file_stem()?.to_str()?;
+    let raw_id = stem.strip_prefix("agent-")?;
+    let subagents_dir = path.parent()?;
+    if subagents_dir.file_name()?.to_str()? != "subagents" {
+        return None;
+    }
+    let sidecar = path.with_file_name(format!("{stem}.meta.json"));
+    let meta = fs::read(&sidecar)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .unwrap_or(Value::Null);
+    let name = bounded_text(meta.get("agentType"), 80);
+    let depth = non_negative(meta.get("spawnDepth"));
+    let tool_invocation_key =
+        bounded_text(meta.get("toolUseId"), 200).map(|id| invocation_key(Provider::Claude, account, &id));
+    let parent_id = subagents_dir
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .map(|name| name.strip_prefix("agent-").unwrap_or(name));
+    Some(AgentEvidence {
+        key: Some(agent_key(Provider::Claude, account, raw_id)),
+        identity_basis: "provider".into(),
+        parent_key: parent_id.map(|id| agent_key(Provider::Claude, account, id)),
+        parent_identity_basis: if parent_id.is_some() { "provider" } else { "unknown" }.into(),
+        parent_evidence: if parent_id.is_some() { "structural" } else { "unknown" }.into(),
+        class: classify_claude(name.as_deref()).into(),
+        name,
+        depth,
+        depth_evidence: if depth.is_some() { "explicit" } else { "unknown" }.into(),
+        model_requested: None,
+        tool_invocation_key,
+    })
+}
+
+fn claude_agent_for_line(
+    state: &State,
+    binding: &str,
+    account: &str,
+    object: &Map<String, Value>,
+    file_agent: Option<&AgentEvidence>,
+) -> Result<AgentEvidence, AdapterError> {
+    let session_id = bounded_text(object.get("sessionId"), 200);
+    let line_agent_id = bounded_text(object.get("agentId"), 200);
+    let line_agent_key = line_agent_id.as_deref().map(|id| agent_key(Provider::Claude, account, id));
+    let sidechain = object.get("isSidechain").and_then(Value::as_bool) == Some(true);
+    let line_name = bounded_text(object.get("attributionAgent"), 80);
+    let same_as_file = line_agent_key.as_deref().is_some_and(|key| {
+        file_agent.and_then(|agent| agent.key.as_deref()).is_some_and(|file_key| file_key == key)
+    });
+    let mut evidence = if same_as_file || (line_agent_key.is_none() && file_agent.is_some()) {
+        file_agent.cloned().unwrap_or_else(AgentEvidence::unknown)
+    } else if line_agent_key.is_some() || sidechain {
+        AgentEvidence::unknown()
+    } else if let Some(session_id) = session_id.as_deref() {
+        AgentEvidence::main(Provider::Claude, account, session_id)
+    } else {
+        AgentEvidence::unknown()
+    };
+    if let Some(key) = line_agent_key {
+        evidence.key = Some(key);
+        evidence.identity_basis = "provider".into();
+    }
+    if let Some(name) = line_name {
+        evidence.class = classify_claude(Some(&name)).into();
+        evidence.name = Some(name);
+    }
+    enrich_profile(state, binding, &mut evidence)?;
+    if evidence.class != "main" && evidence.parent_key.is_none() {
+        if !same_as_file
+            && let Some(parent) = file_agent
+            && let Some(parent_key) = parent.key.as_ref()
+        {
+            evidence.parent_key = Some(parent_key.clone());
+            evidence.parent_identity_basis = parent.identity_basis.clone();
+            evidence.parent_evidence = "structural".into();
+            evidence.depth = parent.depth.and_then(|depth| depth.checked_add(1));
+            evidence.depth_evidence = if evidence.depth.is_some() { "inferred" } else { "unknown" }.into();
+        } else if let Some(session_id) = session_id {
+            evidence.parent_key = Some(agent_key(Provider::Claude, account, &session_id));
+            evidence.parent_identity_basis = "provider".into();
+            evidence.parent_evidence = "fallback".into();
+            evidence.depth = Some(1);
+            evidence.depth_evidence = "inferred".into();
+        }
+    }
+    Ok(evidence)
+}
+
+fn codex_agent_for_session(
+    payload: &Value,
+    account: &str,
+    session: &str,
+    session_from_provider: bool,
+) -> AgentEvidence {
+    let spawn = get(payload, "source")
+        .ok()
+        .flatten()
+        .and_then(|source| get(source, "subagent").ok().flatten())
+        .and_then(|subagent| get(subagent, "thread_spawn").ok().flatten())
+        .filter(|value| value.is_object());
+    let Some(spawn) = spawn else {
+        let mut main = AgentEvidence::main(Provider::Codex, account, session);
+        if !session_from_provider {
+            main.identity_basis = "derived".into();
+        }
+        return main;
+    };
+    let parent = bounded_text(get(spawn, "parent_thread_id").ok().flatten(), 200);
+    let role = bounded_text(get(spawn, "agent_role").ok().flatten(), 80)
+        .or_else(|| bounded_text(get(payload, "agent_role").ok().flatten(), 80));
+    let depth = non_negative(get(spawn, "depth").ok().flatten());
+    AgentEvidence {
+        key: Some(agent_key(Provider::Codex, account, session)),
+        identity_basis: if session_from_provider { "provider" } else { "derived" }.into(),
+        parent_key: parent.as_deref().map(|id| agent_key(Provider::Codex, account, id)),
+        parent_identity_basis: if parent.is_some() { "provider" } else { "unknown" }.into(),
+        parent_evidence: if parent.is_some() { "explicit" } else { "unknown" }.into(),
+        class: classify_codex(role.as_deref()).into(),
+        name: role,
+        depth,
+        depth_evidence: if depth.is_some() { "explicit" } else { "unknown" }.into(),
+        model_requested: None,
+        tool_invocation_key: None,
+    }
+}
+
+fn claude_parent_agent(
+    account: &str,
+    object: &Map<String, Value>,
+    file_agent: Option<&AgentEvidence>,
+) -> AgentEvidence {
+    if let Some(id) = bounded_text(object.get("agentId"), 200) {
+        AgentEvidence {
+            key: Some(agent_key(Provider::Claude, account, &id)),
+            identity_basis: "provider".into(),
+            parent_key: None,
+            parent_identity_basis: "unknown".into(),
+            parent_evidence: "unknown".into(),
+            class: classify_claude(bounded_text(object.get("attributionAgent"), 80).as_deref()).into(),
+            name: bounded_text(object.get("attributionAgent"), 80),
+            depth: None,
+            depth_evidence: "unknown".into(),
+            model_requested: None,
+            tool_invocation_key: None,
+        }
+    } else if let Some(agent) = file_agent {
+        agent.clone()
+    } else if let Some(session) = bounded_text(object.get("sessionId"), 200) {
+        AgentEvidence::main(Provider::Claude, account, &session)
+    } else {
+        AgentEvidence::unknown()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_claude_agent_lifecycle(
+    state: &State,
+    binding: &str,
+    account: &str,
+    object: &Map<String, Value>,
+    file_agent: Option<&AgentEvidence>,
+    timestamp: Option<f64>,
+    since: f64,
+    now: f64,
+) -> Result<(), AdapterError> {
+    let Some(ts) = timestamp.filter(|value| since <= *value && *value <= now + 300.0) else {
+        return Ok(());
+    };
+    let Some(timestamp_text) = iso(ts).map(|value| value.as_str().to_owned()) else { return Ok(()) };
+    let session_hash = object
+        .get("sessionId")
+        .filter(|value| py_truthy(value))
+        .map(|session| digest(&json!([Provider::Claude.as_str(), account, session])).as_str().to_owned());
+    let mut parent = claude_parent_agent(account, object, file_agent);
+    enrich_profile(state, binding, &mut parent)?;
+    let message = or_empty(object.get("message"));
+    if let Some(content) = get(&message, "content").ok().flatten().and_then(Value::as_array) {
+        for block in content {
+            let Some(block) = block.as_object() else { continue };
+            if block.get("type").and_then(Value::as_str) == Some("tool_use")
+                && block.get("name").and_then(Value::as_str) == Some("Agent")
+            {
+                let Some(id) = bounded_text(block.get("id"), 200) else { continue };
+                let input = block.get("input").filter(|value| value.is_object()).unwrap_or(&Value::Null);
+                let role = bounded_text(get(input, "subagent_type").ok().flatten(), 80);
+                let model = bounded_text(get(input, "model").ok().flatten(), 100);
+                let invocation = invocation_key(Provider::Claude, account, &id);
+                save_spawn_attempt(
+                    state,
+                    binding,
+                    Provider::Claude,
+                    account,
+                    &invocation,
+                    &timestamp_text,
+                    session_hash.as_deref(),
+                    &parent,
+                    role.as_deref(),
+                    model.as_deref(),
+                )?;
+            }
+        }
+    }
+    let result = object.get("toolUseResult").filter(|value| value.is_object());
+    let Some(result) = result else { return Ok(()) };
+    let tool_id = get(&message, "content").ok().flatten().and_then(Value::as_array).and_then(|content| {
+        content.iter().find_map(|block| {
+            let block = block.as_object()?;
+            (block.get("type").and_then(Value::as_str) == Some("tool_result"))
+                .then(|| bounded_text(block.get("tool_use_id"), 200))
+                .flatten()
+        })
+    });
+    let Some(tool_id) = tool_id else { return Ok(()) };
+    let invocation = invocation_key(Provider::Claude, account, &tool_id);
+    let existing = state.agent_spawn_for_invocation(binding, &invocation)?;
+    let agent_id = bounded_text(get(result, "agentId").ok().flatten(), 200);
+    if existing.is_none() && agent_id.is_none() {
+        return Ok(());
+    }
+    let role = existing.as_ref().and_then(|row| row.name.clone());
+    let outcome = if agent_id.is_some() {
+        "succeeded"
+    } else {
+        match bounded_text(get(result, "status").ok().flatten(), 30).as_deref() {
+            Some("denied") => "denied",
+            Some("cancelled" | "canceled") => "cancelled",
+            Some("failed" | "error") => "failed",
+            _ => "unknown",
+        }
+    };
+    let mut child = AgentEvidence {
+        key: agent_id.as_deref().map(|id| agent_key(Provider::Claude, account, id)),
+        identity_basis: if agent_id.is_some() { "provider" } else { "unknown" }.into(),
+        parent_key: existing.as_ref().and_then(|row| row.parent_key.clone()).or_else(|| parent.key.clone()),
+        parent_identity_basis: existing
+            .as_ref()
+            .map_or_else(|| parent.identity_basis.clone(), |row| row.parent_identity_basis.clone()),
+        parent_evidence: if existing.as_ref().is_some_and(|row| row.parent_key.is_some())
+            || parent.key.is_some()
+        {
+            "explicit"
+        } else {
+            "unknown"
+        }
+        .into(),
+        class: existing
+            .as_ref()
+            .map_or_else(|| classify_claude(role.as_deref()).into(), |row| row.class.clone()),
+        name: role,
+        depth: existing.as_ref().and_then(|row| row.depth),
+        depth_evidence: if existing.as_ref().is_some_and(|row| row.depth.is_some()) {
+            "inferred"
+        } else {
+            "unknown"
+        }
+        .into(),
+        model_requested: existing.as_ref().and_then(|row| row.model_requested.clone()),
+        tool_invocation_key: Some(invocation.clone()),
+    };
+    enrich_profile(state, binding, &mut child)?;
+    complete_spawn(
+        state,
+        binding,
+        Provider::Claude,
+        account,
+        &invocation,
+        &timestamp_text,
+        session_hash.as_deref(),
+        &child,
+        outcome,
+    )?;
+    Ok(())
 }
 
 fn claude_evidence(object: &Map<String, Value>, usage: &Value) -> RequestEvidence {
@@ -346,6 +642,7 @@ pub fn save_event(
         state.upsert_project(binding, hash.as_str(), cwd, timestamp_text)?;
     }
     let hash_text = project.as_ref().map(|(hash, _)| hash.as_str().to_owned());
+    let agent = attribution.agent;
     match state.event(binding, event_id)? {
         Some(old) => {
             let max_option = |old: Option<i64>, new: Option<i64>| match (old, new) {
@@ -385,7 +682,10 @@ pub fn save_event(
                     detail_output: max_option(old.detail_output, evidence.output),
                     detail_reasoning: max_option(old.detail_reasoning, evidence.reasoning),
                     reported_total: max_option(old.reported_total, evidence.reported_total),
-                    model_requested: old.model_requested.or_else(|| evidence.model_requested.clone()),
+                    model_requested: old
+                        .model_requested
+                        .or_else(|| evidence.model_requested.clone())
+                        .or_else(|| agent.and_then(|value| value.model_requested.clone())),
                     reasoning_effort: old.reasoning_effort.or_else(|| evidence.reasoning_effort.clone()),
                     service_tier: old.service_tier.or_else(|| evidence.service_tier.clone()),
                     speed: old.speed.or_else(|| evidence.speed.clone()),
@@ -395,6 +695,28 @@ pub fn save_event(
                     ),
                     cache_write_ttl: old.cache_write_ttl.or_else(|| evidence.cache_write_ttl.clone()),
                     outcome: evidence.outcome.clone().or(old.outcome),
+                    agent_observed: old.agent_observed || agent.is_some(),
+                    agent_key: old.agent_key.or_else(|| agent.and_then(|value| value.key.clone())),
+                    agent_identity_basis: if old.agent_identity_basis == "unknown" {
+                        agent.map_or_else(|| "unknown".into(), |value| value.identity_basis.clone())
+                    } else {
+                        old.agent_identity_basis
+                    },
+                    parent_agent_key: old
+                        .parent_agent_key
+                        .or_else(|| agent.and_then(|value| value.parent_key.clone())),
+                    parent_agent_identity_basis: if old.parent_agent_identity_basis == "unknown" {
+                        agent.map_or_else(|| "unknown".into(), |value| value.parent_identity_basis.clone())
+                    } else {
+                        old.parent_agent_identity_basis
+                    },
+                    agent_class: if old.agent_class == "unknown" {
+                        agent.map_or_else(|| "unknown".into(), |value| value.class.clone())
+                    } else {
+                        old.agent_class
+                    },
+                    agent_name: old.agent_name.or_else(|| agent.and_then(|value| value.name.clone())),
+                    agent_depth: old.agent_depth.or_else(|| agent.and_then(|value| value.depth)),
                 },
             )?;
         }
@@ -429,13 +751,26 @@ pub fn save_event(
                     detail_output: evidence.output,
                     detail_reasoning: evidence.reasoning,
                     reported_total: evidence.reported_total,
-                    model_requested: evidence.model_requested.clone(),
+                    model_requested: evidence
+                        .model_requested
+                        .clone()
+                        .or_else(|| agent.and_then(|value| value.model_requested.clone())),
                     reasoning_effort: evidence.reasoning_effort.clone(),
                     service_tier: evidence.service_tier.clone(),
                     speed: evidence.speed.clone(),
                     context_window_tokens: evidence.context_window_tokens,
                     cache_write_ttl: evidence.cache_write_ttl.clone(),
                     outcome: evidence.outcome.clone(),
+                    agent_observed: agent.is_some(),
+                    agent_key: agent.and_then(|value| value.key.clone()),
+                    agent_identity_basis: agent
+                        .map_or_else(|| "unknown".into(), |value| value.identity_basis.clone()),
+                    parent_agent_key: agent.and_then(|value| value.parent_key.clone()),
+                    parent_agent_identity_basis: agent
+                        .map_or_else(|| "unknown".into(), |value| value.parent_identity_basis.clone()),
+                    agent_class: agent.map_or_else(|| "unknown".into(), |value| value.class.clone()),
+                    agent_name: agent.and_then(|value| value.name.clone()),
+                    agent_depth: agent.and_then(|value| value.depth),
                 },
             )?;
         }
@@ -530,6 +865,19 @@ pub fn process_line(
     let payload = or_empty(object.get("payload"));
     let provider_text = provider.as_str();
 
+    if provider == Provider::Claude {
+        process_claude_agent_lifecycle(
+            state,
+            binding,
+            account,
+            object,
+            ctx.agent.as_ref(),
+            timestamp,
+            since,
+            now,
+        )?;
+    }
+
     if provider == Provider::Codex {
         match kind {
             Some("session_meta") => {
@@ -555,6 +903,36 @@ pub fn process_line(
                         .or_else(|| epoch(meta_timestamp).filter(|v| *v != 0.0))
                         .unwrap_or(0.0),
                 );
+                ctx.agent =
+                    Some(codex_agent_for_session(&payload, account, &ctx.session, ctx.session_from_provider));
+                if let Some(agent) = ctx.agent.as_ref() {
+                    save_profile(state, binding, agent)?;
+                    if extras.include_subagents
+                        && agent.class != "main"
+                        && let Some(observed_at) =
+                            timestamp.filter(|value| since <= *value && *value <= now + 300.0).and_then(iso)
+                    {
+                        let session_hash = digest(&json!([provider_text, account, ctx.session]));
+                        save_observed_spawn(
+                            state,
+                            binding,
+                            provider,
+                            account,
+                            observed_at.as_str(),
+                            session_hash.as_str(),
+                            agent,
+                        )?;
+                        save_observed_start(
+                            state,
+                            binding,
+                            provider,
+                            account,
+                            observed_at.as_str(),
+                            session_hash.as_str(),
+                            agent,
+                        )?;
+                    }
+                }
             }
             Some("turn_context") => {
                 let Ok(model) = get(&payload, "model") else { return Ok(Err(Malformed)) };
@@ -596,6 +974,11 @@ pub fn process_line(
                         }
                         let Some(ts) = timestamp else { return Ok(Ok(())) };
                         if ts < since || ts > now + 300.0 || !ctx.own_started {
+                            return Ok(Ok(()));
+                        }
+                        if !extras.include_subagents
+                            && ctx.agent.as_ref().is_some_and(|agent| agent.class != "main")
+                        {
                             return Ok(Ok(()));
                         }
                         if let Err(AdapterError::Io) = save_codex_quotas(state, binding, &payload, ts) {
@@ -709,10 +1092,24 @@ pub fn process_line(
                         let Ok(values) = components(provider, &usage_value) else {
                             return Ok(Err(Malformed));
                         };
-                        let evidence = codex_evidence(ctx, &info, &detail_usage_value);
+                        let mut request_agent = ctx.agent.clone().unwrap_or_else(AgentEvidence::unknown);
+                        enrich_profile(state, binding, &mut request_agent)?;
+                        let mut evidence = codex_evidence(ctx, &info, &detail_usage_value);
+                        evidence.model_requested = request_agent.model_requested.clone();
                         let model =
                             if ctx.model.is_empty() { "unknown".to_owned() } else { ctx.model.clone() };
                         let timestamp_text = raw_timestamp.as_str().unwrap_or("").to_owned();
+                        if request_agent.key.is_some() {
+                            save_observed_start(
+                                state,
+                                binding,
+                                provider,
+                                account,
+                                &timestamp_text,
+                                session_hash.as_str(),
+                                &request_agent,
+                            )?;
+                        }
                         save_event(
                             state,
                             binding,
@@ -726,7 +1123,11 @@ pub fn process_line(
                             &evidence,
                             extras,
                             ctx.client_version.as_deref(),
-                            Attribution { cwd: ctx.cwd.as_deref(), surface: ctx.surface.as_deref() },
+                            Attribution {
+                                cwd: ctx.cwd.as_deref(),
+                                surface: ctx.surface.as_deref(),
+                                agent: Some(&request_agent),
+                            },
                         )?;
                     }
                     _ => {}
@@ -763,13 +1164,22 @@ pub fn process_line(
         _ => "unknown".to_owned(),
     });
     let Ok(values) = components(provider, usage) else { return Ok(Err(Malformed)) };
-    let evidence = claude_evidence(object, usage);
+    let mut agent = claude_agent_for_line(state, binding, account, object, ctx.agent.as_ref())?;
+    enrich_profile(state, binding, &mut agent)?;
+    if !extras.include_subagents && is_known_child(&agent) {
+        return Ok(Ok(()));
+    }
     let client_version =
         object.get("version").and_then(Value::as_str).map(|v| v.chars().take(40).collect::<String>());
     let timestamp_text = object.get("timestamp").and_then(Value::as_str).unwrap_or("").to_owned();
+    save_observed_start(state, binding, provider, account, &timestamp_text, session_hash.as_str(), &agent)?;
+    enrich_profile(state, binding, &mut agent)?;
+    let mut evidence = claude_evidence(object, usage);
+    evidence.model_requested = agent.model_requested.clone();
     let attribution = Attribution {
         cwd: object.get("cwd").and_then(Value::as_str),
         surface: Some(claude_surface(object.get("entrypoint").and_then(Value::as_str))),
+        agent: Some(&agent),
     };
     save_event(
         state,
@@ -790,8 +1200,8 @@ pub fn process_line(
 }
 
 /// Only lines containing one of these bytes are parsed.
-const INTERESTING: [&[u8]; 5] =
-    [b"token_count", b"session_meta", b"turn_context", b"task_started", b"\"assistant\""];
+const INTERESTING: [&[u8]; 6] =
+    [b"token_count", b"session_meta", b"turn_context", b"task_started", b"\"assistant\"", b"toolUseResult"];
 
 fn interesting(line: &[u8]) -> bool {
     INTERESTING.iter().any(|needle| line.windows(needle.len()).any(|window| window == *needle))
@@ -852,7 +1262,8 @@ pub fn scan(
     let account = binding.account_id.as_str();
     let since = ctx_run.since;
     let now = ctx_run.now_seconds;
-    state.prepare_file_scan(binding_id, crate::EXECUTION_PARSER_VERSION)?;
+    let scan_generation = format!("{}:subagents={include_subagents}", crate::EXECUTION_PARSER_VERSION);
+    state.prepare_file_scan(binding_id, &scan_generation)?;
     'roots: for root in &binding.roots {
         let root = expand_user(root);
         if !root.is_dir() {
@@ -888,6 +1299,7 @@ pub fn scan(
             }
             let extras = EventExtras {
                 product,
+                include_subagents,
                 parent_session: parent_session
                     .map(|parent| digest(&json!([provider.as_str(), account, parent])).as_str().to_owned()),
             };
@@ -899,13 +1311,23 @@ pub fn scan(
                 metrics.unavailable_roots += 1;
                 continue;
             };
+            let current_file_agent =
+                (provider == Provider::Claude).then(|| claude_file_agent(&resolved, account)).flatten();
+            let previous_file_agent = old
+                .as_ref()
+                .and_then(|checkpoint| serde_json::from_str::<Ctx>(&checkpoint.context).ok())
+                .and_then(|context| context.agent);
+            let agent_metadata_changed =
+                provider == Provider::Claude && old.is_some() && previous_file_agent != current_file_agent;
             if let Some(old) = &old
                 && old.size == size
                 && old.mtime_ns == mtime
+                && !agent_metadata_changed
             {
                 continue;
             }
-            let resume = old.as_ref().is_some_and(|old| old.inode == inode && size >= old.size);
+            let resume = !agent_metadata_changed
+                && old.as_ref().is_some_and(|old| old.inode == inode && size >= old.size);
             let mut found_parse_gap = false;
             let stem = resolved.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
             let mut offset = if resume { old.as_ref().map_or(0, |old| old.offset) } else { 0 };
@@ -916,6 +1338,9 @@ pub fn scan(
             } else {
                 Ctx::fresh(&stem)
             };
+            if provider == Provider::Claude && (!resume || ctx.agent.is_none()) {
+                ctx.agent = current_file_agent;
+            }
             let Ok(file) = fs::File::open(&resolved) else {
                 metrics.unavailable_roots += 1;
                 continue;
@@ -1025,5 +1450,38 @@ mod tests {
         assert_ne!(hash, project_hash("/work/other"));
         assert!(!hash.as_str().contains("work"));
         assert_eq!(hash.as_str().len(), 64);
+    }
+
+    #[test]
+    fn codex_file_fallback_agent_identity_is_derived() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        let mut ctx = Ctx::fresh("filename");
+        let line = json!({
+            "timestamp": "2026-09-02T04:00:00Z",
+            "type": "session_meta",
+            "payload": { "timestamp": "2026-09-02T04:00:00Z" }
+        });
+        let result = process_line(
+            &state,
+            "binding",
+            &line,
+            &mut ctx,
+            Provider::Codex,
+            "account",
+            0.0,
+            2_000_000_000.0,
+            &EventExtras { product: "codex", parent_session: None, include_subagents: true },
+        )
+        .unwrap();
+        assert!(result.is_ok());
+        assert!(!ctx.session_from_provider);
+        let main = ctx.agent.unwrap();
+        assert_eq!(main.identity_basis, "derived");
+        assert_eq!(main.class, "main");
+        assert_eq!(main.depth, Some(0));
+
+        let provider = codex_agent_for_session(&json!({}), "account", "thread-id", true);
+        assert_eq!(provider.identity_basis, "provider");
     }
 }

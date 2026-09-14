@@ -10,9 +10,12 @@ use observatory_contract::{
 };
 use observatory_core::adapter::{Adapter, AdapterError, Cursor, Outcome, Preflight, RunContext, Sink};
 
+use crate::agents::record_from_event as agent_record_from_event;
 use crate::jsonl::{expand_user, scan};
 use crate::readings::emit_dirty_slots;
-use crate::requests::{EvidenceSummary, execution_capabilities, request_from_event};
+use crate::requests::{
+    EvidenceSummary, execution_capabilities, request_from_event, request_matches_agent_setting,
+};
 
 #[derive(Debug, Default)]
 pub struct CodexExecution;
@@ -80,16 +83,34 @@ impl Adapter for CodexExecution {
             }
             if ctx.settings.execution.detail_level != DetailLevel::BucketsOnly {
                 for event in state.request_events(binding.binding_id.as_str())? {
+                    if !request_matches_agent_setting(&event, include_subagents) {
+                        continue;
+                    }
                     evidence.observe(&event);
                     if let Some(record) = request_from_event(
                         &binding.binding_id,
                         AdapterId::CodexExecution,
                         self.parser_version(),
                         ctx.settings.execution.project_attribution,
+                        ctx.settings.execution.tool_detail,
                         &event,
                     ) {
                         sink.emit(record, None);
                         outcome.records_emitted += 1;
+                    }
+                }
+                if include_subagents {
+                    for event in state.agent_events(binding.binding_id.as_str())? {
+                        if let Some(record) = agent_record_from_event(
+                            &binding.binding_id,
+                            AdapterId::CodexExecution,
+                            self.parser_version(),
+                            ctx.settings.execution.tool_detail,
+                            &event,
+                        ) {
+                            sink.emit(record, None);
+                            outcome.records_emitted += 1;
+                        }
                     }
                 }
             }
@@ -100,8 +121,12 @@ impl Adapter for CodexExecution {
         }
         let scan_partial =
             outcome.state != CoverageState::Ok || outcome.malformed > 0 || history_has_parse_gaps;
-        outcome.capabilities =
-            Some(execution_capabilities(ctx.settings.execution.detail_level, scan_partial, evidence));
+        outcome.capabilities = Some(execution_capabilities(
+            ctx.settings.execution.detail_level,
+            include_subagents,
+            scan_partial,
+            evidence,
+        ));
         Ok(outcome)
     }
 }

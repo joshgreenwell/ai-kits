@@ -295,6 +295,14 @@ fn parser_generation_backfills_retained_v2_events() {
                 context_window_tokens: None,
                 cache_write_ttl: None,
                 outcome: None,
+                agent_observed: false,
+                agent_key: None,
+                agent_identity_basis: "unknown".into(),
+                parent_agent_key: None,
+                parent_agent_identity_basis: "unknown".into(),
+                agent_class: "unknown".into(),
+                agent_name: None,
+                agent_depth: None,
             },
         )
         .unwrap();
@@ -367,6 +375,14 @@ fn unbackfilled_rows_expose_their_coverage_limit() {
                 context_window_tokens: None,
                 cache_write_ttl: None,
                 outcome: None,
+                agent_observed: false,
+                agent_key: None,
+                agent_identity_basis: "unknown".into(),
+                parent_agent_key: None,
+                parent_agent_identity_basis: "unknown".into(),
+                agent_class: "unknown".into(),
+                agent_name: None,
+                agent_depth: None,
             },
         )
         .unwrap();

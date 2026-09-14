@@ -1,6 +1,7 @@
 //! The run loop (section 2.4): lock, config, effective modes, adapters on
 //! scoped threads, sink, buckets, envelopes, outbox, upload, summary.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -10,9 +11,11 @@ use jiff::Timestamp;
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
 use observatory_contract::IdentityRequest;
+use observatory_contract::settings::{DetailLevel, ProjectAttribution, ToolDetail};
 use observatory_contract::{
-    AdapterCoverage, Arch, BucketEntry, CollectionSettings, ConfigDocument, Counter, CoverageState,
-    CursorState, DetailCode, Nullable, Platform, Provider, Record, Run, Sha256Hex, Stamp, Text, Uuid,
+    AdapterCoverage, AgentClass, Arch, BucketEntry, CollectionSettings, ConfigDocument, Counter,
+    CoverageState, CursorState, DetailCode, Envelope, Nullable, Platform, Provider, Record, Run, Sha256Hex,
+    Stamp, Text, Uuid,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -400,6 +403,198 @@ fn log_line(config_dir: &Path, line: &str) {
     }
 }
 
+fn record_matches_execution_settings(
+    record: &Record,
+    detail_level: DetailLevel,
+    include_subagents: bool,
+) -> bool {
+    match detail_level {
+        DetailLevel::BucketsOnly
+            if matches!(
+                record,
+                Record::ActivityRequest(_)
+                    | Record::AgentEvent(_)
+                    | Record::ToolEvent(_)
+                    | Record::ResourceAccess(_)
+            ) =>
+        {
+            return false;
+        }
+        DetailLevel::Requests if matches!(record, Record::ToolEvent(_) | Record::ResourceAccess(_)) => {
+            return false;
+        }
+        _ => {}
+    }
+    if include_subagents {
+        return true;
+    }
+    match record {
+        Record::AgentEvent(_) => false,
+        Record::ActivityRequest(request) => {
+            request.parent_session_hash.as_ref().is_none()
+                && request.agent.as_ref().is_none_or(|agent| {
+                    agent.class == AgentClass::Main
+                        || (agent.key.as_ref().is_none()
+                            && agent.parent_key.as_ref().is_none()
+                            && agent.depth.as_ref().is_none())
+                })
+        }
+        _ => true,
+    }
+}
+
+fn apply_current_privacy_policy(
+    record: &mut Record,
+    project_attribution: ProjectAttribution,
+    tool_detail: ToolDetail,
+) {
+    if project_attribution == ProjectAttribution::Off
+        && let Record::ActivityRequest(request) = record
+    {
+        request.project_hash = Nullable::NULL;
+        request.project = None;
+    }
+    let agent = match record {
+        Record::ActivityRequest(request) => request.agent.as_mut(),
+        Record::AgentEvent(event) => Some(&mut event.agent),
+        _ => None,
+    };
+    let Some(agent) = agent else { return };
+    let allowed = agent.name.as_ref().is_some_and(|name| match agent.class {
+        AgentClass::Builtin => {
+            tool_detail != ToolDetail::Off
+                && matches!(
+                    name.as_str(),
+                    "general-purpose"
+                        | "Explore"
+                        | "Plan"
+                        | "claude-code-guide"
+                        | "statusline-setup"
+                        | "claude"
+                        | "codex-auto-review"
+                )
+        }
+        AgentClass::Custom => tool_detail == ToolDetail::HashedCustom && name.as_str().starts_with("h:"),
+        AgentClass::Main | AgentClass::Unknown => false,
+    });
+    if !allowed {
+        agent.name = Nullable::NULL;
+    }
+}
+
+fn pending_records_for_agent_setting(
+    state: &State,
+    detail_level: DetailLevel,
+    include_subagents: bool,
+    project_attribution: ProjectAttribution,
+    tool_detail: ToolDetail,
+) -> Result<Vec<Record>, StateError> {
+    pending_records_for_agent_setting_with_limit(
+        state,
+        detail_level,
+        include_subagents,
+        project_attribution,
+        tool_detail,
+        50_000,
+    )
+}
+
+fn pending_records_for_agent_setting_with_limit(
+    state: &State,
+    detail_level: DetailLevel,
+    include_subagents: bool,
+    project_attribution: ProjectAttribution,
+    tool_detail: ToolDetail,
+    limit: usize,
+) -> Result<Vec<Record>, StateError> {
+    let mut records = Vec::new();
+    let mut cursor: Option<(String, String)> = None;
+    let page_size = limit.clamp(1, 1_000);
+    while records.len() < limit {
+        let page = state.pending_records_after(
+            page_size,
+            cursor.as_ref().map(|(updated_at, id)| (updated_at.as_str(), id.as_str())),
+        )?;
+        if page.is_empty() {
+            break;
+        }
+        for row in &page {
+            match serde_json::from_str::<Record>(&row.record) {
+                Ok(mut record) => {
+                    apply_current_privacy_policy(&mut record, project_attribution, tool_detail);
+                    let revised = serde_json::to_string(&record).map_err(|_| StateError::Corrupt)?;
+                    if revised != row.record {
+                        let content_hash = observatory_contract::stable_json::content_hash(&record)
+                            .map_err(|_| StateError::Corrupt)?;
+                        state.upsert_record(&RecordRow {
+                            record_id: row.record_id.clone(),
+                            binding_id: row.binding_id.clone(),
+                            adapter: row.adapter.clone(),
+                            record_type: row.record_type.clone(),
+                            semantic_key: row.semantic_key.clone(),
+                            content_hash: content_hash.as_str().to_owned(),
+                            published_hash: row.published_hash.clone(),
+                            rejected_reason: row.rejected_reason.clone(),
+                            record: revised,
+                            updated_at: row.updated_at.clone(),
+                        })?;
+                    }
+                    if !record_matches_execution_settings(&record, detail_level, include_subagents) {
+                        continue;
+                    }
+                    records.push(record);
+                    if records.len() == limit {
+                        break;
+                    }
+                }
+                Err(_) => state.mark_record_rejected(&row.record_id, "invalid")?,
+            }
+        }
+        let last = page.last().expect("a nonempty page has a last row");
+        cursor = Some((last.updated_at.clone(), last.record_id.clone()));
+    }
+    Ok(records)
+}
+
+/// Replaces queued data with records rebuilt under the current privacy policy,
+/// while retaining one coverage-only envelope for every earlier offline run.
+fn rebuild_outbox_preserving_coverage(
+    state: &State,
+    bodies: &[String],
+    now: Timestamp,
+) -> Result<(), StateError> {
+    let mut seen_runs = HashSet::new();
+    let mut prior_runs = Vec::new();
+    for row in state.outbox()? {
+        let mut envelope: Envelope = serde_json::from_str(&row.payload).map_err(|_| StateError::Corrupt)?;
+        if envelope.coverage.is_empty() || !seen_runs.insert(envelope.run.run_id.as_str().to_owned()) {
+            continue;
+        }
+        envelope.buckets.clear();
+        envelope.records.clear();
+        let payload = envelope.to_json().map_err(|_| StateError::Corrupt)?;
+        prior_runs.push((payload, row.created_at));
+    }
+
+    state.begin()?;
+    let rebuilt = (|| {
+        state.clear_outbox()?;
+        for (payload, created_at) in prior_runs {
+            let hash = Sha256Hex::digest(payload.as_bytes());
+            state.enqueue_outbox(hash.as_str(), &payload, &created_at)?;
+        }
+        outbox::enqueue(state, bodies, now)?;
+        Ok(())
+    })();
+    match rebuilt {
+        Ok(()) => state.commit(),
+        Err(error) => {
+            state.rollback()?;
+            Err(error)
+        }
+    }
+}
+
 /// Runs one collection cycle with the given adapters.
 pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunSummary, RunError> {
     let started = Instant::now();
@@ -586,7 +781,10 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
         if !binding.runnable() {
             continue;
         }
-        for row in state.bucket_rows(binding.binding_id.as_str())? {
+        for row in state.bucket_rows_for_agent_setting(
+            binding.binding_id.as_str(),
+            ctx.settings.execution.include_subagents,
+        )? {
             let key = outbox::bucket_key(&binding.binding_id, &row);
             let hash = outbox::bucket_digest(&row);
             if state.published_hash(&key)?.as_deref() != Some(hash.as_str())
@@ -596,14 +794,13 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
             }
         }
     }
-    let pending_rows = state.pending_records(50_000)?;
-    let mut records: Vec<Record> = Vec::new();
-    for row in &pending_rows {
-        match serde_json::from_str::<Record>(&row.record) {
-            Ok(record) => records.push(record),
-            Err(_) => state.mark_record_rejected(&row.record_id, "invalid")?,
-        }
-    }
+    let records = pending_records_for_agent_setting(
+        &state,
+        ctx.settings.execution.detail_level,
+        ctx.settings.execution.include_subagents,
+        ctx.settings.execution.project_attribution,
+        ctx.settings.execution.tool_detail,
+    )?;
 
     let finished_at = Stamp::from_timestamp(Timestamp::now());
     let run = Run {
@@ -622,8 +819,12 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
     let upload_bytes: u64 = bodies.iter().map(|body| body.len() as u64).sum();
     let mut publication = None;
     if !ctx.dry_run {
-        outbox::enqueue(&state, &bodies, ctx.now)?;
+        // Rebuild durable envelopes from pending source rows under the current
+        // settings. This prevents an offline envelope created under an older
+        // privacy choice from being uploaded after that choice changes. Keep
+        // each earlier run's coverage evidence in a data-free envelope.
         let client = Client::new(&config.url, Some(config.key.clone()))?;
+        rebuild_outbox_preserving_coverage(&state, &bodies, ctx.now)?;
         publication = Some(outbox::upload(&state, &client, ctx.now)?);
     }
     // The detailed monthly report: the kept v1 analyzer adapter, per binding that names it.
@@ -699,4 +900,206 @@ pub fn run(
 /// A no-op cursor state helper for adapters that do not page.
 pub fn complete() -> CursorState {
     CursorState::Complete
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    fn save_record(state: &State, record: &Record, updated_at: &str) {
+        let text = serde_json::to_string(record).unwrap();
+        let hash = observatory_contract::stable_json::content_hash(record).unwrap();
+        state
+            .upsert_record(&RecordRow {
+                record_id: record.record_id().as_str().to_owned(),
+                binding_id: record.binding_id().as_str().to_owned(),
+                adapter: "claude_execution".into(),
+                record_type: record.record_type().as_str().into(),
+                semantic_key: record.semantic_key(),
+                content_hash: hash.as_str().into(),
+                published_hash: None,
+                rejected_reason: None,
+                record: text,
+                updated_at: updated_at.into(),
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn pending_uploads_are_rebuilt_under_the_current_subagent_setting() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/usage-v2/wire/valid/detail-contract-events.json"
+        ))
+        .unwrap();
+        let main = fixture["records"][0].clone();
+        let mut child = main.clone();
+        child["record_id"] = json!("00000000-0000-4000-8000-000000000001");
+        child["semantic_key"] = json!("1".repeat(64));
+        child["agent"]["key"] = json!("2".repeat(64));
+        child["agent"]["parent_key"] = json!("3".repeat(64));
+        child["agent"]["parent_identity_basis"] = json!("provider");
+        child["agent"]["class"] = json!("builtin");
+        child["agent"]["depth"] = json!(1);
+        let mut unknown = main.clone();
+        unknown["record_id"] = json!("10000000-0000-4000-8000-000000000002");
+        unknown["semantic_key"] = json!("4".repeat(64));
+        unknown["agent"] = json!({
+            "key": null,
+            "identity_basis": "unknown",
+            "parent_key": null,
+            "parent_identity_basis": "unknown",
+            "class": "custom",
+            "name": "h:1234567890abcdef",
+            "depth": null
+        });
+        let mut legacy_child = main.clone();
+        legacy_child["record_id"] = json!("00000000-0000-4000-8000-000000000002");
+        legacy_child["semantic_key"] = json!("5".repeat(64));
+        legacy_child["parent_session_hash"] = json!("6".repeat(64));
+        legacy_child.as_object_mut().unwrap().remove("agent");
+        let records: Vec<Record> = [main, child, unknown, legacy_child]
+            .into_iter()
+            .map(|value| serde_json::from_value(value).unwrap())
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        for record in &records {
+            save_record(&state, record, "2026-09-02T04:01:00.000Z");
+        }
+        state.enqueue_outbox("stale", "{}", "2026-09-02T04:01:00.000Z").unwrap();
+
+        let filtered = pending_records_for_agent_setting(
+            &state,
+            DetailLevel::Requests,
+            false,
+            ProjectAttribution::Off,
+            ToolDetail::Off,
+        )
+        .unwrap();
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|record| record_matches_execution_settings(
+            record,
+            DetailLevel::Requests,
+            false
+        )));
+        assert!(filtered.iter().all(|record| match record {
+            Record::ActivityRequest(request) => {
+                request.agent.as_ref().is_none_or(|agent| agent.name.as_ref().is_none())
+                    && request.project_hash.as_ref().is_none()
+                    && request.project.is_none()
+            }
+            _ => true,
+        }));
+        assert_eq!(
+            pending_records_for_agent_setting(
+                &state,
+                DetailLevel::Requests,
+                true,
+                ProjectAttribution::Hashed,
+                ToolDetail::Off,
+            )
+            .unwrap()
+            .len(),
+            4
+        );
+        let first_allowed = pending_records_for_agent_setting_with_limit(
+            &state,
+            DetailLevel::Requests,
+            false,
+            ProjectAttribution::Off,
+            ToolDetail::Off,
+            1,
+        )
+        .unwrap();
+        assert_eq!(first_allowed.len(), 1);
+        assert!(record_matches_execution_settings(&first_allowed[0], DetailLevel::Requests, false));
+        assert_eq!(state.clear_outbox().unwrap(), 1);
+        assert_eq!(state.outbox_len().unwrap(), 0);
+    }
+
+    #[test]
+    fn queued_detail_records_follow_the_current_detail_level() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/usage-v2/wire/valid/detail-contract-events.json"
+        ))
+        .unwrap();
+        let records: Vec<Record> = [0, 5, 6, 11, 15]
+            .into_iter()
+            .map(|index| serde_json::from_value(fixture["records"][index].clone()).unwrap())
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        for record in &records {
+            save_record(&state, record, "2026-09-02T04:01:00.000Z");
+        }
+
+        let pending = |detail_level| {
+            pending_records_for_agent_setting(
+                &state,
+                detail_level,
+                true,
+                ProjectAttribution::Hashed,
+                ToolDetail::HashedCustom,
+            )
+            .unwrap()
+        };
+        assert_eq!(pending(DetailLevel::BucketsOnly).len(), 1);
+        assert_eq!(pending(DetailLevel::Requests).len(), 3);
+        assert_eq!(pending(DetailLevel::RequestsWithTools).len(), 5);
+    }
+
+    #[test]
+    fn outbox_rebuild_preserves_prior_run_coverage_without_prior_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        let make_run = |id: &str, started: &str| Run {
+            run_id: id.parse().unwrap(),
+            started_at: Stamp::parse(started).unwrap(),
+            finished_at: Stamp::parse(started).unwrap(),
+            companion_version: Text::try_from("test".to_owned()).unwrap(),
+            platform: Platform::current(),
+            arch: Arch::current(),
+            settings_version: Counter::ZERO,
+        };
+        let old_run = make_run("00000000-0000-4000-8000-000000000010", "2026-09-02T04:00:00.000Z");
+        let old_coverage = vec![coverage_entry(
+            AdapterId::ClaudeExecution,
+            "4",
+            CoverageState::Ok,
+            None,
+            None,
+            Duration::ZERO,
+            0,
+        )];
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/usage-v2/wire/valid/detail-contract-events.json"
+        ))
+        .unwrap();
+        let record: Record = serde_json::from_value(fixture["records"][0].clone()).unwrap();
+        let old_bodies = outbox::build_bodies(&old_run, vec![], vec![record], old_coverage).unwrap();
+        outbox::enqueue(&state, &old_bodies, "2026-09-02T04:00:00Z".parse::<Timestamp>().unwrap()).unwrap();
+
+        let new_run = make_run("00000000-0000-4000-8000-000000000011", "2026-09-02T05:00:00.000Z");
+        let new_bodies = outbox::build_bodies(&new_run, vec![], vec![], vec![]).unwrap();
+        rebuild_outbox_preserving_coverage(
+            &state,
+            &new_bodies,
+            "2026-09-02T05:00:00Z".parse::<Timestamp>().unwrap(),
+        )
+        .unwrap();
+
+        let queued: Vec<Envelope> = state
+            .outbox()
+            .unwrap()
+            .into_iter()
+            .map(|row| serde_json::from_str(&row.payload).unwrap())
+            .collect();
+        assert_eq!(queued.len(), 2);
+        let retained = queued.iter().find(|envelope| envelope.run.run_id == old_run.run_id).unwrap();
+        assert_eq!(retained.coverage.len(), 1);
+        assert!(retained.records.is_empty());
+        assert!(retained.buckets.is_empty());
+        assert!(queued.iter().any(|envelope| envelope.run.run_id == new_run.run_id));
+    }
 }

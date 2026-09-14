@@ -4,7 +4,7 @@
 //! only when `project_attribution` is `hashed`; the hash is of the working
 //! directory alone (`jsonl::project_hash`) and the path stays on this machine.
 
-use observatory_contract::settings::{DetailLevel, ProjectAttribution};
+use observatory_contract::settings::{DetailLevel, ProjectAttribution, ToolDetail};
 use observatory_contract::{
     ActivityRequest, Adapter, Basis, CapabilityCoverage, CapabilityDimension, CapabilityState, Channel, Code,
     CompositionState, Counter, ExecutionHost, Nullable, PricingEvidence, Record, RequestOutcome,
@@ -13,12 +13,16 @@ use observatory_contract::{
 use observatory_core::adapter::record_id;
 use observatory_core::state::EventRow;
 
+use crate::agents::{attribution as agent_attribution, is_known_child_fields};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EvidenceSummary {
     pub requests: u64,
     pub incomplete_tokens: u64,
     pub unbackfilled_requests: u64,
     pub with_pricing: u64,
+    pub with_agent: u64,
+    pub unknown_agent: u64,
 }
 
 impl EvidenceSummary {
@@ -46,6 +50,12 @@ impl EvidenceSummary {
         {
             self.with_pricing += 1;
         }
+        if event.agent_observed {
+            self.with_agent += 1;
+            if event.agent_key.is_none() || event.agent_class == "unknown" {
+                self.unknown_agent += 1;
+            }
+        }
     }
 }
 
@@ -65,6 +75,7 @@ fn capability(
 /// because neither transcript format records every catalog dimension.
 pub fn execution_capabilities(
     detail_level: DetailLevel,
+    include_subagents: bool,
     scan_partial: bool,
     summary: EvidenceSummary,
 ) -> Vec<CapabilityCoverage> {
@@ -73,6 +84,7 @@ pub fn execution_capabilities(
             CapabilityDimension::Requests,
             CapabilityDimension::TokenComposition,
             CapabilityDimension::Pricing,
+            CapabilityDimension::Agent,
         ]
         .into_iter()
         .map(|dimension| {
@@ -103,6 +115,15 @@ pub fn execution_capabilities(
     } else {
         "pricing_fields_partial"
     };
+    let (agent_state, agent_detail) = if !include_subagents {
+        (CapabilityState::DisabledBySetting, Some("subagents_disabled"))
+    } else if summary.requests == 0 {
+        (CapabilityState::Unknown, Some("no_request_evidence"))
+    } else if scan_partial || summary.with_agent < summary.requests || summary.unknown_agent > 0 {
+        (CapabilityState::Partial, Some("agent_attribution_partial"))
+    } else {
+        (CapabilityState::Complete, None)
+    };
     vec![
         capability(CapabilityDimension::Requests, request_state, request_detail),
         capability(CapabilityDimension::TokenComposition, token_state, token_detail),
@@ -111,7 +132,24 @@ pub fn execution_capabilities(
             if summary.requests == 0 { CapabilityState::Unknown } else { CapabilityState::Partial },
             Some(pricing_detail),
         ),
+        capability(CapabilityDimension::Agent, agent_state, agent_detail),
     ]
+}
+
+/// Retained state can contain child requests collected while subagents were
+/// enabled. Turning the setting off suppresses identities that are known to be
+/// children while preserving requests whose agent identity is genuinely
+/// unknown.
+pub fn request_matches_agent_setting(event: &EventRow, include_subagents: bool) -> bool {
+    include_subagents
+        || (event.parent_session.is_none()
+            && (!event.agent_observed
+                || !is_known_child_fields(
+                    &event.agent_class,
+                    event.agent_key.as_deref(),
+                    event.parent_agent_key.as_deref(),
+                    event.agent_depth,
+                )))
 }
 
 /// Builds the request record for one saved event; `None` when a stored value is
@@ -121,6 +159,7 @@ pub fn request_from_event(
     adapter: Adapter,
     parser_version: &str,
     project_attribution: ProjectAttribution,
+    tool_detail: ToolDetail,
     event: &EventRow,
 ) -> Option<Record> {
     let counter = |value: i64| Counter::new(u64::try_from(value).ok()?).ok();
@@ -207,6 +246,20 @@ pub fn request_from_event(
         .as_deref()
         .and_then(|value| value.parse::<RequestOutcome>().ok())
         .unwrap_or(RequestOutcome::Unknown);
+    let agent = if event.agent_observed {
+        agent_attribution(
+            event.agent_key.as_deref(),
+            &event.agent_identity_basis,
+            event.parent_agent_key.as_deref(),
+            &event.parent_agent_identity_basis,
+            &event.agent_class,
+            event.agent_name.as_deref(),
+            event.agent_depth,
+            tool_detail,
+        )
+    } else {
+        None
+    };
     Some(Record::ActivityRequest(ActivityRequest {
         record_id: record_id(binding, Channel::LocalFile, &format!("{}:{}", event.product, event.id)),
         binding_id: binding.clone(),
@@ -239,7 +292,7 @@ pub fn request_from_event(
         tools: None,
         project_hash: Nullable(project_hash),
         project: None,
-        agent: None,
+        agent,
         client_version: Nullable(event.client_version.clone().and_then(|v| Text::truncated(&v).ok())),
         latency_ms: Nullable::NULL,
         outcome,

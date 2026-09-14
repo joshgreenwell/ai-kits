@@ -1,0 +1,8 @@
+{
+  "agentType": "private-reviewer",
+  "description": "synthetic nested child",
+  "toolUseId": "tool-nested",
+  "spawnDepth": 2,
+  "requestShape": "synthetic",
+  "requestNonInteractive": true
+}

@@ -10,6 +10,8 @@ excerpt-or-raw). No real account, session, prompt, path, or credential appears; 
 | `wire/valid/*.json` | Envelopes that must be accepted; the file name says what it proves | `npm test` (zod), `cargo test` (serde and the vendored schema), browser normalizer tests |
 | `wire/invalid/*.json` | `{ "_fixture", "reason", "schema_expressible", "envelope" }`; rejected by zod, by serde, and, when `schema_expressible` is true, by the JSON Schema. Refinements JSON Schema cannot express (reasoning within output, non-empty buckets, reset after observation, percent range, future timestamps, hour boundaries, exclusive token sums) are labeled `false` and rejected by the types alone | same |
 | `parity/` | Synthetic Claude Code and Codex JSONL, a Claude statusline inbox, and `expected.json`: the bucket rows, event digests, allowance slots, and coverage counters `scripts/telemetry/collect.py` v1.1.0 produces from them | the companion's v1/v2 parity test (`cargo test -p observatory-adapters`) |
+| `request-detail/` | Focused synthetic local-history rows for nullable request-token and pricing evidence | request-detail adapter tests |
+| `agent-detail/` | Focused synthetic local-history rows and sidecars for agent identity, lineage, lifecycle, role, model, depth, privacy, and token attribution | agent-lineage adapter tests |
 | `provider/<provider>/*.json` | Sanitized provider responses captured by the owner's feasibility checks (section 0 of the handoff); absent until captured | adapter unit tests, browser normalizer tests |
 
 Regenerate after changing the generator:

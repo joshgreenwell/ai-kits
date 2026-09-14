@@ -1,0 +1,2 @@
+{"timestamp":"2026-09-03T02:04:02.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-unknown"}}
+{"timestamp":"2026-09-03T02:04:03.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":5,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":2,"reasoning_output_tokens":0,"total_tokens":7},"last_token_usage":{"input_tokens":5,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":2,"reasoning_output_tokens":0,"total_tokens":7},"model_context_window":200000}}}

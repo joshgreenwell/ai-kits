@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 #![deny(unused_must_use)]
 
+pub mod agents;
 pub mod claude_execution;
 pub mod codex_execution;
 pub mod jsonl;
@@ -34,4 +35,4 @@ pub fn adapters() -> Vec<Box<dyn Adapter>> {
 
 /// The parser version the two execution adapters report: the companion version,
 /// since their behavior is pinned to `collect.py` v1.1.0 plus the v2 fields.
-pub const EXECUTION_PARSER_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+v1.1.0-detail1");
+pub const EXECUTION_PARSER_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+v1.1.0-detail2");

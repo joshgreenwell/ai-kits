@@ -61,6 +61,15 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
   "records": [
     {
       "adapter": "codex_execution",
+      "agent": {
+        "class": "unknown",
+        "depth": null,
+        "identity_basis": "unknown",
+        "key": null,
+        "name": null,
+        "parent_identity_basis": "unknown",
+        "parent_key": null
+      },
       "basis": "exact",
       "binding_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       "channel": "local_file",
@@ -73,7 +82,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-03T10:00:05.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "pricing": {
         "cache_write_ttl": null,
         "context_window_tokens": 400000,
@@ -106,6 +115,15 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
     },
     {
       "adapter": "codex_execution",
+      "agent": {
+        "class": "main",
+        "depth": 0,
+        "identity_basis": "provider",
+        "key": "3c7a5ec6f5401b2eb4ce5836ebbff7bb17a990c1e969a77a50f1f1193b27e8b1",
+        "name": null,
+        "parent_identity_basis": "none",
+        "parent_key": null
+      },
       "basis": "exact",
       "binding_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       "channel": "local_file",
@@ -118,7 +136,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-02T01:01:00.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "pricing": {
         "cache_write_ttl": null,
         "context_window_tokens": 400000,
@@ -151,6 +169,15 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
     },
     {
       "adapter": "codex_execution",
+      "agent": {
+        "class": "main",
+        "depth": 0,
+        "identity_basis": "provider",
+        "key": "8c7982d6088bd7164d57d7d3cbb4c6f27021fa645c7e35ce540e865fa42f6c4d",
+        "name": null,
+        "parent_identity_basis": "none",
+        "parent_key": null
+      },
       "basis": "exact",
       "binding_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       "channel": "local_file",
@@ -163,7 +190,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-02T02:00:10.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "pricing": {
         "cache_write_ttl": null,
         "context_window_tokens": 400000,
@@ -196,6 +223,15 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
     },
     {
       "adapter": "codex_execution",
+      "agent": {
+        "class": "main",
+        "depth": 0,
+        "identity_basis": "provider",
+        "key": "3c7a5ec6f5401b2eb4ce5836ebbff7bb17a990c1e969a77a50f1f1193b27e8b1",
+        "name": null,
+        "parent_identity_basis": "none",
+        "parent_key": null
+      },
       "basis": "exact",
       "binding_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       "channel": "local_file",
@@ -208,7 +244,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-02T01:04:00.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "pricing": {
         "cache_write_ttl": null,
         "context_window_tokens": 400000,
@@ -249,7 +285,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "label": "Codex · weekly",
       "meter_key": "codex:10080",
       "observed_at": "2026-09-02T01:00:10.250Z",
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "raw_window_id": "secondary",
       "reader": "embedded",
       "record_id": "add83de6-9b1f-5a73-babd-c0276fd60bff",
@@ -262,6 +298,15 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
     },
     {
       "adapter": "codex_execution",
+      "agent": {
+        "class": "main",
+        "depth": 0,
+        "identity_basis": "provider",
+        "key": "3c7a5ec6f5401b2eb4ce5836ebbff7bb17a990c1e969a77a50f1f1193b27e8b1",
+        "name": null,
+        "parent_identity_basis": "none",
+        "parent_key": null
+      },
       "basis": "exact",
       "binding_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       "channel": "local_file",
@@ -274,7 +319,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-02T02:10:00.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "pricing": {
         "cache_write_ttl": null,
         "context_window_tokens": 400000,
@@ -307,6 +352,15 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
     },
     {
       "adapter": "codex_execution",
+      "agent": {
+        "class": "main",
+        "depth": 0,
+        "identity_basis": "provider",
+        "key": "3c7a5ec6f5401b2eb4ce5836ebbff7bb17a990c1e969a77a50f1f1193b27e8b1",
+        "name": null,
+        "parent_identity_basis": "none",
+        "parent_key": null
+      },
       "basis": "exact",
       "binding_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       "channel": "local_file",
@@ -319,7 +373,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-02T01:03:00.000Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "pricing": {
         "cache_write_ttl": null,
         "context_window_tokens": 400000,
@@ -352,6 +406,15 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
     },
     {
       "adapter": "codex_execution",
+      "agent": {
+        "class": "main",
+        "depth": 0,
+        "identity_basis": "provider",
+        "key": "3c7a5ec6f5401b2eb4ce5836ebbff7bb17a990c1e969a77a50f1f1193b27e8b1",
+        "name": null,
+        "parent_identity_basis": "none",
+        "parent_key": null
+      },
       "basis": "exact",
       "binding_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       "channel": "local_file",
@@ -364,7 +427,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "observed_at": "2026-09-02T01:00:10.250Z",
       "outcome": "completed",
       "parent_session_hash": null,
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "pricing": {
         "cache_write_ttl": null,
         "context_window_tokens": 400000,
@@ -405,7 +468,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "label": "Codex · 5h",
       "meter_key": "codex:300",
       "observed_at": "2026-09-02T01:03:00.000Z",
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "raw_window_id": "primary",
       "reader": "embedded",
       "record_id": "cf888f12-2c76-578f-a105-e36781120101",
@@ -426,7 +489,7 @@ expression: "snapshot(&CodexExecution, &ctx, id)"
       "label": "Codex · weekly",
       "meter_key": "codex:10080",
       "observed_at": "2026-09-02T02:10:00.000Z",
-      "parser_version": "2.0.0+v1.1.0-detail1",
+      "parser_version": "2.0.0+v1.1.0-detail2",
       "raw_window_id": "secondary",
       "reader": "embedded",
       "record_id": "d8400a6d-9f92-572f-8697-e650c6282e12",

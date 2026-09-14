@@ -12,6 +12,18 @@
     "browser normalizer tests"
   ],
   "files": [
+    "agent-detail/claude/projects/claude-main/subagents/agent-child.jsonl",
+    "agent-detail/claude/projects/claude-main/subagents/agent-child.meta.json",
+    "agent-detail/claude/projects/claude-main/subagents/agent-child/subagents/agent-nested.jsonl",
+    "agent-detail/claude/projects/claude-main/subagents/agent-child/subagents/agent-nested.meta.json",
+    "agent-detail/claude/projects/mirror/claude-main/subagents/agent-child.jsonl",
+    "agent-detail/claude/projects/session-main.jsonl",
+    "agent-detail/codex/sessions/rollout-child-resumed.jsonl",
+    "agent-detail/codex/sessions/rollout-child.jsonl",
+    "agent-detail/codex/sessions/rollout-main.jsonl",
+    "agent-detail/codex/sessions/rollout-nested.jsonl",
+    "agent-detail/codex/sessions/rollout-no-meta.jsonl",
+    "agent-detail/codex/sessions/rollout-orphan.jsonl",
     "parity/claude-statusline-status.json",
     "parity/claude-statusline/2026-09-02T02.json",
     "parity/claude-statusline/2026-09-02T03.json",

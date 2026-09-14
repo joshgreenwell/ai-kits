@@ -116,7 +116,7 @@ Stores global collection defaults and per-install overrides. Each run fetches ef
 | Claude and Codex execution | Built local transcript readers, including supported local desktop/IDE records. |
 | Cursor execution/history/readers | Settings and discovery exist; collection is unimplemented. |
 | Detail level | `buckets_only` omits request uploads; `requests` emits them. `requests_with_tools` still lacks implemented tool extraction. |
-| Subagents | Includes supported subagent transcripts; full per-agent identity/classification is incomplete. |
+| Subagents | Supported Claude and Codex local histories emit privacy-safe request attribution and lifecycle rows for distinct children, parents, roles, depth, and available requested/actual models. Unsupported or missing identity remains explicit Unknown. |
 | Project attribution | `hashed` can add working-directory hashes to request records. Currently off; a project label/grouping UI is not built. |
 | Tool names / Cursor project hooks | Contract/settings groundwork; not functioning collection features. |
 | Claude allowance reader | Statusline is built. OAuth usage reader is a stub. |

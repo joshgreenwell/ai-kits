@@ -1,0 +1,8 @@
+{
+  "agentType": "Explore",
+  "description": "synthetic child",
+  "toolUseId": "tool-child",
+  "spawnDepth": 1,
+  "requestShape": "synthetic",
+  "requestNonInteractive": true
+}

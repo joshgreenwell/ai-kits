@@ -186,32 +186,43 @@ synthetic corpus; `cargo test -p observatory-adapters` fails when the port drift
 
 Beyond parity, `activity.request` records add `product`, `surface`, `execution_host`,
 `client_version`, `ended_at`, `outcome`, and `parent_session_hash` for Claude Code subagent
-transcripts (`.../<session>/subagents/*.jsonl`) when `include_subagents` is on. State schema 3
-keeps nullable request counters and pricing evidence beside the non-null v1 counters. Explicit
-zero-token Claude calls remain request rows but are excluded from the legacy bucket query; a Codex
-token-count row with no numeric token evidence is not counted as a request.
+transcripts (`.../<session>/subagents/*.jsonl`) when `include_subagents` is on. State schema 4 keeps
+nullable request counters, pricing evidence, agent attribution, privacy-gated local role names, and
+agent lifecycle rows beside the non-null v1 counters. Explicit zero-token Claude calls remain
+request rows but are excluded from the legacy bucket query; a Codex token-count row with no numeric
+token evidence is not counted as a request.
 
 Claude maps the four `usage` token counters directly, `output_tokens_details.thinking_tokens` to
 reasoning, top-level `effort` plus `usage.service_tier` and `usage.speed` to pricing evidence, and
 positive `cache_creation` TTL counters to `5m`, `1h`, or `mixed`. Codex subtracts cached and written
 input from inclusive input, keeps `reasoning_output_tokens` and `total_tokens`, and maps
-`turn_context.effort` plus `model_context_window`. Neither request source separately records a
-requested model, so `model_requested` remains null. Missing counters and pricing fields remain null.
+`turn_context.effort` plus `model_context_window`. Claude child requests inherit a requested model
+when the parent `Agent` tool call records one; Codex local histories expose only the resolved child
+model, so their `model_requested` remains null. Missing counters and pricing fields remain null.
 
-The parser version includes a detail generation. When it changes, the state atomically removes the
-binding's file checkpoints so retained files still eligible under `since` are replayed; interrupted
-replays resume normally. Unresolved parse gaps are stored separately, survive a deleted source or
-checkpoint invalidation, and clear only after that file is successfully replayed from the start.
+Supported Claude and Codex requests carry a hashed agent identity, explicit identity basis,
+main/built-in/custom/unknown class, recorded parent, and depth where available. Claude joins parent
+spawn calls, tool results, child sidecars, inline sidechains, and nested child paths; Codex uses the
+child thread and `session_meta.source.subagent.thread_spawn`. Stable start identities count a
+resumed child once, while independent spawn rows retain failed attempts without inventing a child.
+Built-in names can be emitted, custom names are either omitted or hashed according to `tool_detail`,
+and raw bounded names remain only in local state. No initiator is inferred from a role or tool name.
+
+The parser version includes a detail generation, and the local scan generation also includes the
+subagent setting. When either changes, the state atomically removes the binding's file checkpoints
+so retained files still eligible under `since` are replayed; interrupted replays resume normally.
+Unresolved parse gaps are stored separately, survive a deleted source or checkpoint invalidation,
+and clear only after that file is successfully replayed from the start.
 Hourly identities and values remain under the v1 parity gate. Coverage adds request,
 token-composition, and pricing capability states, including detail-level gating and partial source
 history.
 
 Envelope v2 also defines optional detail blocks for token accounting, pricing, agent attribution,
 and explicit project state, plus independent `agent.event`, `tool.event`, and `resource.access`
-records. The two execution adapters now emit token accounting and available pricing fields; agent,
-tool, and resource collection remains separate follow-up work. Existing producers omit those blocks
-and remain wire-compatible. Missing blocks mean the producer did not report that capability; they
-are not zero, No project, a main agent, or success.
+records. The two execution adapters now emit token accounting, available pricing fields, agent
+attribution, and supported agent lifecycle events. Tool and resource collection remains separate
+follow-up work. Existing producers omit those blocks and remain wire-compatible. Missing blocks mean
+the producer did not report that capability; they are not zero, No project, a main agent, or success.
 The server and `20260913230451_extend_usage_detail_contract.sql` migration must be deployed before
 shipping a producer that emits the new variants. There is no runtime version negotiation inside
 schema version 2, so this server-first order prevents an older server from retaining an upgraded
