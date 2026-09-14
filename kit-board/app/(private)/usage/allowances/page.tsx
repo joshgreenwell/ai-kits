@@ -42,7 +42,9 @@ export default function Allowances() {
     const samples = (data.quotas as LiveQuota[]).filter(q => q.account_id === a.id);
     return [...new Set(samples.map(q => q.window_key))].flatMap(key => {
       const rows = samples.filter(q => q.window_key === key);
-      const newest = rows.reduce((best, row) => (Date.parse(row.observed_at) > Date.parse(best.observed_at) ? row : best), rows[0]);
+      // The cadence belongs to the producer of the current reading; a disabled producer's rows are history only.
+      const live = rows.filter(q => !q.history_only);
+      const newest = (live.length ? live : rows).reduce((best, row) => (Date.parse(row.observed_at) > Date.parse(best.observed_at) ? row : best), rows[0]);
       const cadence = (newest.source_id && cadenceBySource.get(newest.source_id)) || DEFAULT_CADENCE_MINUTES;
       const pace = quotaOutlook(rows, now, cadence);
       return pace ? [{ account: a, pace }] : [];

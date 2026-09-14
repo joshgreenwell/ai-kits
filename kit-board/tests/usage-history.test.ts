@@ -58,3 +58,25 @@ test('live evidence blends with history and discontinuous cycles are excluded', 
   assert.equal(broken.discontinuous, true);
   assert.equal(broken.pointsPerHour, null);
 });
+
+test('history-only samples shape cycles but never become the current reading', () => {
+  const live = [
+    sample('2026-09-10T08:00:00Z', 10, '2026-09-10T12:00:00Z'),
+    sample('2026-09-10T10:00:00Z', 30, '2026-09-10T12:00:00Z'),
+    sample('2026-09-10T13:00:00Z', 5, '2026-09-10T17:00:00Z'),
+  ];
+  // A disabled source observed this window later and higher; it stays history and cannot revive capacity.
+  const disabled = { ...sample('2026-09-10T14:00:00Z', 60, '2026-09-10T17:00:00Z'), history_only: true };
+  const outlook = quotaOutlook([...live, disabled], Date.parse('2026-09-10T14:05:00Z'))!;
+  assert.equal(outlook.observed_at, '2026-09-10T13:00:00Z');
+  assert.equal(outlook.used_percent, 5);
+  assert.equal(outlook.cycles.length, 2, 'the cycle history keeps every observation');
+  assert.equal(outlook.cycles[1].samples.length, 2);
+  assert.equal(outlook.samples, 1, 'pace uses live samples only');
+  // With only history, an earlier completed live cycle is the current one and reads as expired, never the disabled window.
+  const expired = quotaOutlook([live[0], live[1], { ...live[2], history_only: true }, disabled], Date.parse('2026-09-10T14:05:00Z'))!;
+  assert.equal(expired.resets_at, '2026-09-10T12:00:00.000Z');
+  assert.equal(expired.stale, true);
+  assert.equal(expired.staleReason, 'expired');
+  assert.equal(quotaOutlook([{ ...live[0], history_only: true }, disabled], Date.parse('2026-09-10T14:05:00Z')), null, 'history alone has no outlook');
+});
