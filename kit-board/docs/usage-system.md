@@ -115,10 +115,10 @@ Stores global collection defaults and per-install overrides. Each run fetches ef
 | Cadence | Used when installing the OS service. After changing cadence, run `observatory service install` with the existing config directory to update the scheduler; ordinary runs do not rewrite it. |
 | Claude and Codex execution | Built local transcript readers, including supported local desktop/IDE records. |
 | Cursor execution/history/readers | Settings and discovery exist; collection is unimplemented. |
-| Detail level | `buckets_only` omits request uploads; `requests` emits them. `requests_with_tools` still lacks implemented tool extraction. |
+| Detail level | `buckets_only` omits request uploads; `requests` emits requests without tool detail; `requests_with_tools` also emits supported local tool invocation/result rows and request tool totals. |
 | Subagents | Supported Claude and Codex local histories emit privacy-safe request attribution and lifecycle rows for distinct children, parents, roles, depth, and available requested/actual models. Unsupported or missing identity remains explicit Unknown. |
 | Project attribution | `hashed` can add working-directory hashes to request records. Currently off; a project label/grouping UI is not built. |
-| Tool names / Cursor project hooks | Contract/settings groundwork; not functioning collection features. |
+| Tool names / Cursor project hooks | Claude and Codex local tool names follow `off`, `builtin_only`, or `hashed_custom`; Cursor project hooks remain unimplemented. |
 | Claude allowance reader | Statusline is built. OAuth usage reader is a stub. |
 | Codex allowance reader | Embedded rollout readings are built. App-server/web-backend readers are stubs; selecting them does not implement them. Embedded readings still arrive from execution. |
 | Billing / Admin keys | Anthropic/OpenAI account usage and cost readers are stubs. No real money ingestion from these adapters yet. |

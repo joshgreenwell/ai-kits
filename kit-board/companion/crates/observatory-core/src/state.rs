@@ -13,7 +13,7 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: &str = "4";
+pub const SCHEMA_VERSION: &str = "5";
 
 #[derive(Debug, Error)]
 pub enum StateError {
@@ -62,6 +62,19 @@ CREATE TABLE IF NOT EXISTS local_agent_events (binding_id TEXT NOT NULL, id TEXT
   class TEXT NOT NULL, name TEXT, depth INTEGER, model_requested TEXT, tool_invocation_key TEXT,
   outcome TEXT NOT NULL,
   PRIMARY KEY (binding_id, id));
+CREATE TABLE IF NOT EXISTS local_tool_events (binding_id TEXT NOT NULL, id TEXT NOT NULL,
+  timestamp TEXT NOT NULL, event_kind TEXT NOT NULL, invocation_key TEXT NOT NULL,
+  session_hash TEXT, caller_request_key TEXT, caller_agent_key TEXT,
+  caller_is_subagent INTEGER NOT NULL DEFAULT 0, parent_invocation_key TEXT,
+  class TEXT NOT NULL, name TEXT, name_hash TEXT, namespace TEXT, namespace_hash TEXT,
+  outcome TEXT NOT NULL, name_truncated INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (binding_id, id));
+CREATE INDEX IF NOT EXISTS local_tool_events_invocation
+  ON local_tool_events(binding_id, invocation_key, event_kind);
+CREATE INDEX IF NOT EXISTS local_tool_events_request
+  ON local_tool_events(binding_id, caller_request_key, event_kind);
+CREATE TABLE IF NOT EXISTS tool_coverage (binding_id TEXT PRIMARY KEY,
+  unmapped_forms INTEGER NOT NULL DEFAULT 0, truncated_names INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS projects (binding_id TEXT NOT NULL, project_hash TEXT NOT NULL, path TEXT NOT NULL,
   first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, PRIMARY KEY (binding_id, project_hash));
 CREATE TABLE IF NOT EXISTS allowance_slots (binding_id TEXT NOT NULL, slot TEXT NOT NULL, payload TEXT NOT NULL,
@@ -197,6 +210,35 @@ pub struct AgentEventRow {
     pub outcome: String,
 }
 
+/// One locally retained tool invocation or result. Raw names are bounded and
+/// never leave the machine; their full-value hashes support later privacy-policy
+/// changes without retaining arguments or result content.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolEventRow {
+    pub id: String,
+    pub timestamp: String,
+    pub event_kind: String,
+    pub invocation_key: String,
+    pub session_hash: Option<String>,
+    pub caller_request_key: Option<String>,
+    pub caller_agent_key: Option<String>,
+    pub caller_is_subagent: bool,
+    pub parent_invocation_key: Option<String>,
+    pub class: String,
+    pub name: Option<String>,
+    pub name_hash: Option<String>,
+    pub namespace: Option<String>,
+    pub namespace_hash: Option<String>,
+    pub outcome: String,
+    pub name_truncated: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ToolCoverageRow {
+    pub unmapped_forms: bool,
+    pub truncated_names: bool,
+}
+
 /// One working directory this binding has seen, kept locally so a hash can be
 /// labeled. Never uploaded.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -286,7 +328,7 @@ impl State {
 
     /// Forward migrations. Version 1 predates project attribution, version 2
     /// predates nullable request and pricing evidence, and version 3 predates
-    /// agent attribution. Every step is idempotent, so an interrupted upgrade
+    /// agent attribution, and version 4 predates tool evidence. Every step is idempotent, so an interrupted upgrade
     /// resumes.
     fn migrate(&self) -> Result<(), StateError> {
         let version = self.meta("schema_version")?;
@@ -1043,6 +1085,219 @@ impl State {
             .optional()?)
     }
 
+    // --- tool evidence ------------------------------------------------------
+
+    pub fn tool_event(&self, binding: &str, id: &str) -> Result<Option<ToolEventRow>, StateError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, timestamp, event_kind, invocation_key, session_hash, caller_request_key,
+                        caller_agent_key, caller_is_subagent, parent_invocation_key, class, name,
+                        name_hash, namespace, namespace_hash, outcome, name_truncated
+                   FROM local_tool_events WHERE binding_id = ?1 AND id = ?2",
+                params![binding, id],
+                tool_event_from_row,
+            )
+            .optional()?)
+    }
+
+    pub fn tool_invocation(
+        &self,
+        binding: &str,
+        invocation_key: &str,
+    ) -> Result<Option<ToolEventRow>, StateError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, timestamp, event_kind, invocation_key, session_hash, caller_request_key,
+                        caller_agent_key, caller_is_subagent, parent_invocation_key, class, name,
+                        name_hash, namespace, namespace_hash, outcome, name_truncated
+                   FROM local_tool_events
+                  WHERE binding_id = ?1 AND invocation_key = ?2 AND event_kind = 'invocation'",
+                params![binding, invocation_key],
+                tool_event_from_row,
+            )
+            .optional()?)
+    }
+
+    /// Upserts a provider event by stable semantic identity. Repeated result or
+    /// status rows can enrich the same event, but never create another headline
+    /// invocation. Invocation facts are copied onto an earlier orphan result.
+    pub fn upsert_tool_event(&self, binding: &str, row: &ToolEventRow) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT INTO local_tool_events
+             (binding_id, id, timestamp, event_kind, invocation_key, session_hash,
+              caller_request_key, caller_agent_key, caller_is_subagent, parent_invocation_key,
+              class, name, name_hash, namespace, namespace_hash, outcome, name_truncated)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+             ON CONFLICT(binding_id, id) DO UPDATE SET
+               timestamp = min(local_tool_events.timestamp, excluded.timestamp),
+               session_hash = coalesce(local_tool_events.session_hash, excluded.session_hash),
+               caller_request_key = coalesce(local_tool_events.caller_request_key, excluded.caller_request_key),
+               caller_agent_key = coalesce(local_tool_events.caller_agent_key, excluded.caller_agent_key),
+               caller_is_subagent = max(local_tool_events.caller_is_subagent, excluded.caller_is_subagent),
+               parent_invocation_key = coalesce(local_tool_events.parent_invocation_key, excluded.parent_invocation_key),
+               class = CASE WHEN local_tool_events.class = 'unknown' THEN excluded.class ELSE local_tool_events.class END,
+               name = coalesce(local_tool_events.name, excluded.name),
+               name_hash = coalesce(local_tool_events.name_hash, excluded.name_hash),
+               namespace = coalesce(local_tool_events.namespace, excluded.namespace),
+               namespace_hash = coalesce(local_tool_events.namespace_hash, excluded.namespace_hash),
+               outcome = CASE
+                 WHEN local_tool_events.outcome = 'unknown'
+                   OR (local_tool_events.outcome = 'succeeded'
+                       AND excluded.outcome IN ('failed', 'denied', 'cancelled'))
+                 THEN excluded.outcome ELSE local_tool_events.outcome END,
+               name_truncated = max(local_tool_events.name_truncated, excluded.name_truncated)",
+            params![
+                binding,
+                row.id,
+                row.timestamp,
+                row.event_kind,
+                row.invocation_key,
+                row.session_hash,
+                row.caller_request_key,
+                row.caller_agent_key,
+                row.caller_is_subagent,
+                row.parent_invocation_key,
+                row.class,
+                row.name,
+                row.name_hash,
+                row.namespace,
+                row.namespace_hash,
+                row.outcome,
+                row.name_truncated,
+            ],
+        )?;
+        if row.event_kind == "invocation" {
+            self.conn.execute(
+                "UPDATE local_tool_events SET
+                   session_hash = coalesce(session_hash, ?3),
+                   caller_request_key = coalesce(caller_request_key, ?4),
+                   caller_agent_key = coalesce(caller_agent_key, ?5),
+                   caller_is_subagent = max(caller_is_subagent, ?6),
+                   parent_invocation_key = coalesce(parent_invocation_key, ?7),
+                   class = CASE WHEN class = 'unknown' THEN ?8 ELSE class END,
+                   name = coalesce(name, ?9), name_hash = coalesce(name_hash, ?10),
+                   namespace = coalesce(namespace, ?11), namespace_hash = coalesce(namespace_hash, ?12),
+                   name_truncated = max(name_truncated, ?13)
+                 WHERE binding_id = ?1 AND invocation_key = ?2 AND event_kind = 'result'",
+                params![
+                    binding,
+                    row.invocation_key,
+                    row.session_hash,
+                    row.caller_request_key,
+                    row.caller_agent_key,
+                    row.caller_is_subagent,
+                    row.parent_invocation_key,
+                    row.class,
+                    row.name,
+                    row.name_hash,
+                    row.namespace,
+                    row.namespace_hash,
+                    row.name_truncated,
+                ],
+            )?;
+            self.conn.execute(
+                "UPDATE local_tool_events SET outcome = (
+                   SELECT result.outcome FROM local_tool_events AS result
+                    WHERE result.binding_id = ?1 AND result.invocation_key = ?2
+                      AND result.event_kind = 'result' AND result.outcome != 'unknown'
+                    ORDER BY CASE result.outcome WHEN 'succeeded' THEN 1 ELSE 2 END DESC,
+                             result.timestamp DESC, result.id DESC LIMIT 1)
+                 WHERE binding_id = ?1 AND id = ?3 AND event_kind = 'invocation'
+                   AND (outcome = 'unknown' OR outcome = 'succeeded')
+                   AND EXISTS (
+                     SELECT 1 FROM local_tool_events AS result
+                      WHERE result.binding_id = ?1 AND result.invocation_key = ?2
+                        AND result.event_kind = 'result' AND result.outcome != 'unknown')",
+                params![binding, row.invocation_key, row.id],
+            )?;
+        } else if row.outcome != "unknown" {
+            self.conn.execute(
+                "UPDATE local_tool_events SET outcome = ?3
+                  WHERE binding_id = ?1 AND invocation_key = ?2 AND event_kind = 'invocation'
+                    AND (outcome = 'unknown'
+                         OR (outcome = 'succeeded' AND ?3 IN ('failed', 'denied', 'cancelled')))",
+                params![binding, row.invocation_key, row.outcome],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn tool_events(&self, binding: &str) -> Result<Vec<ToolEventRow>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, timestamp, event_kind, invocation_key, session_hash, caller_request_key,
+                    caller_agent_key, caller_is_subagent, parent_invocation_key, class, name,
+                    name_hash, namespace, namespace_hash, outcome, name_truncated
+               FROM local_tool_events WHERE binding_id = ?1 ORDER BY timestamp, id",
+        )?;
+        let rows = statement.query_map(params![binding], tool_event_from_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Associates all calls awaiting the same Codex request accounting event.
+    pub fn assign_tool_caller_request(
+        &self,
+        binding: &str,
+        invocation_keys: &[String],
+        request_key: &str,
+    ) -> Result<(), StateError> {
+        for invocation_key in invocation_keys {
+            self.conn.execute(
+                "UPDATE local_tool_events SET caller_request_key = coalesce(caller_request_key, ?3)
+                  WHERE binding_id = ?1 AND invocation_key = ?2",
+                params![binding, invocation_key, request_key],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn tool_invocation_is_subagent(
+        &self,
+        binding: &str,
+        invocation_key: &str,
+    ) -> Result<bool, StateError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT max(caller_is_subagent) FROM local_tool_events
+                  WHERE binding_id = ?1 AND invocation_key = ?2",
+                params![binding, invocation_key],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten()
+            .unwrap_or(false))
+    }
+
+    pub fn mark_tool_coverage(
+        &self,
+        binding: &str,
+        unmapped_form: bool,
+        truncated_name: bool,
+    ) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT INTO tool_coverage (binding_id, unmapped_forms, truncated_names) VALUES (?1, ?2, ?3)
+             ON CONFLICT(binding_id) DO UPDATE SET
+               unmapped_forms = max(tool_coverage.unmapped_forms, excluded.unmapped_forms),
+               truncated_names = max(tool_coverage.truncated_names, excluded.truncated_names)",
+            params![binding, unmapped_form, truncated_name],
+        )?;
+        Ok(())
+    }
+
+    pub fn tool_coverage(&self, binding: &str) -> Result<ToolCoverageRow, StateError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT unmapped_forms, truncated_names FROM tool_coverage WHERE binding_id = ?1",
+                params![binding],
+                |row| Ok(ToolCoverageRow { unmapped_forms: row.get(0)?, truncated_names: row.get(1)? }),
+            )
+            .optional()?
+            .unwrap_or_default())
+    }
+
     // --- projects -----------------------------------------------------------
 
     /// Records a working directory sighting; `first_seen` and `last_seen` widen, never shrink.
@@ -1422,6 +1677,27 @@ fn agent_event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentEventR
     })
 }
 
+fn tool_event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ToolEventRow> {
+    Ok(ToolEventRow {
+        id: row.get(0)?,
+        timestamp: row.get(1)?,
+        event_kind: row.get(2)?,
+        invocation_key: row.get(3)?,
+        session_hash: row.get(4)?,
+        caller_request_key: row.get(5)?,
+        caller_agent_key: row.get(6)?,
+        caller_is_subagent: row.get(7)?,
+        parent_invocation_key: row.get(8)?,
+        class: row.get(9)?,
+        name: row.get(10)?,
+        name_hash: row.get(11)?,
+        namespace: row.get(12)?,
+        namespace_hash: row.get(13)?,
+        outcome: row.get(14)?,
+        name_truncated: row.get(15)?,
+    })
+}
+
 fn event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EventRow> {
     Ok(EventRow {
         id: row.get(0)?,
@@ -1539,7 +1815,7 @@ mod tests {
         assert_eq!(rows[0].calls, 2);
         assert_eq!(rows[0].total_tokens, 2 * 30 + 25);
         assert!(state.bucket_rows("other").unwrap().is_empty());
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("4"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("5"));
     }
 
     #[test]
@@ -1649,7 +1925,7 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("4"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("5"));
         let mut row = event("a", 10);
         row.project_hash = Some("h".repeat(64));
         row.surface = Some("desktop".into());
@@ -1690,7 +1966,7 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("4"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("5"));
         let legacy = state.event("b", "legacy-child").unwrap().unwrap();
         assert!(!legacy.agent_observed);
         assert!(legacy.parent_session.is_some());
@@ -2006,6 +2282,66 @@ mod tests {
         state.mark_record_rejected("r1", "invalid").unwrap();
         assert!(state.pending_records(10).unwrap().is_empty());
         assert_eq!(state.record_counts().unwrap(), (1, 0, 1));
+    }
+
+    #[test]
+    fn tool_events_merge_replays_and_stronger_outcomes_without_adding_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        let invocation = ToolEventRow {
+            id: "1".repeat(64),
+            timestamp: "2026-09-04T00:00:00Z".into(),
+            event_kind: "invocation".into(),
+            invocation_key: "1".repeat(64),
+            session_hash: Some("2".repeat(64)),
+            caller_request_key: None,
+            caller_agent_key: Some("3".repeat(64)),
+            caller_is_subagent: false,
+            parent_invocation_key: None,
+            class: "builtin".into(),
+            name: Some("Read".into()),
+            name_hash: Some("h:1234567890abcdef".into()),
+            namespace: None,
+            namespace_hash: None,
+            outcome: "succeeded".into(),
+            name_truncated: false,
+        };
+        let result = ToolEventRow {
+            id: "4".repeat(64),
+            timestamp: "2026-09-04T00:00:01Z".into(),
+            event_kind: "result".into(),
+            class: "unknown".into(),
+            name: None,
+            name_hash: None,
+            outcome: "failed".into(),
+            ..invocation.clone()
+        };
+        state.upsert_tool_event("b", &result).unwrap();
+        state.upsert_tool_event("b", &invocation).unwrap();
+        state.upsert_tool_event("b", &invocation).unwrap();
+        assert_eq!(state.tool_events("b").unwrap().len(), 2);
+        assert_eq!(
+            state.tool_invocation("b", &invocation.invocation_key).unwrap().unwrap().outcome,
+            "failed"
+        );
+        assert_eq!(state.tool_event("b", &result.id).unwrap().unwrap().name.as_deref(), Some("Read"));
+        let request_key = "5".repeat(64);
+        state
+            .assign_tool_caller_request("b", std::slice::from_ref(&invocation.invocation_key), &request_key)
+            .unwrap();
+        assert!(
+            state
+                .tool_events("b")
+                .unwrap()
+                .iter()
+                .all(|row| row.caller_request_key.as_deref() == Some(request_key.as_str()))
+        );
+        state.mark_tool_coverage("b", true, false).unwrap();
+        state.mark_tool_coverage("b", false, true).unwrap();
+        assert_eq!(
+            state.tool_coverage("b").unwrap(),
+            ToolCoverageRow { unmapped_forms: true, truncated_names: true }
+        );
     }
 
     #[test]

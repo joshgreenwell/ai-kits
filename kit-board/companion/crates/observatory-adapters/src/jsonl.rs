@@ -26,6 +26,10 @@ use crate::agents::{
     invocation_key, is_known_child, save_observed_spawn, save_observed_start, save_profile,
     save_spawn_attempt,
 };
+use crate::tools::{
+    claude_identity, codex_identity, result_key, save_invocation as save_tool_invocation,
+    save_result as save_tool_result,
+};
 
 /// A line `collect.py` would have counted as malformed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +64,10 @@ pub struct Ctx {
     /// v4: privacy-safe agent attribution for the current file/thread.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentEvidence>,
+    /// v5: Codex calls awaiting the next request accounting event. Only
+    /// privacy-safe invocation hashes are checkpointed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_tool_invocations: Vec<String>,
 }
 
 impl Ctx {
@@ -77,6 +85,7 @@ impl Ctx {
             surface: None,
             reasoning_effort: None,
             agent: None,
+            pending_tool_invocations: Vec::new(),
         }
     }
 }
@@ -511,6 +520,360 @@ fn process_claude_agent_lifecycle(
     Ok(())
 }
 
+fn explicit_outcome(value: Option<&str>) -> Option<&'static str> {
+    match value.map(str::to_ascii_lowercase).as_deref() {
+        Some("completed" | "complete" | "succeeded" | "success" | "ok") => Some("succeeded"),
+        Some("failed" | "failure" | "error") => Some("failed"),
+        Some("denied" | "rejected" | "permission_denied") => Some("denied"),
+        Some("cancelled" | "canceled" | "aborted" | "interrupted") => Some("cancelled"),
+        _ => None,
+    }
+}
+
+fn result_text(value: &Value, remaining: &mut usize, depth: u8, out: &mut String) {
+    if *remaining == 0 || depth > 8 {
+        return;
+    }
+    match value {
+        Value::String(text) => {
+            let fragment: String = text.chars().take(*remaining).collect();
+            *remaining -= fragment.chars().count();
+            out.push_str(&fragment);
+        }
+        Value::Array(values) => {
+            for value in values {
+                result_text(value, remaining, depth + 1, out);
+                if *remaining == 0 {
+                    break;
+                }
+            }
+        }
+        Value::Object(values) => {
+            for (key, value) in values {
+                if matches!(key.as_str(), "text" | "message" | "error" | "stderr" | "output") {
+                    result_text(value, remaining, depth + 1, out);
+                }
+                if *remaining == 0 {
+                    break;
+                }
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn narrow_text_outcome(value: &Value) -> Option<&'static str> {
+    let mut text = String::new();
+    result_text(value, &mut 8_192, 0, &mut text);
+    let text = text.to_ascii_lowercase();
+    let marker = "process exited with code ";
+    if let Some(rest) = text.split_once(marker).map(|(_, rest)| rest) {
+        let code: String = rest
+            .chars()
+            .skip_while(|value| value.is_whitespace())
+            .take_while(|value| value.is_ascii_digit() || *value == '-')
+            .collect();
+        if let Ok(code) = code.parse::<i64>() {
+            return Some(if code == 0 { "succeeded" } else { "failed" });
+        }
+    }
+    if [
+        "permission request denied",
+        "permission denied by user",
+        "exec command rejected by user",
+        "tool call rejected by user",
+        "request was denied by the user",
+    ]
+    .iter()
+    .any(|pattern| text.contains(pattern))
+    {
+        return Some("denied");
+    }
+    if ["command cancelled by user", "command canceled by user", "request cancelled by user"]
+        .iter()
+        .any(|pattern| text.contains(pattern))
+    {
+        return Some("cancelled");
+    }
+    None
+}
+
+fn structured_outcome(value: &Value, depth: u8) -> Option<&'static str> {
+    if depth > 1 {
+        return None;
+    }
+    match value {
+        Value::Array(values) => values
+            .iter()
+            .filter(|value| value.is_object())
+            .find_map(|value| structured_outcome(value, depth + 1)),
+        Value::Object(values) => {
+            for key in ["status", "outcome"] {
+                if let Some(outcome) = explicit_outcome(values.get(key).and_then(Value::as_str)) {
+                    return Some(outcome);
+                }
+            }
+            if values.get("interrupted").and_then(Value::as_bool) == Some(true) {
+                return Some("cancelled");
+            }
+            if values.get("is_error").and_then(Value::as_bool) == Some(true)
+                || values.get("success").and_then(Value::as_bool) == Some(false)
+            {
+                return Some("failed");
+            }
+            if let Some(code) = values.get("exit_code").and_then(Value::as_i64) {
+                return Some(if code == 0 { "succeeded" } else { "failed" });
+            }
+            if values.get("is_error").and_then(Value::as_bool) == Some(false)
+                || values.get("success").and_then(Value::as_bool) == Some(true)
+            {
+                return Some("succeeded");
+            }
+            None
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+    }
+}
+
+fn claude_result_outcome(block: &Map<String, Value>, outer: Option<&Value>) -> &'static str {
+    let outer_status = outer.and_then(|value| value.get("status")).and_then(Value::as_str);
+    let outer_outcome = explicit_outcome(outer_status);
+    if let Some(outcome @ ("denied" | "cancelled" | "failed")) = outer_outcome {
+        return outcome;
+    }
+    if outer.and_then(|value| value.get("interrupted")).and_then(Value::as_bool) == Some(true) {
+        return "cancelled";
+    }
+    if block.get("is_error").and_then(Value::as_bool) == Some(true) {
+        if let Some(outcome @ ("denied" | "cancelled")) = block.get("content").and_then(narrow_text_outcome) {
+            return outcome;
+        }
+        return "failed";
+    }
+    if block.get("is_error").and_then(Value::as_bool) == Some(false) {
+        return "succeeded";
+    }
+    if let Some(outcome @ ("denied" | "cancelled")) = block.get("content").and_then(narrow_text_outcome) {
+        return outcome;
+    }
+    outer_outcome.unwrap_or("unknown")
+}
+
+fn codex_result_outcome(payload: &Value) -> &'static str {
+    let status = payload.get("status").and_then(Value::as_str);
+    if let Some(outcome) = explicit_outcome(status) {
+        return outcome;
+    }
+    let output = payload.get("output").unwrap_or(&Value::Null);
+    structured_outcome(output, 0).or_else(|| narrow_text_outcome(output)).unwrap_or("unknown")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_claude_tool_evidence(
+    state: &State,
+    binding: &str,
+    account: &str,
+    object: &Map<String, Value>,
+    file_agent: Option<&AgentEvidence>,
+    timestamp: Option<f64>,
+    since: f64,
+    now: f64,
+) -> Result<(), AdapterError> {
+    let Some(ts) = timestamp.filter(|value| since <= *value && *value <= now + 300.0) else {
+        return Ok(());
+    };
+    let Some(timestamp) = iso(ts).map(|value| value.as_str().to_owned()) else { return Ok(()) };
+    let message = or_empty(object.get("message"));
+    let Some(content) = get(&message, "content").ok().flatten().and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let session_hash = object
+        .get("sessionId")
+        .filter(|value| py_truthy(value))
+        .map(|session| digest(&json!([Provider::Claude.as_str(), account, session])).as_str().to_owned());
+    let caller_request = get(&message, "id")
+        .ok()
+        .flatten()
+        .filter(|value| py_truthy(value))
+        .map(|id| digest(&json!([Provider::Claude.as_str(), account, id])).as_str().to_owned());
+    let mut caller_agent = claude_agent_for_line(state, binding, account, object, file_agent)?;
+    enrich_profile(state, binding, &mut caller_agent)?;
+    let caller_is_subagent = is_known_child(&caller_agent);
+    for block in content {
+        let Some(block) = block.as_object() else { continue };
+        match block.get("type").and_then(Value::as_str) {
+            Some("tool_use") => {
+                let raw_id =
+                    block.get("id").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty());
+                let raw_name = block.get("name").and_then(Value::as_str);
+                if raw_id.is_none() || raw_name.is_none() {
+                    state.mark_tool_coverage(binding, true, false)?;
+                    continue;
+                }
+                let raw_id = raw_id.unwrap_or_default();
+                let invocation = invocation_key(Provider::Claude, account, raw_id);
+                let identity = claude_identity(raw_name);
+                let parent = block
+                    .get("parent_tool_use_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|id| invocation_key(Provider::Claude, account, id));
+                state.mark_tool_coverage(binding, false, identity.name_truncated)?;
+                save_tool_invocation(
+                    state,
+                    binding,
+                    &invocation,
+                    &timestamp,
+                    session_hash.as_deref(),
+                    caller_request.as_deref(),
+                    caller_agent.key.as_deref(),
+                    caller_is_subagent,
+                    parent.as_deref(),
+                    &identity,
+                    "unknown",
+                )?;
+            }
+            Some("tool_result") => {
+                let Some(raw_id) = block
+                    .get("tool_use_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    state.mark_tool_coverage(binding, true, false)?;
+                    continue;
+                };
+                let invocation = invocation_key(Provider::Claude, account, raw_id);
+                let result = result_key(Provider::Claude, account, raw_id);
+                let outcome = claude_result_outcome(block, object.get("toolUseResult"));
+                save_tool_result(
+                    state,
+                    binding,
+                    &result,
+                    &invocation,
+                    &timestamp,
+                    outcome,
+                    session_hash.as_deref(),
+                    caller_agent.key.as_deref(),
+                    caller_is_subagent,
+                )?;
+            }
+            Some(kind) if kind.starts_with("tool_") => {
+                state.mark_tool_coverage(binding, true, false)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn derived_codex_tool_id(account: &str, session: &str, timestamp: Option<&Value>, payload: &Value) -> String {
+    digest(&json!(["derived-tool", Provider::Codex.as_str(), account, session, timestamp, payload]))
+        .as_str()
+        .to_owned()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_codex_tool_evidence(
+    state: &State,
+    binding: &str,
+    account: &str,
+    object: &Map<String, Value>,
+    payload: &Value,
+    ctx: &mut Ctx,
+    timestamp: Option<f64>,
+    since: f64,
+    now: f64,
+) -> Result<(), AdapterError> {
+    if object.get("type").and_then(Value::as_str) != Some("response_item") {
+        return Ok(());
+    }
+    let Some(ts) = timestamp.filter(|value| since <= *value && *value <= now + 300.0) else {
+        return Ok(());
+    };
+    let Some(timestamp_text) = iso(ts).map(|value| value.as_str().to_owned()) else { return Ok(()) };
+    let Some(kind) = payload.get("type").and_then(Value::as_str) else { return Ok(()) };
+    let call_kinds =
+        ["function_call", "custom_tool_call", "mcp_tool_call", "web_search_call", "local_shell_call"];
+    let result_kinds = [
+        "function_call_output",
+        "custom_tool_call_output",
+        "mcp_tool_call_output",
+        "local_shell_call_output",
+    ];
+    if !call_kinds.contains(&kind) && !result_kinds.contains(&kind) {
+        if kind.contains("call") {
+            state.mark_tool_coverage(binding, true, false)?;
+        }
+        return Ok(());
+    }
+    let provider_id = payload
+        .get("call_id")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("id").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    if result_kinds.contains(&kind) && provider_id.is_none() {
+        state.mark_tool_coverage(binding, true, false)?;
+        return Ok(());
+    }
+    let raw_id = provider_id
+        .unwrap_or_else(|| derived_codex_tool_id(account, &ctx.session, object.get("timestamp"), payload));
+    let invocation = invocation_key(Provider::Codex, account, &raw_id);
+    let session_hash = digest(&json!([Provider::Codex.as_str(), account, ctx.session]));
+    let caller_agent_key = ctx.agent.as_ref().and_then(|agent| agent.key.as_deref());
+    let caller_is_subagent = ctx.agent.as_ref().is_some_and(is_known_child);
+    if result_kinds.contains(&kind) {
+        let result = result_key(Provider::Codex, account, &raw_id);
+        save_tool_result(
+            state,
+            binding,
+            &result,
+            &invocation,
+            &timestamp_text,
+            codex_result_outcome(payload),
+            Some(session_hash.as_str()),
+            caller_agent_key,
+            caller_is_subagent,
+        )?;
+        return Ok(());
+    }
+    let raw_name = payload.get("name").and_then(Value::as_str);
+    let raw_namespace = payload.get("namespace").and_then(Value::as_str);
+    let identity = codex_identity(kind, raw_name, raw_namespace);
+    let missing_name = !matches!(kind, "web_search_call" | "local_shell_call") && raw_name.is_none();
+    state.mark_tool_coverage(binding, missing_name, identity.name_truncated)?;
+    let parent = payload
+        .get("parent_call_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|id| invocation_key(Provider::Codex, account, id));
+    let server_outcome = matches!(kind, "web_search_call" | "local_shell_call")
+        .then(|| explicit_outcome(payload.get("status").and_then(Value::as_str)))
+        .flatten()
+        .unwrap_or("unknown");
+    save_tool_invocation(
+        state,
+        binding,
+        &invocation,
+        &timestamp_text,
+        Some(session_hash.as_str()),
+        None,
+        caller_agent_key,
+        caller_is_subagent,
+        parent.as_deref(),
+        &identity,
+        server_outcome,
+    )?;
+    if !ctx.pending_tool_invocations.contains(&invocation) {
+        ctx.pending_tool_invocations.push(invocation);
+    }
+    Ok(())
+}
+
 fn claude_evidence(object: &Map<String, Value>, usage: &Value) -> RequestEvidence {
     let input_fresh = non_negative(get(usage, "input_tokens").ok().flatten());
     let input_cached = non_negative(get(usage, "cache_read_input_tokens").ok().flatten());
@@ -876,9 +1239,24 @@ pub fn process_line(
             since,
             now,
         )?;
+        process_claude_tool_evidence(
+            state,
+            binding,
+            account,
+            object,
+            ctx.agent.as_ref(),
+            timestamp,
+            since,
+            now,
+        )?;
     }
 
     if provider == Provider::Codex {
+        if ctx.own_started {
+            process_codex_tool_evidence(
+                state, binding, account, object, &payload, ctx, timestamp, since, now,
+            )?;
+        }
         match kind {
             Some("session_meta") => {
                 let Ok(id) = get(&payload, "id") else { return Ok(Err(Malformed)) };
@@ -935,6 +1313,9 @@ pub fn process_line(
                 }
             }
             Some("turn_context") => {
+                // A new turn proves any earlier call with no accounting event
+                // has no supported caller-request join. Keep the call itself.
+                ctx.pending_tool_invocations.clear();
                 let Ok(model) = get(&payload, "model") else { return Ok(Err(Malformed)) };
                 let chosen = match model {
                     Some(v) if py_truthy(v) => py_str(v),
@@ -1129,6 +1510,12 @@ pub fn process_line(
                                 agent: Some(&request_agent),
                             },
                         )?;
+                        state.assign_tool_caller_request(
+                            binding,
+                            &ctx.pending_tool_invocations,
+                            event_id.as_str(),
+                        )?;
+                        ctx.pending_tool_invocations.clear();
                     }
                     _ => {}
                 }
@@ -1200,8 +1587,16 @@ pub fn process_line(
 }
 
 /// Only lines containing one of these bytes are parsed.
-const INTERESTING: [&[u8]; 6] =
-    [b"token_count", b"session_meta", b"turn_context", b"task_started", b"\"assistant\"", b"toolUseResult"];
+const INTERESTING: [&[u8]; 8] = [
+    b"token_count",
+    b"session_meta",
+    b"turn_context",
+    b"task_started",
+    b"\"assistant\"",
+    b"toolUseResult",
+    b"tool_result",
+    b"_call",
+];
 
 fn interesting(line: &[u8]) -> bool {
     INTERESTING.iter().any(|needle| line.windows(needle.len()).any(|window| window == *needle))
@@ -1483,5 +1878,42 @@ mod tests {
 
         let provider = codex_agent_for_session(&json!({}), "account", "thread-id", true);
         assert_eq!(provider.identity_basis, "provider");
+    }
+
+    #[test]
+    fn outcome_classification_prefers_explicit_failures_and_handles_unicode() {
+        let block = json!({ "is_error": true, "content": "synthetic failure" });
+        let block = block.as_object().unwrap();
+        assert_eq!(claude_result_outcome(block, Some(&json!({ "status": "completed" }))), "failed");
+        let denied = json!({ "is_error": true, "content": "permission request denied 🔒" });
+        assert_eq!(claude_result_outcome(denied.as_object().unwrap(), None), "denied");
+        let successful_text = json!({
+            "is_error": false,
+            "content": "Documentation example: permission request denied"
+        });
+        assert_eq!(claude_result_outcome(successful_text.as_object().unwrap(), None), "succeeded");
+        assert_eq!(codex_result_outcome(&json!({ "output": "Process exited with code 0\n✅" })), "succeeded");
+        assert_eq!(
+            codex_result_outcome(&json!({
+                "output": "Process exited with code 0\nFinal output: permission request denied"
+            })),
+            "succeeded"
+        );
+        assert_eq!(
+            codex_result_outcome(&json!({
+                "output": { "success": true, "output": "permission request denied" }
+            })),
+            "succeeded"
+        );
+        assert_eq!(
+            codex_result_outcome(&json!({
+                "output": { "exit_code": 0, "output": "permission request denied" }
+            })),
+            "succeeded"
+        );
+        assert_eq!(
+            codex_result_outcome(&json!({ "output": [{ "type": "text", "text": "{\"success\":true}" }] })),
+            "unknown"
+        );
     }
 }

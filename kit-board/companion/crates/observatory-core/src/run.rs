@@ -15,7 +15,7 @@ use observatory_contract::settings::{DetailLevel, ProjectAttribution, ToolDetail
 use observatory_contract::{
     AdapterCoverage, AgentClass, Arch, BucketEntry, CollectionSettings, ConfigDocument, Counter,
     CoverageState, CursorState, DetailCode, Envelope, Nullable, Platform, Provider, Record, Run, Sha256Hex,
-    Stamp, Text, Uuid,
+    Stamp, Text, ToolClass, Uuid,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -445,6 +445,7 @@ fn record_matches_execution_settings(
 
 fn apply_current_privacy_policy(
     record: &mut Record,
+    detail_level: DetailLevel,
     project_attribution: ProjectAttribution,
     tool_detail: ToolDetail,
 ) {
@@ -453,6 +454,47 @@ fn apply_current_privacy_policy(
     {
         request.project_hash = Nullable::NULL;
         request.project = None;
+    }
+    if let Record::ActivityRequest(request) = record {
+        if detail_level != DetailLevel::RequestsWithTools {
+            request.tool_calls = Nullable::NULL;
+            request.tools = None;
+        } else if tool_detail == ToolDetail::Off {
+            request.tools = None;
+        } else if let Some(tools) = request.tools.as_mut() {
+            tools.retain(|tool| {
+                is_builtin_tool_name(tool.name.as_str())
+                    || (tool_detail == ToolDetail::HashedCustom && tool.name.as_str().starts_with("h:"))
+            });
+            if tools.is_empty() {
+                request.tools = None;
+            }
+        }
+    }
+    if let Record::ToolEvent(event) = record {
+        let name_allowed = event.tool.name.as_ref().is_some_and(|name| match event.tool.class {
+            ToolClass::Builtin => tool_detail != ToolDetail::Off && is_builtin_tool_name(name.as_str()),
+            ToolClass::Mcp | ToolClass::Function | ToolClass::Custom => {
+                tool_detail == ToolDetail::HashedCustom && name.as_str().starts_with("h:")
+            }
+            ToolClass::Unknown => false,
+        });
+        if !name_allowed {
+            event.tool.name = Nullable::NULL;
+        }
+        let namespace_allowed =
+            event.tool.namespace.as_ref().is_some_and(|namespace| match event.tool.class {
+                ToolClass::Builtin => {
+                    tool_detail != ToolDetail::Off && is_builtin_tool_namespace(namespace.as_str())
+                }
+                ToolClass::Mcp | ToolClass::Function | ToolClass::Custom => {
+                    tool_detail == ToolDetail::HashedCustom && namespace.as_str().starts_with("h:")
+                }
+                ToolClass::Unknown => false,
+            });
+        if !namespace_allowed {
+            event.tool.namespace = Nullable::NULL;
+        }
     }
     let agent = match record {
         Record::ActivityRequest(request) => request.agent.as_mut(),
@@ -480,6 +522,95 @@ fn apply_current_privacy_policy(
     if !allowed {
         agent.name = Nullable::NULL;
     }
+}
+
+fn is_builtin_tool_namespace(value: &str) -> bool {
+    matches!(value, "clock" | "codex_app" | "collaboration" | "image_gen" | "multi_agent_v1" | "web")
+}
+
+fn is_builtin_tool_name(value: &str) -> bool {
+    matches!(
+        value,
+        "Agent"
+            | "AskUserQuestion"
+            | "Bash"
+            | "BashOutput"
+            | "Edit"
+            | "EnterPlanMode"
+            | "ExitPlanMode"
+            | "Glob"
+            | "Grep"
+            | "KillShell"
+            | "LS"
+            | "MultiEdit"
+            | "NotebookEdit"
+            | "Read"
+            | "Skill"
+            | "SlashCommand"
+            | "Task"
+            | "TaskOutput"
+            | "TaskStop"
+            | "TodoWrite"
+            | "WebFetch"
+            | "WebSearch"
+            | "Write"
+            | "apply_patch"
+            | "automation_update"
+            | "capture_screen_context"
+            | "close_agent"
+            | "consume_usage_reset"
+            | "create_goal"
+            | "create_sidebar_section"
+            | "create_thread"
+            | "delete_sidebar_section"
+            | "end_realtime_voice_call"
+            | "exec"
+            | "exec_command"
+            | "followup_task"
+            | "fork_thread"
+            | "get_goal"
+            | "get_handoff_status"
+            | "get_usage_limits"
+            | "handoff_thread"
+            | "imagegen"
+            | "interrupt_agent"
+            | "list_agents"
+            | "list_archived_threads"
+            | "list_projects"
+            | "list_threads"
+            | "load_workspace_dependencies"
+            | "local_shell"
+            | "move_project_to_sidebar_section"
+            | "move_thread_to_sidebar_section"
+            | "navigate_to_codex_page"
+            | "open_in_codex"
+            | "read_thread"
+            | "read_thread_terminal"
+            | "request_user_input"
+            | "request_user_input_async"
+            | "rename_sidebar_section"
+            | "reorder_section"
+            | "reorder_sidebar_projects"
+            | "reorder_sidebar_sections"
+            | "run"
+            | "send_message"
+            | "send_message_to_thread"
+            | "set_thread_archived"
+            | "set_thread_title"
+            | "share_thread"
+            | "shell_command"
+            | "sleep"
+            | "spawn_agent"
+            | "uninstall_plugin"
+            | "update_goal"
+            | "update_plan"
+            | "view_image"
+            | "wait"
+            | "wait_agent"
+            | "wait_threads"
+            | "web_search"
+            | "write_stdin"
+    )
 }
 
 fn pending_records_for_agent_setting(
@@ -521,7 +652,7 @@ fn pending_records_for_agent_setting_with_limit(
         for row in &page {
             match serde_json::from_str::<Record>(&row.record) {
                 Ok(mut record) => {
-                    apply_current_privacy_policy(&mut record, project_attribution, tool_detail);
+                    apply_current_privacy_policy(&mut record, detail_level, project_attribution, tool_detail);
                     let revised = serde_json::to_string(&record).map_err(|_| StateError::Corrupt)?;
                     if revised != row.record {
                         let content_hash = observatory_contract::stable_json::content_hash(&record)
@@ -540,6 +671,15 @@ fn pending_records_for_agent_setting_with_limit(
                         })?;
                     }
                     if !record_matches_execution_settings(&record, detail_level, include_subagents) {
+                        continue;
+                    }
+                    if !include_subagents
+                        && let Record::ToolEvent(event) = &record
+                        && state.tool_invocation_is_subagent(
+                            event.binding_id.as_str(),
+                            event.invocation_key.as_str(),
+                        )?
+                    {
                         continue;
                     }
                     records.push(record);
@@ -1047,6 +1187,135 @@ mod tests {
         assert_eq!(pending(DetailLevel::BucketsOnly).len(), 1);
         assert_eq!(pending(DetailLevel::Requests).len(), 3);
         assert_eq!(pending(DetailLevel::RequestsWithTools).len(), 5);
+    }
+
+    #[test]
+    fn queued_tool_names_are_tightened_before_an_offline_upload() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/usage-v2/wire/valid/detail-contract-events.json"
+        ))
+        .unwrap();
+        let mut request = fixture["records"][0].clone();
+        request["tool_calls"] = json!(2);
+        request["tools"] = json!([
+            { "name": "Read", "calls": 1 },
+            { "name": "h:1234567890abcdef", "calls": 1 }
+        ]);
+        let mut custom = fixture["records"][11].clone();
+        custom["record_id"] = json!("00000000-0000-4000-8000-000000000099");
+        custom["semantic_key"] = custom["invocation_key"].clone();
+        custom["tool"] = json!({
+            "name": "h:1234567890abcdef",
+            "namespace": "h:abcdef1234567890",
+            "class": "custom"
+        });
+        let records: Vec<Record> =
+            [request, custom].into_iter().map(|value| serde_json::from_value(value).unwrap()).collect();
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        for record in &records {
+            save_record(&state, record, "2026-09-02T04:01:00.000Z");
+        }
+
+        let filtered = pending_records_for_agent_setting(
+            &state,
+            DetailLevel::RequestsWithTools,
+            true,
+            ProjectAttribution::Off,
+            ToolDetail::BuiltinOnly,
+        )
+        .unwrap();
+        let request = filtered.iter().find_map(|record| match record {
+            Record::ActivityRequest(request) => Some(request),
+            _ => None,
+        });
+        assert_eq!(request.unwrap().tools.as_ref().unwrap().len(), 1);
+        let tool = filtered.iter().find_map(|record| match record {
+            Record::ToolEvent(event) => Some(event),
+            _ => None,
+        });
+        assert!(tool.unwrap().tool.name.as_ref().is_none());
+        assert!(tool.unwrap().tool.namespace.as_ref().is_none());
+
+        let off = pending_records_for_agent_setting(
+            &state,
+            DetailLevel::RequestsWithTools,
+            true,
+            ProjectAttribution::Off,
+            ToolDetail::Off,
+        )
+        .unwrap();
+        let request = off.iter().find_map(|record| match record {
+            Record::ActivityRequest(request) => Some(request),
+            _ => None,
+        });
+        assert!(request.unwrap().tools.is_none());
+
+        let requests_only = pending_records_for_agent_setting(
+            &state,
+            DetailLevel::Requests,
+            true,
+            ProjectAttribution::Off,
+            ToolDetail::HashedCustom,
+        )
+        .unwrap();
+        let request = requests_only.iter().find_map(|record| match record {
+            Record::ActivityRequest(request) => Some(request),
+            _ => None,
+        });
+        let request = request.unwrap();
+        assert!(request.tool_calls.as_ref().is_none());
+        assert!(request.tools.is_none());
+    }
+
+    #[test]
+    fn queued_tool_events_follow_the_current_subagent_setting() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/usage-v2/wire/valid/detail-contract-events.json"
+        ))
+        .unwrap();
+        let record: Record = serde_json::from_value(fixture["records"][11].clone()).unwrap();
+        let Record::ToolEvent(event) = &record else { panic!("fixture must be a tool event") };
+        let invocation_key = event.invocation_key.as_str().to_owned();
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        save_record(&state, &record, "2026-09-02T04:01:00.000Z");
+        state
+            .upsert_tool_event(
+                event.binding_id.as_str(),
+                &crate::state::ToolEventRow {
+                    id: invocation_key.clone(),
+                    timestamp: event.observed_at.to_string(),
+                    event_kind: "invocation".into(),
+                    invocation_key,
+                    session_hash: None,
+                    caller_request_key: None,
+                    caller_agent_key: Some("9".repeat(64)),
+                    caller_is_subagent: true,
+                    parent_invocation_key: None,
+                    class: "builtin".into(),
+                    name: Some("Read".into()),
+                    name_hash: None,
+                    namespace: None,
+                    namespace_hash: None,
+                    outcome: "unknown".into(),
+                    name_truncated: false,
+                },
+            )
+            .unwrap();
+
+        let pending = |include_subagents| {
+            pending_records_for_agent_setting(
+                &state,
+                DetailLevel::RequestsWithTools,
+                include_subagents,
+                ProjectAttribution::Off,
+                ToolDetail::BuiltinOnly,
+            )
+            .unwrap()
+        };
+        assert!(pending(false).is_empty());
+        assert_eq!(pending(true).len(), 1);
     }
 
     #[test]

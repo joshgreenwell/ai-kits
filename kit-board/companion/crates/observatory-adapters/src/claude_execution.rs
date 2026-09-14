@@ -13,7 +13,11 @@ use crate::agents::record_from_event as agent_record_from_event;
 use crate::jsonl::{expand_user, scan};
 use crate::readings::{emit_dirty_slots, ingest_statusline_inbox};
 use crate::requests::{
-    EvidenceSummary, execution_capabilities, request_from_event, request_matches_agent_setting,
+    EvidenceSummary, ToolEvidenceSummary, execution_capabilities, request_from_event,
+    request_matches_agent_setting,
+};
+use crate::tools::{
+    matches_agent_setting as tool_matches_agent_setting, record_from_event as tool_record_from_event,
 };
 
 #[derive(Debug, Default)]
@@ -53,6 +57,7 @@ impl Adapter for ClaudeExecution {
         let read_inbox = ctx.settings.allowance.claude_reader != ClaudeReader::Off;
         let mut inbox_bound = false;
         let mut evidence = EvidenceSummary::default();
+        let mut tool_evidence = ToolEvidenceSummary::default();
         let mut history_has_parse_gaps = false;
         for binding in ctx.bindings_for(Provider::Claude).filter(|binding| binding.runnable()) {
             let metrics = scan(&state, ctx, binding, Provider::Claude, "claude_code", include_subagents)?;
@@ -85,6 +90,8 @@ impl Adapter for ClaudeExecution {
                 )?;
             }
             if ctx.settings.execution.detail_level != DetailLevel::BucketsOnly {
+                let tool_events = state.tool_events(binding.binding_id.as_str())?;
+                tool_evidence.observe(&tool_events, state.tool_coverage(binding.binding_id.as_str())?);
                 for event in state.request_events(binding.binding_id.as_str())? {
                     if !request_matches_agent_setting(&event, include_subagents) {
                         continue;
@@ -94,8 +101,11 @@ impl Adapter for ClaudeExecution {
                         &binding.binding_id,
                         AdapterId::ClaudeExecution,
                         self.parser_version(),
+                        ctx.settings.execution.detail_level,
                         ctx.settings.execution.project_attribution,
                         ctx.settings.execution.tool_detail,
+                        include_subagents,
+                        &tool_events,
                         &event,
                     ) {
                         sink.emit(record, None);
@@ -116,6 +126,23 @@ impl Adapter for ClaudeExecution {
                         }
                     }
                 }
+                if ctx.settings.execution.detail_level == DetailLevel::RequestsWithTools {
+                    for event in &tool_events {
+                        if !tool_matches_agent_setting(event, include_subagents) {
+                            continue;
+                        }
+                        if let Some(record) = tool_record_from_event(
+                            &binding.binding_id,
+                            AdapterId::ClaudeExecution,
+                            self.parser_version(),
+                            ctx.settings.execution.tool_detail,
+                            event,
+                        ) {
+                            sink.emit(record, None);
+                            outcome.records_emitted += 1;
+                        }
+                    }
+                }
             }
         }
         if history_has_parse_gaps && outcome.state == CoverageState::Ok {
@@ -129,6 +156,7 @@ impl Adapter for ClaudeExecution {
             include_subagents,
             scan_partial,
             evidence,
+            tool_evidence,
         ));
         Ok(outcome)
     }

@@ -2,7 +2,7 @@
 
 Created: 2026-09-13
 
-**34 filesystem tasks: 26 core delivery tasks, seven follow-ups, and one optional task awaiting a decision.** USG-001, USG-003, USG-004, and USG-005 are complete, and USG-002 is in progress; the remaining tasks are unstarted unless their files say otherwise. Creating and maintaining this backlog does not itself run collection, change settings, schedule work, or authorize a deployment.
+**34 filesystem tasks: 26 core delivery tasks, seven follow-ups, and one optional task awaiting a decision.** USG-001, USG-003, USG-004, USG-005, and USG-006 are complete, and USG-002 is in progress; the remaining tasks are unstarted unless their files say otherwise. Creating and maintaining this backlog does not itself run collection, change settings, schedule work, or authorize a deployment.
 
 Planning and tracking for this work live in these files. Do not use Jira. The USG identifiers are local backlog IDs, not Linear issue IDs. If the user later chooses Linear, carry these scopes and acceptance criteria across and record the mapping rather than creating duplicate sources of truth.
 
@@ -60,7 +60,7 @@ Every implementation task inherits these requirements:
 | --- | --- | --- | --- |
 | [USG-004: Collect request detail and pricing evidence from supported local histories](usg-004-collect-request-and-pricing-evidence.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md) | Done |
 | [USG-005: Collect distinct subagents, parent relationships, roles, and token attribution](usg-005-collect-agent-lineage.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-004](usg-004-collect-request-and-pricing-evidence.md) | Done |
-| [USG-006: Collect tool invocations, callers, and outcomes without duplicate counting](usg-006-collect-tool-invocations.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-004](usg-004-collect-request-and-pricing-evidence.md) | Planned |
+| [USG-006: Collect tool invocations, callers, and outcomes without duplicate counting](usg-006-collect-tool-invocations.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-004](usg-004-collect-request-and-pricing-evidence.md) | Done |
 | [USG-007: Collect and map project identities across machines and worktrees](usg-007-map-project-identities.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-004](usg-004-collect-request-and-pricing-evidence.md) | Planned |
 | [USG-008: Identify access to multiple vaults and configured knowledge sources](usg-008-collect-knowledge-source-access.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-006](usg-006-collect-tool-invocations.md), [USG-007](usg-007-map-project-identities.md) | Planned |
 | [USG-009: Fix account attribution and freshness for existing allowance collection](usg-009-fix-allowance-identity-and-freshness.md) | P0 | [USG-001](usg-001-metric-and-source-contract.md) | Planned |

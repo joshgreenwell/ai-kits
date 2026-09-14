@@ -1,8 +1,8 @@
 //! `activity.request` records from saved events, emitted when `detail_level`
-//! is `requests` or `requests_with_tools`. Tool detail arrives in phase 4; until
-//! then `tool_calls` is `null` and `tools` is absent. `project_hash` is filled
-//! only when `project_attribution` is `hashed`; the hash is of the working
-//! directory alone (`jsonl::project_hash`) and the path stays on this machine.
+//! is `requests` or `requests_with_tools`. The latter adds a stable invocation
+//! total and privacy-filtered tool names. `project_hash` is filled only when
+//! `project_attribution` is `hashed`; the hash is of the working directory
+//! alone (`jsonl::project_hash`) and the path stays on this machine.
 
 use observatory_contract::settings::{DetailLevel, ProjectAttribution, ToolDetail};
 use observatory_contract::{
@@ -12,8 +12,10 @@ use observatory_contract::{
 };
 use observatory_core::adapter::record_id;
 use observatory_core::state::EventRow;
+use observatory_core::state::{ToolCoverageRow, ToolEventRow};
 
 use crate::agents::{attribution as agent_attribution, is_known_child_fields};
+use crate::tools::request_summary as tool_request_summary;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EvidenceSummary {
@@ -23,6 +25,21 @@ pub struct EvidenceSummary {
     pub with_pricing: u64,
     pub with_agent: u64,
     pub unknown_agent: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ToolEvidenceSummary {
+    pub invocations: u64,
+    pub unmapped_forms: bool,
+    pub truncated_names: bool,
+}
+
+impl ToolEvidenceSummary {
+    pub fn observe(&mut self, rows: &[ToolEventRow], coverage: ToolCoverageRow) {
+        self.invocations += rows.iter().filter(|row| row.event_kind == "invocation").count() as u64;
+        self.unmapped_forms |= coverage.unmapped_forms;
+        self.truncated_names |= coverage.truncated_names;
+    }
 }
 
 impl EvidenceSummary {
@@ -78,6 +95,7 @@ pub fn execution_capabilities(
     include_subagents: bool,
     scan_partial: bool,
     summary: EvidenceSummary,
+    tools: ToolEvidenceSummary,
 ) -> Vec<CapabilityCoverage> {
     if detail_level == DetailLevel::BucketsOnly {
         return [
@@ -85,6 +103,7 @@ pub fn execution_capabilities(
             CapabilityDimension::TokenComposition,
             CapabilityDimension::Pricing,
             CapabilityDimension::Agent,
+            CapabilityDimension::Tool,
         ]
         .into_iter()
         .map(|dimension| {
@@ -124,6 +143,17 @@ pub fn execution_capabilities(
     } else {
         (CapabilityState::Complete, None)
     };
+    let (tool_state, tool_detail) = if detail_level != DetailLevel::RequestsWithTools {
+        (CapabilityState::DisabledBySetting, Some("detail_level_without_tools"))
+    } else if tools.unmapped_forms {
+        (CapabilityState::Partial, Some("unmapped_tool_forms"))
+    } else if tools.truncated_names {
+        (CapabilityState::Partial, Some("tool_names_truncated"))
+    } else if scan_partial {
+        (CapabilityState::Partial, Some("source_history_partial"))
+    } else {
+        (CapabilityState::Complete, None)
+    };
     vec![
         capability(CapabilityDimension::Requests, request_state, request_detail),
         capability(CapabilityDimension::TokenComposition, token_state, token_detail),
@@ -133,6 +163,7 @@ pub fn execution_capabilities(
             Some(pricing_detail),
         ),
         capability(CapabilityDimension::Agent, agent_state, agent_detail),
+        capability(CapabilityDimension::Tool, tool_state, tool_detail),
     ]
 }
 
@@ -154,12 +185,16 @@ pub fn request_matches_agent_setting(event: &EventRow, include_subagents: bool) 
 
 /// Builds the request record for one saved event; `None` when a stored value is
 /// outside the contract.
+#[allow(clippy::too_many_arguments)]
 pub fn request_from_event(
     binding: &Uuid,
     adapter: Adapter,
     parser_version: &str,
+    detail_level: DetailLevel,
     project_attribution: ProjectAttribution,
     tool_detail: ToolDetail,
+    include_subagents: bool,
+    tool_events: &[ToolEventRow],
     event: &EventRow,
 ) -> Option<Record> {
     let counter = |value: i64| Counter::new(u64::try_from(value).ok()?).ok();
@@ -260,6 +295,11 @@ pub fn request_from_event(
     } else {
         None
     };
+    let (tool_calls, tools) = if detail_level == DetailLevel::RequestsWithTools {
+        tool_request_summary(tool_events, &event.id, include_subagents, tool_detail)
+    } else {
+        (Nullable::NULL, None)
+    };
     Some(Record::ActivityRequest(ActivityRequest {
         record_id: record_id(binding, Channel::LocalFile, &format!("{}:{}", event.product, event.id)),
         binding_id: binding.clone(),
@@ -288,8 +328,8 @@ pub fn request_from_event(
         },
         token_accounting,
         pricing,
-        tool_calls: Nullable::NULL,
-        tools: None,
+        tool_calls,
+        tools,
         project_hash: Nullable(project_hash),
         project: None,
         agent,

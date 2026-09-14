@@ -208,14 +208,22 @@ resumed child once, while independent spawn rows retain failed attempts without 
 Built-in names can be emitted, custom names are either omitted or hashed according to `tool_detail`,
 and raw bounded names remain only in local state. No initiator is inferred from a role or tool name.
 
+At `requests_with_tools`, the local readers also emit one invocation row per stable Claude `tool_use.id`
+or Codex call identity, plus a separate result row when supported. Claude calls join to the issuing
+message; Codex calls join to the following `token_count` when it exists. Duplicate provider rows,
+result updates, and wrapper internals do not add headline calls. Tool-only and result-less calls remain
+visible, explicit outcomes are classified conservatively, and opaque outcomes remain unknown. Raw
+arguments and result content are never stored. Built-in names may be emitted; MCP, function, and custom
+names and namespaces are omitted or hashed according to `tool_detail`.
+
 The parser version includes a detail generation, and the local scan generation also includes the
 subagent setting. When either changes, the state atomically removes the binding's file checkpoints
 so retained files still eligible under `since` are replayed; interrupted replays resume normally.
 Unresolved parse gaps are stored separately, survive a deleted source or checkpoint invalidation,
 and clear only after that file is successfully replayed from the start.
 Hourly identities and values remain under the v1 parity gate. Coverage adds request,
-token-composition, and pricing capability states, including detail-level gating and partial source
-history.
+token-composition, pricing, agent, and tool capability states, including detail-level gating, partial
+source history, unmapped tool forms, and truncated tool names.
 
 Envelope v2 also defines optional detail blocks for token accounting, pricing, agent attribution,
 and explicit project state, plus independent `agent.event`, `tool.event`, and `resource.access`
