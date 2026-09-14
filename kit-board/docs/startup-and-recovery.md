@@ -6,7 +6,7 @@ Updated 2026-09-10 for the move into `joshgreenwell/ai-kits`, at repository-root
 
 ## What this checkout provides
 
-The application, lockfile, seven ordered database migrations, companion source, report publisher, audit asset publisher, readings renderer, fonts/notices, and tests are included. It receives externally produced reports and can run bounded deterministic feed/ingestion calculations. It does not run agents, scan email, modify Jira, or read an Obsidian vault itself. The retired v1 collectors are not served by the site and their production credentials are disabled.
+The application, lockfile, twelve ordered database migrations, companion source, report publisher, audit asset publisher, readings renderer, fonts/notices, and tests are included. It receives externally produced reports and can run bounded deterministic feed/ingestion calculations. It does not run agents, scan email, modify Jira, or read an Obsidian vault itself. The retired v1 collectors are not served by the site and their production credentials are disabled.
 
 A fresh clone has **no private report history, configured accounts, password, publisher credentials, provider logs, or external analyzers**. The app can build without them; a working authenticated dashboard needs a configured database and login. Existing history requires restoring the existing database through its operator, not replaying empty migrations over production.
 
@@ -43,7 +43,7 @@ Create login and publisher secrets in a protected local setup session, then stor
 
 ## Database bootstrap and recovery
 
-The app uses postgres.js directly, not a public Supabase Data API. Use an isolated Supabase/Postgres database for development. Its administrator applies **all** SQL files in `supabase/migrations/` in lexicographic filename order, beginning with `20260908050538_personal_hub_report_history.sql` and ending with `20260913230451_extend_usage_detail_contract.sql`. Each is a migration, not an idempotent initialization script: track applied filenames and do not rerun them against an existing database. Supabase provides `anon` and `authenticated`; vanilla Postgres needs those roles before these migrations. Keep `personal_hub` unexposed, RLS enabled and public grants revoked.
+The app uses postgres.js directly, not a public Supabase Data API. Use an isolated Supabase/Postgres database for development. Its administrator applies **all** SQL files in `supabase/migrations/` in lexicographic filename order, beginning with `20260908050538_personal_hub_report_history.sql` and ending with `20260914020000_companion_capabilities.sql`. Each is a migration, not an idempotent initialization script: track applied filenames and do not rerun them against an existing database. Supabase provides `anon` and `authenticated`; vanilla Postgres needs those roles before these migrations. Keep `personal_hub` unexposed, RLS enabled and public grants revoked.
 
 The second migration creates `personal_hub_app` without a password. Set a strong password using the administrator's protected channel (for example an interactive psql `\password personal_hub_app` session), then configure the application with only that restricted identity and the correct verified TLS connection. Retain the connection queue and disabled prepared statements in `lib/db.ts`.
 
