@@ -4,11 +4,13 @@
 //! `project_attribution` is `hashed`; the hash is of the working directory
 //! alone (`jsonl::project_hash`) and the path stays on this machine.
 
-use observatory_contract::settings::{DetailLevel, ProjectAttribution, ToolDetail};
+use observatory_contract::settings::{
+    DetailLevel, ProjectAttribution as ProjectAttributionSetting, ToolDetail,
+};
 use observatory_contract::{
     ActivityRequest, Adapter, Basis, CapabilityCoverage, CapabilityDimension, CapabilityState, Channel, Code,
-    CompositionState, Counter, ExecutionHost, Nullable, PricingEvidence, Record, RequestOutcome,
-    SessionIdentity, Sha256Hex, Stamp, Surface, Text, TokenAccounting, Tokens, Uuid,
+    CompositionState, Counter, ExecutionHost, Nullable, PricingEvidence, ProjectAttribution, ProjectBasis,
+    Record, RequestOutcome, SessionIdentity, Sha256Hex, Stamp, Surface, Text, TokenAccounting, Tokens, Uuid,
 };
 use observatory_core::adapter::record_id;
 use observatory_core::state::EventRow;
@@ -25,6 +27,9 @@ pub struct EvidenceSummary {
     pub with_pricing: u64,
     pub with_agent: u64,
     pub unknown_agent: u64,
+    pub with_project_identity: u64,
+    pub no_project: u64,
+    pub unknown_project: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -73,6 +78,13 @@ impl EvidenceSummary {
                 self.unknown_agent += 1;
             }
         }
+        match event.project_basis.as_str() {
+            "native" | "working_directory" if event.project_key.is_some() => {
+                self.with_project_identity += 1;
+            }
+            "none" if event.project_key.is_none() => self.no_project += 1,
+            _ => self.unknown_project += 1,
+        }
     }
 }
 
@@ -92,6 +104,7 @@ fn capability(
 /// because neither transcript format records every catalog dimension.
 pub fn execution_capabilities(
     detail_level: DetailLevel,
+    project_attribution: ProjectAttributionSetting,
     include_subagents: bool,
     scan_partial: bool,
     summary: EvidenceSummary,
@@ -102,6 +115,7 @@ pub fn execution_capabilities(
             CapabilityDimension::Requests,
             CapabilityDimension::TokenComposition,
             CapabilityDimension::Pricing,
+            CapabilityDimension::Project,
             CapabilityDimension::Agent,
             CapabilityDimension::Tool,
         ]
@@ -143,6 +157,17 @@ pub fn execution_capabilities(
     } else {
         (CapabilityState::Complete, None)
     };
+    let (project_state, project_detail) = if project_attribution == ProjectAttributionSetting::Off {
+        (CapabilityState::DisabledBySetting, Some("project_attribution_off"))
+    } else if summary.requests == 0 {
+        (CapabilityState::Unknown, Some("no_request_evidence"))
+    } else if summary.unbackfilled_requests > 0 {
+        (CapabilityState::Partial, Some("detail_backfill_unavailable"))
+    } else if scan_partial || summary.unknown_project > 0 {
+        (CapabilityState::Partial, Some("project_attribution_partial"))
+    } else {
+        (CapabilityState::Complete, None)
+    };
     let (tool_state, tool_detail) = if detail_level != DetailLevel::RequestsWithTools {
         (CapabilityState::DisabledBySetting, Some("detail_level_without_tools"))
     } else if tools.unmapped_forms {
@@ -162,6 +187,7 @@ pub fn execution_capabilities(
             if summary.requests == 0 { CapabilityState::Unknown } else { CapabilityState::Partial },
             Some(pricing_detail),
         ),
+        capability(CapabilityDimension::Project, project_state, project_detail),
         capability(CapabilityDimension::Agent, agent_state, agent_detail),
         capability(CapabilityDimension::Tool, tool_state, tool_detail),
     ]
@@ -191,7 +217,7 @@ pub fn request_from_event(
     adapter: Adapter,
     parser_version: &str,
     detail_level: DetailLevel,
-    project_attribution: ProjectAttribution,
+    project_attribution: ProjectAttributionSetting,
     tool_detail: ToolDetail,
     include_subagents: bool,
     tool_events: &[ToolEventRow],
@@ -209,12 +235,28 @@ pub fn request_from_event(
     // An event saved before the surface was recorded is a CLI event, as v1 assumed.
     let surface =
         event.surface.as_deref().and_then(|text| text.parse::<Surface>().ok()).unwrap_or(Surface::Cli);
-    let project_hash = match project_attribution {
-        ProjectAttribution::Hashed => {
-            event.project_hash.clone().and_then(|hash| Sha256Hex::try_from(hash).ok())
+    let project = match project_attribution {
+        ProjectAttributionSetting::Hashed => {
+            let parsed_basis = event.project_basis.parse::<ProjectBasis>().unwrap_or(ProjectBasis::Unknown);
+            let key = event.project_key.clone().and_then(|value| Sha256Hex::try_from(value).ok());
+            let basis = match (parsed_basis, key.is_some()) {
+                (ProjectBasis::Native, true) => ProjectBasis::Native,
+                (ProjectBasis::WorkingDirectory, true) => ProjectBasis::WorkingDirectory,
+                (ProjectBasis::None, false) => ProjectBasis::None,
+                _ => ProjectBasis::Unknown,
+            };
+            let key = if matches!(basis, ProjectBasis::Native | ProjectBasis::WorkingDirectory) {
+                key
+            } else {
+                None
+            };
+            Some(ProjectAttribution { key: Nullable(key), basis })
         }
-        ProjectAttribution::Off => None,
+        ProjectAttributionSetting::Off => None,
     };
+    let project_hash = project.as_ref().and_then(|value| {
+        (value.basis == ProjectBasis::WorkingDirectory).then(|| value.key.as_ref().cloned()).flatten()
+    });
     let detail = if event.detail_observed {
         [
             event.detail_input_fresh,
@@ -331,7 +373,7 @@ pub fn request_from_event(
         tool_calls,
         tools,
         project_hash: Nullable(project_hash),
-        project: None,
+        project,
         agent,
         client_version: Nullable(event.client_version.clone().and_then(|v| Text::truncated(&v).ok())),
         latency_ms: Nullable::NULL,

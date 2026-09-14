@@ -54,6 +54,7 @@ impl Adapter for ClaudeExecution {
         let state = ctx.open_state()?;
         let mut outcome = Outcome::ok();
         let include_subagents = ctx.settings.execution.include_subagents;
+        let project_attribution = ctx.effective_project_attribution();
         let read_inbox = ctx.settings.allowance.claude_reader != ClaudeReader::Off;
         let mut inbox_bound = false;
         let mut evidence = EvidenceSummary::default();
@@ -102,7 +103,7 @@ impl Adapter for ClaudeExecution {
                         AdapterId::ClaudeExecution,
                         self.parser_version(),
                         ctx.settings.execution.detail_level,
-                        ctx.settings.execution.project_attribution,
+                        project_attribution,
                         ctx.settings.execution.tool_detail,
                         include_subagents,
                         &tool_events,
@@ -153,6 +154,7 @@ impl Adapter for ClaudeExecution {
             outcome.state != CoverageState::Ok || outcome.malformed > 0 || history_has_parse_gaps;
         outcome.capabilities = Some(execution_capabilities(
             ctx.settings.execution.detail_level,
+            project_attribution,
             include_subagents,
             scan_partial,
             evidence,

@@ -613,6 +613,7 @@ fn is_builtin_tool_name(value: &str) -> bool {
     )
 }
 
+#[cfg(test)]
 fn pending_records_for_agent_setting(
     state: &State,
     detail_level: DetailLevel,
@@ -627,6 +628,23 @@ fn pending_records_for_agent_setting(
         project_attribution,
         tool_detail,
         50_000,
+        None,
+    )
+}
+
+fn pending_records_for_current_settings(
+    state: &State,
+    settings: &CollectionSettings,
+    deny: &[String],
+) -> Result<Vec<Record>, StateError> {
+    pending_records_for_agent_setting_with_limit(
+        state,
+        settings.execution.detail_level,
+        settings.execution.include_subagents,
+        crate::adapter::restrict_project_attribution(settings.execution.project_attribution, deny),
+        settings.execution.tool_detail,
+        50_000,
+        Some((settings, deny)),
     )
 }
 
@@ -637,6 +655,7 @@ fn pending_records_for_agent_setting_with_limit(
     project_attribution: ProjectAttribution,
     tool_detail: ToolDetail,
     limit: usize,
+    local_policy: Option<(&CollectionSettings, &[String])>,
 ) -> Result<Vec<Record>, StateError> {
     let mut records = Vec::new();
     let mut cursor: Option<(String, String)> = None;
@@ -652,6 +671,13 @@ fn pending_records_for_agent_setting_with_limit(
         for row in &page {
             match serde_json::from_str::<Record>(&row.record) {
                 Ok(mut record) => {
+                    if local_policy.is_some_and(|(settings, deny)| {
+                        let adapter = record.adapter();
+                        let gate = settings.gate(adapter);
+                        deny.iter().any(|entry| observatory_contract::settings::denied(entry, adapter, &gate))
+                    }) {
+                        continue;
+                    }
                     apply_current_privacy_policy(&mut record, detail_level, project_attribution, tool_detail);
                     let revised = serde_json::to_string(&record).map_err(|_| StateError::Corrupt)?;
                     if revised != row.record {
@@ -934,13 +960,7 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
             }
         }
     }
-    let records = pending_records_for_agent_setting(
-        &state,
-        ctx.settings.execution.detail_level,
-        ctx.settings.execution.include_subagents,
-        ctx.settings.execution.project_attribution,
-        ctx.settings.execution.tool_detail,
-    )?;
+    let records = pending_records_for_current_settings(&state, &ctx.settings, &ctx.deny)?;
 
     let finished_at = Stamp::from_timestamp(Timestamp::now());
     let run = Run {
@@ -1131,6 +1151,23 @@ mod tests {
             }
             _ => true,
         }));
+        let locally_denied =
+            crate::adapter::restrict_project_attribution(ProjectAttribution::Hashed, &["execution".into()]);
+        assert_eq!(locally_denied, ProjectAttribution::Off);
+        let denied = pending_records_for_agent_setting(
+            &state,
+            DetailLevel::Requests,
+            true,
+            locally_denied,
+            ToolDetail::Off,
+        )
+        .unwrap();
+        assert!(denied.iter().all(|record| match record {
+            Record::ActivityRequest(request) => {
+                request.project_hash.as_ref().is_none() && request.project.is_none()
+            }
+            _ => true,
+        }));
         assert_eq!(
             pending_records_for_agent_setting(
                 &state,
@@ -1143,6 +1180,23 @@ mod tests {
             .len(),
             4
         );
+        let mut current = CollectionSettings::defaults();
+        current.execution.detail_level = DetailLevel::Requests;
+        current.execution.include_subagents = true;
+        current.execution.project_attribution = ProjectAttribution::Hashed;
+        for entry in ["claude_execution", "providers.claude", "execution", "execution.claude_local_logs"] {
+            assert!(
+                pending_records_for_current_settings(&state, &current, &[entry.into()]).unwrap().is_empty(),
+                "{entry} must keep queued Claude records local"
+            );
+        }
+        assert_eq!(
+            pending_records_for_current_settings(&state, &current, &["execution.codex_local_history".into()])
+                .unwrap()
+                .len(),
+            4,
+            "an unrelated adapter deny does not drop Claude records"
+        );
         let first_allowed = pending_records_for_agent_setting_with_limit(
             &state,
             DetailLevel::Requests,
@@ -1150,6 +1204,7 @@ mod tests {
             ProjectAttribution::Off,
             ToolDetail::Off,
             1,
+            None,
         )
         .unwrap();
         assert_eq!(first_allowed.len(), 1);

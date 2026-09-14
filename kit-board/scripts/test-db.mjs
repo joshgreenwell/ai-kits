@@ -49,6 +49,18 @@ async function seedUsageDetailUpgradeFixture(db) {
         'UTC', 'synthetic-model', 'claude_code', NULL, NULL, NULL, NULL,
         repeat('4', 64), 1, 0, 0, 0, 1, 2, 1, 'legacy-reasoning-above-output',
         '2026-09-01T01:01:00Z', 'reported', '2026-09-01T01:01:00Z', repeat('5', 64));
+    INSERT INTO personal_hub.activity_requests
+      (id, account_id, binding_id, provider, adapter, channel, record_id,
+       semantic_key, product, surface, execution_host, session_hash,
+       session_identity, model_actual, observed_at, input_fresh_tokens,
+       input_cached_tokens, input_cache_write_tokens, output_tokens,
+       reasoning_tokens, basis, project_hash, outcome, parser_version, content_hash)
+      VALUES ('00000000-0000-4000-8000-000000000330', 'migration-upgrade-legacy',
+        '00000000-0000-4000-8000-000000000303', 'claude', 'claude_execution',
+        'local_file', '00000000-0000-4000-8000-000000000331', repeat('a', 64),
+        'claude_code', 'cli', 'local', repeat('b', 64), 'provider', 'synthetic-model',
+        '2026-09-01T01:02:00Z', 1, 0, 0, 1, NULL, 'exact', repeat('c', 64),
+        'completed', '1.0.0', repeat('d', 64));
   `);
 }
 

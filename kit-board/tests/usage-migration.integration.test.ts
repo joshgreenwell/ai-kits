@@ -35,6 +35,20 @@ maybe('usage detail migration preserves legacy bucket evidence and enforces new 
       [1, 2, null],
       'a bucket accepted before the migration remains readable',
     );
+    const [legacyProject] = await sql`
+      SELECT r.project_basis AS raw_basis, r.project_key AS raw_key, r.project_hash,
+        resolved.project_basis, resolved.project_key, resolved.identity_id, resolved.project_state
+      FROM personal_hub.activity_requests r
+      JOIN personal_hub.activity_request_project_resolution resolved ON resolved.request_id = r.id
+      WHERE r.id = '00000000-0000-4000-8000-000000000330'
+    `;
+    assert.deepEqual(
+      [legacyProject.raw_basis, legacyProject.raw_key, legacyProject.project_hash,
+        legacyProject.project_basis, legacyProject.project_key, legacyProject.project_state],
+      [null, null, 'c'.repeat(64), 'working_directory', 'c'.repeat(64), 'unassigned'],
+      'the project registry backfills a scoped identity from retained hash-only evidence without rewriting it',
+    );
+    assert.ok(legacyProject.identity_id);
     await assert.rejects(
       sql`ALTER TABLE personal_hub.account_usage_buckets
         VALIDATE CONSTRAINT account_usage_buckets_reasoning_subset_check`,

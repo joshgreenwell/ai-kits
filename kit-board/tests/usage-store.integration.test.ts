@@ -109,6 +109,11 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
 
     // Optional v2 detail blocks and independent event ledgers preserve evidence without inventing joins.
     const projectKey = sha('project:synthetic');
+    const worktreeKey = sha('project:synthetic-worktree');
+    const sameFolderKey = sha('project:same-folder-name');
+    const nativeProjectKey = sha('project:native');
+    const legacyProjectKey = sha('project:legacy-hash-only');
+    const revisionProjectKey = sha('project:revision-backfill');
     const detailedRequest = { ...request(bindingId, 'claude_execution', 'detail-request'), semantic_key: sha('detail-request'),
       token_accounting: { reported_total: 155, unclassified: 5, composition_state: 'complete' },
       pricing: { reasoning_effort: 'high', service_tier: 'standard', speed: null, context_window_tokens: 200000, cache_write_ttl: '5m' },
@@ -117,12 +122,25 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
       tokens: { input_fresh: 0, input_cached: 0, input_cache_write: 0, output: 0, reasoning: 0 },
       token_accounting: { reported_total: 0, unclassified: 0, composition_state: 'complete' },
       project: { key: null, basis: 'none' } };
+    const worktreeRequest = { ...request(bindingId, 'claude_execution', 'worktree-request'), semantic_key: sha('worktree-request'),
+      project: { key: worktreeKey, basis: 'working_directory' }, project_hash: worktreeKey };
+    const sameFolderRequest = { ...request(bindingId, 'claude_execution', 'same-folder-request'), semantic_key: sha('same-folder-request'),
+      project: { key: sameFolderKey, basis: 'working_directory' }, project_hash: sameFolderKey };
+    const nativeProjectRequest = { ...request(bindingId, 'claude_execution', 'native-project-request'), semantic_key: sha('native-project-request'),
+      project: { key: nativeProjectKey, basis: 'native' } };
+    const legacyProjectRequest = { ...request(bindingId, 'claude_execution', 'legacy-project-request'), semantic_key: sha('legacy-project-request'),
+      project_hash: legacyProjectKey };
+    const projectRevisionUnknown = { ...request(bindingId, 'claude_execution', 'project-revision'), semantic_key: sha('project-revision') };
+    const projectRevisionKnown = { ...projectRevisionUnknown, record_id: randomUUID(),
+      project: { key: revisionProjectKey, basis: 'working_directory' }, project_hash: revisionProjectKey };
     const invocation = toolEvent(bindingId, 'read', 'read');
     const resultA = toolEvent(bindingId, 'read-a', 'read', 'result', 'succeeded');
     const resultB = toolEvent(bindingId, 'read-b', 'read', 'result', 'succeeded');
     const orphanResult = toolEvent(bindingId, 'orphan', 'missing', 'result', 'failed');
     const nullPricing = { reasoning_effort: null, service_tier: null, speed: null, context_window_tokens: null, cache_write_ttl: null };
-    const details = envelope({ records: [detailedRequest, zeroRequest, agentEvent(bindingId, 'child'), invocation, resultA, resultB, orphanResult,
+    const details = envelope({ records: [detailedRequest, zeroRequest, worktreeRequest, sameFolderRequest, nativeProjectRequest,
+      legacyProjectRequest, projectRevisionUnknown, projectRevisionKnown,
+      agentEvent(bindingId, 'child'), invocation, resultA, resultB, orphanResult,
       resourceAccess(bindingId, 'vault-a'), resourceAccess(bindingId, 'vault-b', 'obsidian.reference'),
       providerBucket(bindingId), providerBucket(bindingId, nullPricing)],
       coverage: [{ ...coverage('claude_execution'), capabilities: [
@@ -133,10 +151,10 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
       ] }] });
     const invalidRecordId = randomUUID();
     const detailFirst = await store.ingestUsage(current, details, [{ record_id: invalidRecordId, reason: 'invalid' }]);
-    assert.deepEqual(detailFirst.accepted, { buckets: 0, records: 11 }); assert.equal(detailFirst.duplicates, 0);
+    assert.deepEqual(detailFirst.accepted, { buckets: 0, records: 17 }); assert.equal(detailFirst.duplicates, 0);
     assert.deepEqual(detailFirst.rejected, [{ record_id: invalidRecordId, reason: 'invalid' }]);
     const detailAgain = await store.ingestUsage(current, details);
-    assert.equal(detailAgain.accepted.records, 0); assert.equal(detailAgain.duplicates, 11);
+    assert.equal(detailAgain.accepted.records, 0); assert.equal(detailAgain.duplicates, 17);
     const revisedInvocation = { ...invocation, record_id: randomUUID(), outcome: 'succeeded' };
     assert.equal((await store.ingestUsage(current, envelope({ records: [revisedInvocation] }))).accepted.records, 1, 'same semantic key with changed content is a revision');
 
@@ -148,6 +166,91 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.equal(storedDetail.agent_key, sha('agent:child')); assert.equal(storedDetail.project_key, projectKey);
     const [storedZero] = await sql`SELECT model_actual, observed_total_tokens, token_state FROM personal_hub.activity_requests WHERE semantic_key = ${sha('zero-request')}`;
     assert.equal(storedZero.model_actual, null); assert.equal(Number(storedZero.observed_total_tokens), 0); assert.equal(storedZero.token_state, 'complete');
+
+    // Project identities are scoped safely, then joined by append-only mappings.
+    const issuedSecond = await store.issuePairingCode({ machine_label: 'second-mac' });
+    const pairedSecond = await store.pairInstall({ code: issuedSecond.code, machine_label: 'second-mac', kind: 'companion', platform: 'linux', arch: 'amd64' }, '203.0.113.7');
+    const secondInstall = await store.companionInstall(bearer(pairedSecond.key));
+    const secondBinding = (await store.createBinding(secondInstall,
+      { account_id: account, provider: 'claude', account_label: 'Claude test', identity_hash: sha('identity-second') })).binding.binding_id;
+    const secondShared = { ...request(secondBinding, 'claude_execution', 'second-shared'), semantic_key: sha('second-shared'),
+      project: { key: projectKey, basis: 'working_directory' }, project_hash: projectKey };
+    const secondSameFolder = { ...request(secondBinding, 'claude_execution', 'second-same-folder'), semantic_key: sha('second-same-folder'),
+      project: { key: sameFolderKey, basis: 'working_directory' }, project_hash: sameFolderKey };
+    const secondEnvelope = envelope({ records: [secondShared, secondSameFolder] });
+    assert.equal((await store.ingestUsage(secondInstall, secondEnvelope)).accepted.records, 2);
+    assert.equal((await store.ingestUsage(secondInstall, secondEnvelope)).duplicates, 2, 'duplicate replay leaves identities idempotent');
+
+    const registryBefore = await store.listProjects();
+    const identity = (key: string, installId: string | null, basis = 'working_directory') => registryBefore.identities.find(item =>
+      item.evidence_key === key && item.install_id === installId && item.basis === basis)!;
+    const firstSharedIdentity = identity(projectKey, install.id);
+    const secondSharedIdentity = identity(projectKey, secondInstall.id);
+    const worktreeIdentity = identity(worktreeKey, install.id);
+    const firstSameFolderIdentity = identity(sameFolderKey, install.id);
+    const secondSameFolderIdentity = identity(sameFolderKey, secondInstall.id);
+    const nativeIdentity = identity(nativeProjectKey, null, 'native');
+    const legacyIdentity = identity(legacyProjectKey, install.id);
+    const revisionIdentity = identity(revisionProjectKey, install.id);
+    assert.ok(firstSharedIdentity && secondSharedIdentity && firstSharedIdentity.id !== secondSharedIdentity.id,
+      'matching hashes on two machines remain separately scoped identities');
+    assert.ok(firstSameFolderIdentity.id !== secondSameFolderIdentity.id,
+      'matching folder hashes never imply one logical project');
+
+    const sharedProject = await store.updateProjects({ action: 'create', label: 'Shared observatory project' });
+    const folderProjectA = await store.updateProjects({ action: 'create', label: 'Same folder A' });
+    const folderProjectB = await store.updateProjects({ action: 'create', label: 'Same folder B' });
+    await store.updateProjects({ action: 'map', project_id: sharedProject.project_id,
+      identity_ids: [firstSharedIdentity.id, secondSharedIdentity.id, worktreeIdentity.id, nativeIdentity.id,
+        legacyIdentity.id, revisionIdentity.id] });
+    await store.updateProjects({ action: 'map', project_id: folderProjectA.project_id, identity_ids: [firstSameFolderIdentity.id] });
+    await store.updateProjects({ action: 'map', project_id: folderProjectB.project_id, identity_ids: [secondSameFolderIdentity.id] });
+    await store.updateProjects({ action: 'rename', project_id: sharedProject.project_id, label: 'Shared project renamed' });
+
+    const resolvedState = async (semanticKey: string) => (await sql`SELECT project_state, project_id, project_label, project_key, project_basis
+      FROM personal_hub.activity_request_project_resolution WHERE account_id = ${account} AND semantic_key = ${semanticKey}
+      ORDER BY observed_at DESC LIMIT 1`)[0];
+    assert.equal((await resolvedState(sha('detail-request'))).project_id, sharedProject.project_id,
+      'two machines and a worktree can share one logical project');
+    assert.equal((await resolvedState(sha('native-project-request'))).project_label, 'Shared project renamed');
+    assert.equal((await resolvedState(sha('same-folder-request'))).project_id, folderProjectA.project_id);
+    assert.equal((await resolvedState(sha('second-same-folder'))).project_id, folderProjectB.project_id);
+    const legacyResolved = await resolvedState(sha('legacy-project-request'));
+    assert.deepEqual([legacyResolved.project_id, legacyResolved.project_basis, legacyResolved.project_key],
+      [sharedProject.project_id, 'working_directory', legacyProjectKey], 'legacy hash-only evidence remains assignable');
+    const [legacyRaw] = await sql`SELECT project_basis, project_key, project_hash FROM personal_hub.activity_requests
+      WHERE account_id = ${account} AND semantic_key = ${sha('legacy-project-request')}`;
+    assert.deepEqual([legacyRaw.project_basis, legacyRaw.project_key, legacyRaw.project_hash], [null, null, legacyProjectKey],
+      'legacy resolution never rewrites raw facts');
+    const canonicalRevision = await sql`SELECT project_state, project_id FROM personal_hub.activity_request_project_resolution
+      WHERE account_id = ${account} AND semantic_key = ${sha('project-revision')}`;
+    assert.equal(canonicalRevision.length, 1, 'project coverage canonicalizes request revisions');
+    assert.deepEqual([canonicalRevision[0].project_state, canonicalRevision[0].project_id], ['project', sharedProject.project_id],
+      'a retained richer replay replaces Unknown in project coverage');
+    assert.equal((await resolvedState(sha('zero-request'))).project_state, 'no_project');
+    assert.equal((await resolvedState(sha('msg'))).project_state, 'unknown');
+
+    const rawBefore = await resolvedState(sha('worktree-request'));
+    await store.updateProjects({ action: 'unmap', identity_ids: [worktreeIdentity.id] });
+    const unmapped = await resolvedState(sha('worktree-request'));
+    assert.equal(unmapped.project_state, 'unassigned');
+    assert.deepEqual([unmapped.project_key, unmapped.project_basis], [rawBefore.project_key, rawBefore.project_basis],
+      'mapping changes do not edit raw request facts');
+    await store.updateProjects({ action: 'map', project_id: sharedProject.project_id, identity_ids: [worktreeIdentity.id] });
+    await sql`UPDATE personal_hub.usage_project_mapping_revisions SET changed_at = '2026-09-02T05:00:00Z'
+      WHERE identity_id = ${worktreeIdentity.id}`;
+    assert.equal((await resolvedState(sha('worktree-request'))).project_id, sharedProject.project_id);
+    const mappingHistory = await sql`SELECT revision_order, project_id FROM personal_hub.usage_project_mapping_revisions
+      WHERE identity_id = ${worktreeIdentity.id} ORDER BY revision_order`;
+    assert.deepEqual(mappingHistory.map(row => row.project_id), [sharedProject.project_id, null, sharedProject.project_id],
+      'database revision order preserves rapid map, unmap, and remap writes when audit timestamps collide');
+
+    const registryAfter = await store.listProjects();
+    assert.ok(registryAfter.coverage.evidence.with_identity >= 9);
+    assert.ok(registryAfter.coverage.mapping.mapped >= 8);
+    assert.ok(registryAfter.coverage.evidence.request_observations > registryAfter.coverage.evidence.canonical_requests,
+      'raw observation coverage remains distinct from canonical request-state coverage');
+    assert.equal(registryAfter.identities.some(item => 'path' in item), false, 'the registry never returns local paths');
     const [eventCounts] = await sql`SELECT
         (SELECT count(*)::int FROM personal_hub.agent_events WHERE account_id = ${account}) AS agents,
         (SELECT count(*)::int FROM personal_hub.tool_events WHERE account_id = ${account}) AS tools,
@@ -249,11 +352,29 @@ maybe('the application role can append to every ledger but never update or delet
       await assert.rejects(app.unsafe(`UPDATE personal_hub.${table} SET content_hash = content_hash WHERE false`), /permission denied/, `${table} update`);
       await assert.rejects(app.unsafe(`DELETE FROM personal_hub.${table} WHERE false`), /permission denied/, `${table} delete`);
     }
+    await assert.rejects(app`UPDATE personal_hub.usage_project_mapping_revisions SET project_id = project_id WHERE false`, /permission denied/);
+    await assert.rejects(app`DELETE FROM personal_hub.usage_project_mapping_revisions WHERE false`, /permission denied/);
     for (const [table, column] of [['collection_settings', 'settings_version = settings_version'], ['companion_installs', 'paused = paused'], ['companion_bindings', 'enabled = enabled'], ['companion_pairing_codes', 'used_at = used_at']]) {
       await app.unsafe(`UPDATE personal_hub.${table} SET ${column} WHERE false`);
       await assert.rejects(app.unsafe(`DELETE FROM personal_hub.${table} WHERE false`), /permission denied/, `${table} delete`);
     }
+    for (const [table, column] of [['usage_projects', 'label = label'], ['usage_project_identities', 'last_seen = last_seen']]) {
+      await app.unsafe(`UPDATE personal_hub.${table} SET ${column} WHERE false`);
+      await assert.rejects(app.unsafe(`DELETE FROM personal_hub.${table} WHERE false`), /permission denied/, `${table} delete`);
+    }
+    await assert.rejects(app`UPDATE personal_hub.usage_project_identities SET evidence_key = evidence_key WHERE false`, /permission denied/,
+      'the app can update sighting bounds but cannot rewrite identity evidence');
+    const writableProject = randomUUID(), writableIdentity = randomUUID();
+    await app`INSERT INTO personal_hub.usage_projects (id, label) VALUES (${writableProject}, 'Application role project')`;
+    await app`INSERT INTO personal_hub.usage_project_identities
+      (id, basis, evidence_key, install_id, first_seen, last_seen)
+      VALUES (${writableIdentity}, 'working_directory', ${sha(writableIdentity)}, '00000000-0000-4000-8000-000000000302',
+        '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
+    const [appendedMapping] = await app`INSERT INTO personal_hub.usage_project_mapping_revisions (id, identity_id, project_id)
+      VALUES (${randomUUID()}, ${writableIdentity}, ${writableProject}) RETURNING revision_order`;
+    assert.ok(Number(appendedMapping.revision_order) > 0, 'the application role can allocate database mapping order');
     await app`SELECT count(*) FROM personal_hub.allowance_percent_view`;
+    await app`SELECT count(*) FROM personal_hub.activity_request_project_resolution`;
     await app`SELECT count(*) FROM personal_hub.token_bucket_revisions`;
   } finally { await app.end({ timeout: 1 }); }
 });

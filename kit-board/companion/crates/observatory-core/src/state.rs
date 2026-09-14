@@ -13,7 +13,7 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: &str = "5";
+pub const SCHEMA_VERSION: &str = "6";
 
 #[derive(Debug, Error)]
 pub enum StateError {
@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS events (binding_id TEXT NOT NULL, id TEXT NOT NULL, s
   hour TEXT NOT NULL, model TEXT NOT NULL, input_tokens INTEGER NOT NULL, cached_tokens INTEGER NOT NULL,
   cache_write_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, session_identity TEXT NOT NULL,
   timestamp TEXT NOT NULL, product TEXT NOT NULL, client_version TEXT, parent_session TEXT,
-  project_hash TEXT, surface TEXT, detail_observed INTEGER NOT NULL DEFAULT 0,
+  project_hash TEXT, project_key TEXT, project_basis TEXT NOT NULL DEFAULT 'unknown',
+  surface TEXT, detail_observed INTEGER NOT NULL DEFAULT 0,
   bucket_eligible INTEGER NOT NULL DEFAULT 1, detail_input_fresh INTEGER,
   detail_input_cached INTEGER, detail_input_cache_write INTEGER, detail_output INTEGER,
   detail_reasoning INTEGER, reported_total INTEGER, model_requested TEXT,
@@ -140,8 +141,12 @@ pub struct EventRow {
     pub product: String,
     pub client_version: Option<String>,
     pub parent_session: Option<String>,
-    /// v2 only: `sha256(["project", cwd])` of the working directory the provider recorded.
+    /// Legacy alias for a working-directory project key.
     pub project_hash: Option<String>,
+    /// v6: privacy-preserving project identity when the attribution basis has one.
+    pub project_key: Option<String>,
+    /// v6: `native`, `working_directory`, `none`, or `unknown`.
+    pub project_basis: String,
     /// v2 only: the contract surface the provider's entrypoint or originator maps to.
     pub surface: Option<String>,
     /// v3: true when nullable request evidence was parsed from retained source.
@@ -328,8 +333,9 @@ impl State {
 
     /// Forward migrations. Version 1 predates project attribution, version 2
     /// predates nullable request and pricing evidence, and version 3 predates
-    /// agent attribution, and version 4 predates tool evidence. Every step is idempotent, so an interrupted upgrade
-    /// resumes.
+    /// agent attribution, version 4 predates tool evidence, and version 5
+    /// predates explicit project identity states. Every step is idempotent, so
+    /// an interrupted upgrade resumes.
     fn migrate(&self) -> Result<(), StateError> {
         let version = self.meta("schema_version")?;
         if version.as_deref() == Some("1") {
@@ -393,6 +399,24 @@ impl State {
         {
             self.conn.execute(
                 "ALTER TABLE agent_profiles ADD COLUMN depth_evidence TEXT NOT NULL DEFAULT 'unknown'",
+                [],
+            )?;
+        }
+        if matches!(version.as_deref(), Some("1" | "2" | "3" | "4" | "5")) {
+            for (column, definition) in
+                [("project_key", "TEXT"), ("project_basis", "TEXT NOT NULL DEFAULT 'unknown'")]
+            {
+                if !self.has_column("events", column)? {
+                    self.conn.execute(&format!("ALTER TABLE events ADD COLUMN {column} {definition}"), [])?;
+                }
+            }
+            self.conn.execute(
+                "UPDATE events
+                    SET project_key = coalesce(project_key, project_hash),
+                        project_basis = CASE
+                          WHEN project_hash IS NOT NULL THEN 'working_directory'
+                          ELSE coalesce(project_basis, 'unknown')
+                        END",
                 [],
             )?;
         }
@@ -628,7 +652,8 @@ impl State {
             .conn
             .query_row(
                 "SELECT id, session, hour, model, input_tokens, cached_tokens, cache_write_tokens, output_tokens,
-                        session_identity, timestamp, product, client_version, parent_session, project_hash, surface,
+                        session_identity, timestamp, product, client_version, parent_session,
+                        project_hash, project_key, project_basis, surface,
                         detail_observed, bucket_eligible, detail_input_fresh, detail_input_cached,
                         detail_input_cache_write, detail_output, detail_reasoning, reported_total, model_requested,
                         reasoning_effort, service_tier, speed, context_window_tokens, cache_write_ttl, outcome,
@@ -645,7 +670,7 @@ impl State {
         self.conn.execute(
             "INSERT OR REPLACE INTO events (binding_id, id, session, hour, model, input_tokens, cached_tokens, cache_write_tokens,
                                  output_tokens, session_identity, timestamp, product, client_version, parent_session,
-                                 project_hash, surface, detail_observed, bucket_eligible, detail_input_fresh,
+                                 project_hash, project_key, project_basis, surface, detail_observed, bucket_eligible, detail_input_fresh,
                                  detail_input_cached, detail_input_cache_write, detail_output, detail_reasoning,
                                  reported_total, model_requested, reasoning_effort, service_tier, speed,
                                  context_window_tokens, cache_write_ttl, outcome, agent_observed, agent_key,
@@ -653,7 +678,7 @@ impl State {
                                  agent_class, agent_name, agent_depth)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                      ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
-                     ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39)",
+                     ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41)",
             params![
                 binding,
                 row.id,
@@ -670,6 +695,8 @@ impl State {
                 row.client_version,
                 row.parent_session,
                 row.project_hash,
+                row.project_key,
+                row.project_basis,
                 row.surface,
                 row.detail_observed,
                 row.bucket_eligible,
@@ -705,12 +732,17 @@ impl State {
         binding: &str,
         id: &str,
         project_hash: Option<&str>,
+        project_key: Option<&str>,
+        project_basis: Option<&str>,
         surface: Option<&str>,
     ) -> Result<(), StateError> {
         self.conn.execute(
-            "UPDATE events SET project_hash = coalesce(project_hash, ?3), surface = coalesce(surface, ?4)
+            "UPDATE events SET project_hash = CASE WHEN project_basis = 'unknown' THEN coalesce(project_hash, ?3) ELSE project_hash END,
+                               project_key = CASE WHEN project_basis = 'unknown' THEN coalesce(project_key, ?4) ELSE project_key END,
+                               project_basis = CASE WHEN project_basis = 'unknown' THEN coalesce(?5, project_basis) ELSE project_basis END,
+                               surface = coalesce(surface, ?6)
               WHERE binding_id = ?1 AND id = ?2",
-            params![binding, id, project_hash, surface],
+            params![binding, id, project_hash, project_key, project_basis, surface],
         )?;
         Ok(())
     }
@@ -769,7 +801,8 @@ impl State {
     pub fn events(&self, binding: &str) -> Result<Vec<EventRow>, StateError> {
         let mut statement = self.conn.prepare(
             "SELECT id, session, hour, model, input_tokens, cached_tokens, cache_write_tokens, output_tokens,
-                    session_identity, timestamp, product, client_version, parent_session, project_hash, surface,
+                    session_identity, timestamp, product, client_version, parent_session,
+                    project_hash, project_key, project_basis, surface,
                     detail_observed, bucket_eligible, detail_input_fresh, detail_input_cached,
                     detail_input_cache_write, detail_output, detail_reasoning, reported_total, model_requested,
                     reasoning_effort, service_tier, speed, context_window_tokens, cache_write_ttl, outcome,
@@ -786,7 +819,8 @@ impl State {
     pub fn request_events(&self, binding: &str) -> Result<Vec<EventRow>, StateError> {
         let mut statement = self.conn.prepare(
             "SELECT id, session, hour, model, input_tokens, cached_tokens, cache_write_tokens, output_tokens,
-                    session_identity, timestamp, product, client_version, parent_session, project_hash, surface,
+                    session_identity, timestamp, product, client_version, parent_session,
+                    project_hash, project_key, project_basis, surface,
                     detail_observed, bucket_eligible, detail_input_fresh, detail_input_cached,
                     detail_input_cache_write, detail_output, detail_reasoning, reported_total, model_requested,
                     reasoning_effort, service_tier, speed, context_window_tokens, cache_write_ttl, outcome,
@@ -1714,30 +1748,32 @@ fn event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EventRow> {
         client_version: row.get(11)?,
         parent_session: row.get(12)?,
         project_hash: row.get(13)?,
-        surface: row.get(14)?,
-        detail_observed: row.get(15)?,
-        bucket_eligible: row.get(16)?,
-        detail_input_fresh: row.get(17)?,
-        detail_input_cached: row.get(18)?,
-        detail_input_cache_write: row.get(19)?,
-        detail_output: row.get(20)?,
-        detail_reasoning: row.get(21)?,
-        reported_total: row.get(22)?,
-        model_requested: row.get(23)?,
-        reasoning_effort: row.get(24)?,
-        service_tier: row.get(25)?,
-        speed: row.get(26)?,
-        context_window_tokens: row.get(27)?,
-        cache_write_ttl: row.get(28)?,
-        outcome: row.get(29)?,
-        agent_observed: row.get(30)?,
-        agent_key: row.get(31)?,
-        agent_identity_basis: row.get(32)?,
-        parent_agent_key: row.get(33)?,
-        parent_agent_identity_basis: row.get(34)?,
-        agent_class: row.get(35)?,
-        agent_name: row.get(36)?,
-        agent_depth: row.get(37)?,
+        project_key: row.get(14)?,
+        project_basis: row.get(15)?,
+        surface: row.get(16)?,
+        detail_observed: row.get(17)?,
+        bucket_eligible: row.get(18)?,
+        detail_input_fresh: row.get(19)?,
+        detail_input_cached: row.get(20)?,
+        detail_input_cache_write: row.get(21)?,
+        detail_output: row.get(22)?,
+        detail_reasoning: row.get(23)?,
+        reported_total: row.get(24)?,
+        model_requested: row.get(25)?,
+        reasoning_effort: row.get(26)?,
+        service_tier: row.get(27)?,
+        speed: row.get(28)?,
+        context_window_tokens: row.get(29)?,
+        cache_write_ttl: row.get(30)?,
+        outcome: row.get(31)?,
+        agent_observed: row.get(32)?,
+        agent_key: row.get(33)?,
+        agent_identity_basis: row.get(34)?,
+        parent_agent_key: row.get(35)?,
+        parent_agent_identity_basis: row.get(36)?,
+        agent_class: row.get(37)?,
+        agent_name: row.get(38)?,
+        agent_depth: row.get(39)?,
     })
 }
 
@@ -1776,6 +1812,8 @@ mod tests {
             client_version: None,
             parent_session: None,
             project_hash: None,
+            project_key: None,
+            project_basis: "unknown".into(),
             surface: None,
             detail_observed: true,
             bucket_eligible: true,
@@ -1815,7 +1853,7 @@ mod tests {
         assert_eq!(rows[0].calls, 2);
         assert_eq!(rows[0].total_tokens, 2 * 30 + 25);
         assert!(state.bucket_rows("other").unwrap().is_empty());
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("5"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("6"));
     }
 
     #[test]
@@ -1925,15 +1963,65 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("5"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("6"));
         let mut row = event("a", 10);
         row.project_hash = Some("h".repeat(64));
+        row.project_key = row.project_hash.clone();
+        row.project_basis = "working_directory".into();
         row.surface = Some("desktop".into());
         state.insert_event("b", &row).unwrap();
         assert_eq!(state.event("b", "a").unwrap().unwrap(), row);
         // Reopening runs the idempotent step again without error.
         drop(state);
         State::open(&path).unwrap();
+    }
+
+    #[test]
+    fn version_five_project_hashes_gain_explicit_working_directory_basis() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sqlite3");
+        drop(State::open(&path).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "ALTER TABLE events DROP COLUMN project_key;
+                 ALTER TABLE events DROP COLUMN project_basis;
+                 UPDATE meta SET value = '5' WHERE key = 'schema_version';",
+            )
+            .unwrap();
+            let mut columns = event("legacy", 1);
+            columns.project_hash = Some("a".repeat(64));
+            conn.execute(
+                "INSERT INTO events
+                  (binding_id, id, session, hour, model, input_tokens, cached_tokens,
+                   cache_write_tokens, output_tokens, session_identity, timestamp, product,
+                   project_hash, detail_observed, bucket_eligible, agent_observed,
+                   agent_identity_basis, parent_agent_identity_basis, agent_class)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 1, 1, 0,
+                         'unknown', 'unknown', 'unknown')",
+                params![
+                    "b",
+                    columns.id,
+                    columns.session,
+                    columns.hour,
+                    columns.model,
+                    columns.input_tokens,
+                    columns.cached_tokens,
+                    columns.cache_write_tokens,
+                    columns.output_tokens,
+                    columns.session_identity,
+                    columns.timestamp,
+                    columns.product,
+                    columns.project_hash,
+                ],
+            )
+            .unwrap();
+        }
+        let state = State::open(&path).unwrap();
+        let migrated = state.event("b", "legacy").unwrap().unwrap();
+        assert_eq!(migrated.project_key, migrated.project_hash);
+        assert_eq!(migrated.project_basis, "working_directory");
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("6"));
     }
 
     #[test]
@@ -1966,7 +2054,7 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("5"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("6"));
         let legacy = state.event("b", "legacy-child").unwrap().unwrap();
         assert!(!legacy.agent_observed);
         assert!(legacy.parent_session.is_some());
@@ -2241,10 +2329,37 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
         state.insert_event("b", &event("a", 10)).unwrap();
-        state.fill_event_attribution("b", "a", Some("p1"), Some("cli")).unwrap();
-        state.fill_event_attribution("b", "a", Some("p2"), None).unwrap();
+        state
+            .fill_event_attribution("b", "a", Some("p1"), Some("p1"), Some("working_directory"), Some("cli"))
+            .unwrap();
+        state.fill_event_attribution("b", "a", Some("p2"), Some("p2"), Some("native"), None).unwrap();
         let row = state.event("b", "a").unwrap().unwrap();
-        assert_eq!((row.project_hash.as_deref(), row.surface.as_deref()), (Some("p1"), Some("cli")));
+        assert_eq!(
+            (
+                row.project_hash.as_deref(),
+                row.project_key.as_deref(),
+                row.project_basis.as_str(),
+                row.surface.as_deref()
+            ),
+            (Some("p1"), Some("p1"), "working_directory", Some("cli"))
+        );
+        let mut without_project = event("none", 10);
+        without_project.project_basis = "none".into();
+        state.insert_event("b", &without_project).unwrap();
+        state
+            .fill_event_attribution(
+                "b",
+                "none",
+                Some("ignored"),
+                Some("ignored"),
+                Some("working_directory"),
+                None,
+            )
+            .unwrap();
+        let without_project = state.event("b", "none").unwrap().unwrap();
+        assert_eq!(without_project.project_basis, "none");
+        assert_eq!(without_project.project_hash, None);
+        assert_eq!(without_project.project_key, None);
         state.upsert_project("b", "p1", "/work/app", "2026-09-02T02:00:00Z").unwrap();
         state.upsert_project("b", "p1", "/work/app", "2026-09-01T00:00:00Z").unwrap();
         state.upsert_project("b", "p1", "/work/app", "2026-09-03T00:00:00Z").unwrap();

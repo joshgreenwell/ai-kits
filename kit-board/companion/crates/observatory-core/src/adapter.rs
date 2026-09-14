@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use jiff::Timestamp;
+use observatory_contract::settings::ProjectAttribution;
 use observatory_contract::{
     AccountId, CapabilityCoverage, CollectionSettings, ConfigDocument, CoverageState, CursorState,
     DetailCode, Provider, Record, Sha256Hex, Uuid,
@@ -126,6 +127,12 @@ impl RunContext {
         self.bindings.iter().filter(move |binding| binding.provider == provider)
     }
 
+    /// The server preference after the machine-local privacy deny list. The
+    /// local rule always wins and is also applied to records queued offline.
+    pub fn effective_project_attribution(&self) -> ProjectAttribution {
+        restrict_project_attribution(self.settings.execution.project_attribution, &self.deny)
+    }
+
     /// Set by the runner when the run's deadline passes; adapters check it between files.
     pub fn should_stop(&self) -> bool {
         self.cancel.load(Ordering::Relaxed) || Instant::now() >= self.deadline
@@ -141,6 +148,19 @@ impl RunContext {
 
     pub fn secrets_dir(&self) -> &Path {
         &self.config_dir
+    }
+}
+
+pub fn restrict_project_attribution(setting: ProjectAttribution, deny: &[String]) -> ProjectAttribution {
+    let mode_path = "execution.project_attribution.hashed";
+    if setting == ProjectAttribution::Hashed
+        && deny.iter().any(|entry| {
+            mode_path == entry || mode_path.strip_prefix(entry).is_some_and(|rest| rest.starts_with('.'))
+        })
+    {
+        ProjectAttribution::Off
+    } else {
+        setting
     }
 }
 
@@ -302,5 +322,19 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
         assert!(a.as_str().chars().nth(14) == Some('5'));
+    }
+
+    #[test]
+    fn project_attribution_deny_uses_mode_path_prefixes() {
+        for entry in ["execution", "execution.project_attribution", "execution.project_attribution.hashed"] {
+            assert_eq!(
+                restrict_project_attribution(ProjectAttribution::Hashed, &[entry.into()]),
+                ProjectAttribution::Off
+            );
+        }
+        assert_eq!(
+            restrict_project_attribution(ProjectAttribution::Hashed, &["execution.tools".into()]),
+            ProjectAttribution::Hashed
+        );
     }
 }

@@ -55,6 +55,7 @@ impl Adapter for CodexExecution {
         let state = ctx.open_state()?;
         let mut outcome = Outcome::ok();
         let include_subagents = ctx.settings.execution.include_subagents;
+        let project_attribution = ctx.effective_project_attribution();
         let emit_embedded = ctx.settings.allowance.codex_reader != CodexReader::Off;
         let mut evidence = EvidenceSummary::default();
         let mut tool_evidence = ToolEvidenceSummary::default();
@@ -99,7 +100,7 @@ impl Adapter for CodexExecution {
                         AdapterId::CodexExecution,
                         self.parser_version(),
                         ctx.settings.execution.detail_level,
-                        ctx.settings.execution.project_attribution,
+                        project_attribution,
                         ctx.settings.execution.tool_detail,
                         include_subagents,
                         &tool_events,
@@ -150,6 +151,7 @@ impl Adapter for CodexExecution {
             outcome.state != CoverageState::Ok || outcome.malformed > 0 || history_has_parse_gaps;
         outcome.capabilities = Some(execution_capabilities(
             ctx.settings.execution.detail_level,
+            project_attribution,
             include_subagents,
             scan_partial,
             evidence,

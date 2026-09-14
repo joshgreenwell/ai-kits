@@ -153,11 +153,14 @@ effective(adapter, mode) =
 ```
 
 A deny entry matches an adapter id (`codex_account`), a provider switch (`providers.cursor`), an
-exact mode path (`allowance.codex_reader.app_server`), or a dotted prefix of one
-(`allowance.codex_reader`). The deny list can only remove. Every adapter reports its effective
+exact mode path (`allowance.codex_reader.app_server`), project attribution
+(`execution.project_attribution` or `execution.project_attribution.hashed`), or a dotted prefix of one
+(`allowance.codex_reader` or `execution`). The deny list can only remove. Every adapter reports its effective
 state in coverage (`disabled_by_setting`, `denied_locally`, `prerequisite_missing`,
 `credential_unavailable`, `identity_changed`, …) with a code from the closed `DetailCode` list, so
 "off" is always distinguishable from "broken".
+Outbox rebuild applies adapter, provider, and mode denies to pending records as well, so data queued
+before a local deny was added remains local while that rule is active.
 
 ## Adapters
 
@@ -249,15 +252,16 @@ field counts as `cli`, which every transcript was before the field existed) and 
 `codex_work_desktop` → `desktop`, a `vscode` originator or source → `ide`). Desktop-app sessions
 of both products therefore land in the same ledger as terminal sessions, distinguished by surface.
 
-`project_hash` is filled only when `execution.project_attribution` is `hashed` (default `off`).
-It is `sha256(["project", cwd])` in the repository's stable JSON form, where `cwd` is the working
-directory the transcript recorded (Claude: the line's `cwd`; Codex: `session_meta.cwd`, updated by
-each `turn_context.cwd`) with trailing separators trimmed. The same directory yields the same
-hash from Claude and Codex, so one project groups across providers; two machines yield different
-hashes because their paths differ, and a label on the Observatory joins them. The companion
-records the hash and the path together in its local `projects` table whatever the setting, so
-turning the setting on later re-emits every retained request with its hash as a revision, and
-`observatory projects` shows which hash is which folder. The path itself is never uploaded. See
+The structured `project` block is emitted only when `execution.project_attribution` is `hashed`
+(default `off`) and the local deny list permits it. Its basis is `working_directory`, `none`, or
+`unknown` for current Claude and Codex local histories. Only explicit `cwd: null` produces `none`;
+missing, blank, or malformed values stay `unknown`. `project_hash` remains the compatibility
+alias for `working_directory`; both keys are `sha256(["project", cwd])` in the repository's stable
+JSON form, where `cwd` is the working directory the transcript recorded (Claude: the line's `cwd`;
+Codex: `session_meta.cwd`, updated by each `turn_context.cwd`) with trailing separators trimmed.
+The companion records the hash and path together only in its local `projects` table, and
+`observatory projects` shows which hash is which folder. Parser-generation replay backfills
+retained source evidence when it is still available. The path itself is never uploaded. See
 `docs/usage-coverage.md` for what this does and does not cover.
 
 ### Decisions made during the port

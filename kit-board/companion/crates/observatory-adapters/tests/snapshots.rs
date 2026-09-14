@@ -10,7 +10,9 @@ use jiff::Timestamp;
 use observatory_adapters::claude_execution::ClaudeExecution;
 use observatory_adapters::codex_execution::CodexExecution;
 use observatory_contract::settings::{DetailLevel, ProjectAttribution};
-use observatory_contract::{AccountId, CollectionSettings, Provider, Uuid};
+use observatory_contract::{
+    AccountId, CapabilityDimension, CapabilityState, CollectionSettings, Provider, Uuid,
+};
 use observatory_core::adapter::{Adapter, BindingContext, IdentityState, MemorySink, Preflight, RunContext};
 use observatory_core::outbox::bucket_from_row;
 use observatory_core::pyjson::digest;
@@ -129,8 +131,11 @@ fn hashed_project_attribution_names_directories_by_hash_only() {
     );
     ctx.settings.execution.project_attribution = ProjectAttribution::Hashed;
     let mut sink = MemorySink::default();
-    ClaudeExecution.collect(&ctx, None, &mut sink).unwrap();
+    let claude_outcome = ClaudeExecution.collect(&ctx, None, &mut sink).unwrap();
     CodexExecution.collect(&ctx, None, &mut sink).unwrap();
+    assert!(claude_outcome.capabilities.as_ref().is_some_and(|coverage| coverage.iter().any(|item| {
+        item.dimension == CapabilityDimension::Project && item.state != CapabilityState::DisabledBySetting
+    })));
     let claude_project = digest(&json!(["project", "/private/synthetic/project"])).as_str().to_owned();
     let codex_project = digest(&json!(["project", "/private/synthetic"])).as_str().to_owned();
     let mut seen: std::collections::BTreeMap<Option<String>, usize> = std::collections::BTreeMap::new();
@@ -142,6 +147,11 @@ fn hashed_project_attribution_names_directories_by_hash_only() {
         let text = value.to_string();
         // `session_identity` is legitimately "synthetic"; the directory itself must not appear.
         assert!(!text.contains("/private") && !text.contains("synthetic/"), "path leaked: {text}");
+        if let Some(key) = value["project_hash"].as_str() {
+            assert_eq!(value["project"], json!({ "key": key, "basis": "working_directory" }));
+        } else {
+            assert_eq!(value["project"], json!({ "key": null, "basis": "unknown" }));
+        }
         *seen.entry(value["project_hash"].as_str().map(str::to_owned)).or_insert(0) += 1;
     }
     assert!(seen.get(&Some(claude_project)).is_some_and(|n| *n > 0), "claude requests carry the hash");
@@ -151,6 +161,20 @@ fn hashed_project_attribution_names_directories_by_hash_only() {
     let state = State::open(&ctx.state_path).unwrap();
     let listed: Vec<String> = state.projects(claude).unwrap().into_iter().map(|row| row.path).collect();
     assert_eq!(listed, vec!["/private/synthetic/project".to_owned()]);
+
+    ctx.deny.push("execution.project_attribution".into());
+    let mut denied = MemorySink::default();
+    let outcome = ClaudeExecution.collect(&ctx, None, &mut denied).unwrap();
+    assert!(outcome.capabilities.as_ref().is_some_and(|coverage| coverage.iter().any(|item| {
+        item.dimension == CapabilityDimension::Project && item.state == CapabilityState::DisabledBySetting
+    })));
+    for emitted in denied.records {
+        let value = serde_json::to_value(emitted.record).unwrap();
+        if value["record_type"] == "activity.request" {
+            assert_eq!(value["project_hash"], Value::Null);
+            assert!(value.get("project").is_none(), "local deny removes structured project attribution");
+        }
+    }
 }
 
 #[test]

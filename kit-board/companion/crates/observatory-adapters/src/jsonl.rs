@@ -55,6 +55,9 @@ pub struct Ctx {
     /// each `turn_context`). Claude carries `cwd` on every line instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// v6: whether project evidence was present and how its identity was derived.
+    #[serde(default = "unknown_project_basis")]
+    pub project_basis: String,
     /// v2 only: the contract surface derived from the Codex `originator` or `source`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<String>,
@@ -82,6 +85,7 @@ impl Ctx {
             session_from_provider: false,
             client_version: None,
             cwd: None,
+            project_basis: unknown_project_basis(),
             surface: None,
             reasoning_effort: None,
             agent: None,
@@ -118,8 +122,13 @@ pub struct EventExtras {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Attribution<'a> {
     pub cwd: Option<&'a str>,
+    pub project_basis: &'a str,
     pub surface: Option<&'a str>,
     pub agent: Option<&'a AgentEvidence>,
+}
+
+fn unknown_project_basis() -> String {
+    "unknown".to_owned()
 }
 
 /// Nullable request facts retained alongside the legacy counters. Missing or
@@ -151,6 +160,15 @@ pub fn normalize_cwd(cwd: &str) -> Option<String> {
         return None;
     }
     Some(value.chars().take(400).collect())
+}
+
+fn project_attribution_from_cwd(value: Option<&Value>) -> (Option<&str>, &'static str) {
+    match value {
+        None => (None, "unknown"),
+        Some(Value::Null) => (None, "none"),
+        Some(Value::String(cwd)) if normalize_cwd(cwd).is_some() => (Some(cwd.as_str()), "working_directory"),
+        Some(_) => (None, "unknown"),
+    }
 }
 
 /// `sha256(["project", cwd])` in the repository's stable JSON form; a normalized cwd only.
@@ -1005,6 +1023,14 @@ pub fn save_event(
         state.upsert_project(binding, hash.as_str(), cwd, timestamp_text)?;
     }
     let hash_text = project.as_ref().map(|(hash, _)| hash.as_str().to_owned());
+    let project_key = hash_text.clone();
+    let project_basis = if project_key.is_some() {
+        "working_directory"
+    } else if attribution.project_basis == "none" {
+        "none"
+    } else {
+        "unknown"
+    };
     let agent = attribution.agent;
     match state.event(binding, event_id)? {
         Some(old) => {
@@ -1012,6 +1038,9 @@ pub fn save_event(
                 (Some(old), Some(new)) => Some(old.max(new)),
                 (old, new) => old.or(new),
             };
+            let fill_project_attribution = old.project_basis == "unknown";
+            let merged_project_basis =
+                if fill_project_attribution { project_basis.to_owned() } else { old.project_basis.clone() };
             state.insert_event(
                 binding,
                 &EventRow {
@@ -1032,7 +1061,17 @@ pub fn save_event(
                     product: old.product,
                     client_version: old.client_version.or_else(|| client_version.map(str::to_owned)),
                     parent_session: old.parent_session.or_else(|| extras.parent_session.clone()),
-                    project_hash: old.project_hash.or(hash_text),
+                    project_hash: if fill_project_attribution {
+                        old.project_hash.or_else(|| hash_text.clone())
+                    } else {
+                        old.project_hash
+                    },
+                    project_key: if fill_project_attribution {
+                        old.project_key.or(project_key)
+                    } else {
+                        old.project_key
+                    },
+                    project_basis: merged_project_basis,
                     surface: old.surface.or_else(|| attribution.surface.map(str::to_owned)),
                     detail_observed: true,
                     bucket_eligible: old.bucket_eligible || bucket_eligible,
@@ -1105,6 +1144,8 @@ pub fn save_event(
                     client_version: client_version.map(str::to_owned),
                     parent_session: extras.parent_session.clone(),
                     project_hash: hash_text,
+                    project_key,
+                    project_basis: project_basis.to_owned(),
                     surface: attribution.surface.map(str::to_owned),
                     detail_observed: true,
                     bucket_eligible,
@@ -1267,8 +1308,10 @@ pub fn process_line(
                 if let Ok(Some(Value::String(version))) = get(&payload, "cli_version") {
                     ctx.client_version = Some(version.chars().take(40).collect());
                 }
-                if let Ok(Some(Value::String(cwd))) = get(&payload, "cwd") {
-                    ctx.cwd = Some(cwd.chars().take(400).collect());
+                if let Some(cwd_value) = payload.get("cwd") {
+                    let (cwd, project_basis) = project_attribution_from_cwd(Some(cwd_value));
+                    ctx.cwd = cwd.map(|value| value.chars().take(400).collect());
+                    ctx.project_basis = project_basis.into();
                 }
                 let originator = get(&payload, "originator").ok().flatten().and_then(Value::as_str);
                 let source = get(&payload, "source").ok().flatten().and_then(Value::as_str);
@@ -1324,8 +1367,10 @@ pub fn process_line(
                 };
                 ctx.model = truncate100(chosen);
                 ctx.reasoning_effort = bounded_code(get(&payload, "effort").ok().flatten());
-                if let Ok(Some(Value::String(cwd))) = get(&payload, "cwd") {
-                    ctx.cwd = Some(cwd.chars().take(400).collect());
+                if let Some(cwd_value) = payload.get("cwd") {
+                    let (cwd, project_basis) = project_attribution_from_cwd(Some(cwd_value));
+                    ctx.cwd = cwd.map(|value| value.chars().take(400).collect());
+                    ctx.project_basis = project_basis.into();
                 }
             }
             Some("event_msg") => {
@@ -1506,6 +1551,7 @@ pub fn process_line(
                             ctx.client_version.as_deref(),
                             Attribution {
                                 cwd: ctx.cwd.as_deref(),
+                                project_basis: &ctx.project_basis,
                                 surface: ctx.surface.as_deref(),
                                 agent: Some(&request_agent),
                             },
@@ -1563,8 +1609,10 @@ pub fn process_line(
     enrich_profile(state, binding, &mut agent)?;
     let mut evidence = claude_evidence(object, usage);
     evidence.model_requested = agent.model_requested.clone();
+    let (cwd, project_basis) = project_attribution_from_cwd(object.get("cwd"));
     let attribution = Attribution {
-        cwd: object.get("cwd").and_then(Value::as_str),
+        cwd,
+        project_basis,
         surface: Some(claude_surface(object.get("entrypoint").and_then(Value::as_str))),
         agent: Some(&agent),
     };
@@ -1848,6 +1896,43 @@ mod tests {
     }
 
     #[test]
+    fn repeated_events_fill_unknown_project_evidence_but_preserve_known_absence() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        let evidence = RequestEvidence::default();
+        let extras = EventExtras { product: "codex", parent_session: None, include_subagents: true };
+        let save = |id: &str, cwd: Option<&str>, project_basis: &str| {
+            save_event(
+                &state,
+                "binding",
+                id,
+                "session",
+                true,
+                2_000_000_000.0,
+                "2033-05-18T03:33:20Z",
+                "model",
+                [1, 0, 0, 0],
+                &evidence,
+                &extras,
+                None,
+                Attribution { cwd, project_basis, surface: Some("cli"), agent: None },
+            )
+            .unwrap();
+        };
+
+        save("known-none", None, "none");
+        save("known-none", Some("/work/app"), "working_directory");
+        let known_none = state.event("binding", "known-none").unwrap().unwrap();
+        assert_eq!((known_none.project_basis.as_str(), known_none.project_key), ("none", None));
+
+        save("unknown", None, "unknown");
+        save("unknown", Some("/work/app"), "working_directory");
+        let enriched = state.event("binding", "unknown").unwrap().unwrap();
+        assert_eq!(enriched.project_basis, "working_directory");
+        assert_eq!(enriched.project_key, Some(project_hash("/work/app").as_str().to_owned()));
+    }
+
+    #[test]
     fn codex_file_fallback_agent_identity_is_derived() {
         let dir = tempfile::tempdir().unwrap();
         let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
@@ -1878,6 +1963,55 @@ mod tests {
 
         let provider = codex_agent_for_session(&json!({}), "account", "thread-id", true);
         assert_eq!(provider.identity_basis, "provider");
+    }
+
+    #[test]
+    fn codex_project_context_distinguishes_none_unknown_and_working_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        let extras = EventExtras { product: "codex", parent_session: None, include_subagents: true };
+        let process = |ctx: &mut Ctx, payload: Value| {
+            process_line(
+                &state,
+                "binding",
+                &json!({
+                    "timestamp": "2026-09-02T04:00:00Z",
+                    "type": "session_meta",
+                    "payload": payload
+                }),
+                ctx,
+                Provider::Codex,
+                "account",
+                0.0,
+                2_000_000_000.0,
+                &extras,
+            )
+            .unwrap()
+            .unwrap();
+        };
+
+        let mut missing = Ctx::fresh("missing");
+        process(&mut missing, json!({ "timestamp": "2026-09-02T04:00:00Z" }));
+        assert_eq!((missing.cwd.as_deref(), missing.project_basis.as_str()), (None, "unknown"));
+
+        let mut none = Ctx::fresh("none");
+        process(&mut none, json!({ "timestamp": "2026-09-02T04:00:00Z", "cwd": null }));
+        assert_eq!((none.cwd.as_deref(), none.project_basis.as_str()), (None, "none"));
+
+        for (name, cwd) in [("number", json!(7)), ("object", json!({})), ("blank", json!("   "))] {
+            let mut invalid = Ctx::fresh(name);
+            process(&mut invalid, json!({ "timestamp": "2026-09-02T04:00:00Z", "cwd": cwd }));
+            assert_eq!(
+                (invalid.cwd.as_deref(), invalid.project_basis.as_str()),
+                (None, "unknown"),
+                "{name} cwd is malformed evidence, not known absence"
+            );
+        }
+
+        let mut working = Ctx::fresh("working");
+        process(&mut working, json!({ "timestamp": "2026-09-02T04:00:00Z", "cwd": "/private/project/" }));
+        assert_eq!(working.project_basis, "working_directory");
+        assert_eq!(working.cwd.as_deref(), Some("/private/project/"));
     }
 
     #[test]

@@ -117,7 +117,7 @@ Stores global collection defaults and per-install overrides. Each run fetches ef
 | Cursor execution/history/readers | Settings and discovery exist; collection is unimplemented. |
 | Detail level | `buckets_only` omits request uploads; `requests` emits requests without tool detail; `requests_with_tools` also emits supported local tool invocation/result rows and request tool totals. |
 | Subagents | Supported Claude and Codex local histories emit privacy-safe request attribution and lifecycle rows for distinct children, parents, roles, depth, and available requested/actual models. Unsupported or missing identity remains explicit Unknown. |
-| Project attribution | `hashed` can add working-directory hashes to request records. Currently off; a project label/grouping UI is not built. |
+| Project attribution | `hashed` adds a structured working-directory identity and basis to supported local request records; local deny rules can force it off. The server registry and authenticated naming/mapping API join machine paths and worktrees through append-only revisions. Its read model preserves legacy hashes, canonicalizes logical-request revisions, and reports raw evidence separately from mapping coverage. The settings UI for those mappings remains future work. |
 | Tool names / Cursor project hooks | Claude and Codex local tool names follow `off`, `builtin_only`, or `hashed_custom`; Cursor project hooks remain unimplemented. |
 | Claude allowance reader | Statusline is built. OAuth usage reader is a stub. |
 | Codex allowance reader | Embedded rollout readings are built. App-server/web-backend readers are stubs; selecting them does not implement them. Embedded readings still arrive from execution. |

@@ -36,4 +36,4 @@ pub fn adapters() -> Vec<Box<dyn Adapter>> {
 
 /// The parser version the two execution adapters report: the companion version,
 /// since their behavior is pinned to `collect.py` v1.1.0 plus the v2 fields.
-pub const EXECUTION_PARSER_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+v1.1.0-detail3");
+pub const EXECUTION_PARSER_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+v1.1.0-detail4");

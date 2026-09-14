@@ -3,6 +3,7 @@ import type postgres from 'postgres';
 import { RequestError, stableJson } from './contracts';
 import { readCache } from './read-cache';
 import { collectionSettingsSchema, installOverrideSchema, mergeSettings, type CollectionSettings, type InstallOverride } from './companion-settings';
+import { projectRegistryMutationSchema } from './project-registry';
 import {
   adapterProvider, bindingRequestSchema, contentSubject, identityRequestSchema, isBrowserAdapter, issuePairingCodeSchema,
   normalizePairingCode, pairRequestSchema, PAIRING_ALPHABET, type AdapterCoverage, type InvalidUsageRecord, type RejectionReason, type UsageEnvelope, type UsageRecord,
@@ -220,6 +221,34 @@ export function createUsageStore(getDatabase?: () => Sql) {
       const rejected: { record_id: string; reason: RejectionReason }[] = [...invalid];
       const requests: Row[] = [], usage: Row[] = [], readings: Row[] = [], money: Row[] = [];
       const agentEvents: Row[] = [], toolEvents: Row[] = [], resourceAccesses: Row[] = [];
+      const projectIdentities = new Map<string, Row>();
+      const observeProjectIdentity = (record: Extract<UsageRecord, { record_type: 'activity.request' }>, binding: BindingRow) => {
+        const project = record.project?.key
+          ? record.project
+          : record.project === undefined && record.project_hash
+            ? { key: record.project_hash, basis: 'working_directory' as const }
+            : null;
+        if (!project?.key || (project.basis !== 'working_directory' && project.basis !== 'native')) return;
+        const firstSeen = record.ended_at ?? record.observed_at;
+        const scope = project.basis === 'working_directory'
+          ? `${install.id}:${project.key}`
+          : `${binding.account_id}:${binding.provider}:${project.key}`;
+        const existing = projectIdentities.get(scope);
+        if (existing) {
+          const before = Date.parse(existing.first_seen as string), after = Date.parse(existing.last_seen as string);
+          const observed = Date.parse(firstSeen);
+          if (observed < before) existing.first_seen = firstSeen;
+          if (observed > after) existing.last_seen = firstSeen;
+          return;
+        }
+        projectIdentities.set(scope, {
+          id: randomUUID(), basis: project.basis, evidence_key: project.key,
+          install_id: project.basis === 'working_directory' ? install.id : null,
+          account_id: project.basis === 'native' ? binding.account_id : null,
+          provider: project.basis === 'native' ? binding.provider : null,
+          first_seen: firstSeen, last_seen: firstSeen,
+        });
+      };
       for (const record of envelope.records) {
         const binding = bindings.get(record.binding_id);
         const reason = rejection(install, binding, record);
@@ -228,6 +257,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
           adapter: record.adapter, observed_at: record.observed_at, basis: record.basis, content_hash: hash(contentSubject(record)) };
         switch (record.record_type) {
           case 'activity.request':
+            observeProjectIdentity(record, binding!);
             requests.push({ ...base, channel: record.channel, record_id: record.record_id, semantic_key: record.semantic_key, product: record.product,
               surface: record.surface, execution_host: record.execution_host, session_hash: record.session_hash, session_identity: record.session_identity,
               parent_session_hash: record.parent_session_hash, model_requested: record.model_requested, model_actual: record.model_actual,
@@ -295,6 +325,20 @@ export function createUsageStore(getDatabase?: () => Sql) {
         }
       }
       let acceptedRecords = 0;
+      const workingDirectoryIdentities = [...projectIdentities.values()].filter(row => row.basis === 'working_directory');
+      if (workingDirectoryIdentities.length) {
+        await tx`INSERT INTO personal_hub.usage_project_identities ${tx(workingDirectoryIdentities)}
+          ON CONFLICT (install_id, evidence_key) WHERE basis = 'working_directory' DO UPDATE SET
+            first_seen = least(usage_project_identities.first_seen, EXCLUDED.first_seen),
+            last_seen = greatest(usage_project_identities.last_seen, EXCLUDED.last_seen)`;
+      }
+      const nativeIdentities = [...projectIdentities.values()].filter(row => row.basis === 'native');
+      if (nativeIdentities.length) {
+        await tx`INSERT INTO personal_hub.usage_project_identities ${tx(nativeIdentities)}
+          ON CONFLICT (account_id, provider, evidence_key) WHERE basis = 'native' DO UPDATE SET
+            first_seen = least(usage_project_identities.first_seen, EXCLUDED.first_seen),
+            last_seen = greatest(usage_project_identities.last_seen, EXCLUDED.last_seen)`;
+      }
       const insert = async (table: string, rows: Row[]) => {
         if (!rows.length) return;
         const inserted = await tx`INSERT INTO personal_hub.${tx(table)} ${tx(rows)} ON CONFLICT DO NOTHING RETURNING id`;
@@ -333,6 +377,88 @@ export function createUsageStore(getDatabase?: () => Sql) {
     const global = await globalSettings(db);
     return { settings: mergeSettings(global.stored), settings_version: global.settings_version,
       latest_companion_version: global.latest_companion_version, updated_at: global.updated_at };
+  }
+
+  /** Privacy-safe project registry plus distinct collection and mapping coverage. */
+  async function listProjects() {
+    const db = await sql();
+    const projects = await db`SELECT id, label, created_at, updated_at
+      FROM personal_hub.usage_projects ORDER BY lower(label), created_at, id`;
+    const identities = await db`SELECT i.id, i.basis, i.evidence_key, i.first_seen, i.last_seen,
+        i.install_id, ci.machine_label, i.account_id, ua.label AS account_label, i.provider,
+        current_mapping.project_id, project.label AS project_label
+      FROM personal_hub.usage_project_identities i
+      LEFT JOIN personal_hub.companion_installs ci ON ci.id = i.install_id
+      LEFT JOIN personal_hub.usage_accounts ua ON ua.id = i.account_id
+      LEFT JOIN LATERAL (
+        SELECT revision.project_id FROM personal_hub.usage_project_mapping_revisions revision
+        WHERE revision.identity_id = i.id
+        ORDER BY revision.revision_order DESC LIMIT 1
+      ) current_mapping ON true
+      LEFT JOIN personal_hub.usage_projects project ON project.id = current_mapping.project_id
+      ORDER BY i.last_seen DESC, i.id`;
+    const [observations = {}] = await db`SELECT count(*)::int AS request_observations
+      FROM personal_hub.activity_requests`;
+    const [evidence = {}] = await db`SELECT
+        count(*)::int AS canonical_requests,
+        count(*) FILTER (WHERE project_basis IN ('native','working_directory') AND project_key IS NOT NULL)::int AS with_identity,
+        count(*) FILTER (WHERE project_basis = 'none')::int AS no_project,
+        count(*) FILTER (WHERE project_basis = 'unknown')::int AS unknown
+      FROM personal_hub.activity_request_project_resolution`;
+    const resolved = { project: 0, unassigned: 0, no_project: 0, unknown: 0 };
+    for (const row of await db`SELECT project_state, count(*)::int AS requests
+      FROM personal_hub.activity_request_project_resolution GROUP BY project_state`) {
+      resolved[row.project_state as keyof typeof resolved] = Number(row.requests);
+    }
+    const mapped = identities.filter(identity => identity.project_id !== null).length;
+    return clone({ projects, identities, coverage: {
+      evidence: {
+        request_observations: Number(observations.request_observations ?? 0),
+        canonical_requests: Number(evidence.canonical_requests ?? 0),
+        with_identity: Number(evidence.with_identity ?? 0),
+        no_project: Number(evidence.no_project ?? 0),
+        unknown: Number(evidence.unknown ?? 0),
+      },
+      mapping: { identities: identities.length, mapped, unassigned: identities.length - mapped },
+      resolved_requests: resolved,
+    } });
+  }
+
+  /** Appends mapping revisions so historical resolution changes without raw fact edits. */
+  async function updateProjects(input: unknown) {
+    const data = projectRegistryMutationSchema.parse(input);
+    const db = await sql();
+    const result = await db.begin(async transaction => {
+      const tx = transaction as unknown as Sql;
+      if (data.action === 'create') {
+        const id = randomUUID();
+        await tx`INSERT INTO personal_hub.usage_projects (id, label) VALUES (${id}, ${data.label})`;
+        return { ok: true, action: data.action, project_id: id, label: data.label };
+      }
+      if (data.action === 'rename') {
+        const changed = await tx`UPDATE personal_hub.usage_projects
+          SET label = ${data.label}, updated_at = now() WHERE id = ${data.project_id} RETURNING id`;
+        if (!changed.length) throw new RequestError('Unknown project', 404);
+        return { ok: true, action: data.action, project_id: data.project_id, label: data.label };
+      }
+      if (data.action === 'map') {
+        const project = await tx`SELECT id FROM personal_hub.usage_projects WHERE id = ${data.project_id}`;
+        if (!project.length) throw new RequestError('Unknown project', 404);
+      }
+      const identityIds = [...data.identity_ids].sort();
+      for (const identityId of identityIds) {
+        const identity = await tx`SELECT id FROM personal_hub.usage_project_identities WHERE id = ${identityId} FOR UPDATE`;
+        if (!identity.length) throw new RequestError('Unknown project identity', 404);
+      }
+      for (const identityId of identityIds) {
+        await tx`INSERT INTO personal_hub.usage_project_mapping_revisions (id, identity_id, project_id, changed_at)
+          VALUES (${randomUUID()}, ${identityId}, ${data.action === 'map' ? data.project_id : null}, DEFAULT)`;
+      }
+      return { ok: true, action: data.action, identities: data.identity_ids.length,
+        project_id: data.action === 'map' ? data.project_id : null };
+    });
+    dashboardCache.invalidate();
+    return result;
   }
 
   /** Replaces the global document; increments the shared settings version. */
@@ -523,7 +649,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
   }
 
   return { issuePairingCode, pairInstall, companionInstall, companionConfig, createBinding, updateInstallSettings, confirmIdentity, ingestUsage,
-    collectionSettings, updateCollectionSettings, listInstalls, updateInstall, usageDashboard, reconcile, syncCompanionRelease };
+    collectionSettings, updateCollectionSettings, listProjects, updateProjects, listInstalls, updateInstall, usageDashboard, reconcile, syncCompanionRelease };
 }
 
 export const usageStore = createUsageStore();
