@@ -81,7 +81,7 @@ export function CloudEstimateCard({ data, accountId, now, refresh }: { data: Liv
         ) : (
           <p className="text-muted-foreground text-sm" role="status">
             {estimate.reason}{' '}
-            <Link href="/usage/connections" className="text-primary underline underline-offset-4">Usage connections</Link>
+            <Link href="/settings" className="text-primary underline underline-offset-4">Usage connections</Link>
           </p>
         )}
 

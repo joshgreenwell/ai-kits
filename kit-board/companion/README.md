@@ -437,7 +437,7 @@ The post is best effort: a dry run or `--offline` skips it, a failure is reporte
 (`capabilities.error`, a code such as `http_401`, `timeout`, or `transport`) and never blocks the
 upload, and an unchanged digest (queue depth excluded) is re-posted only once a day as a heartbeat.
 `observatory run` prints the outcome under `capabilities` and the schedule verdict under `schedule`;
-the site turns them into support chips on Usage → Settings, the health ladder on Connections, and the
+the site turns them into support chips on Settings → Collection, the health ladder on Settings → Connections, and the
 `cadence pending` action.
 
 ## What is uploaded

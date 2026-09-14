@@ -33,7 +33,7 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Starting points
 
-- [app/(private)/usage/page.tsx](<../../app/(private)/usage/page.tsx>)
+- [app/(private)/usage/page.tsx](<../../app/(private)/usage/page.tsx>) and [components/token-activity.tsx](<../../components/token-activity.tsx>) (the USG-015 scaffold this task replaces)
 - [lib/usage.ts](<../../lib/usage.ts>)
 - [components/kit](<../../components/kit>)
 - [components/page-header.tsx](<../../components/page-header.tsx>)

@@ -3,16 +3,18 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from 'cn';
 
-// Configuration lives under /settings; the reset calendar stays reachable from Allowances until USG-024 relocates it.
 const VIEWS = [
-  ['/usage', 'Tokens'],
-  ['/usage/allowances', 'Allowances'],
+  ['/settings', 'Connections'],
+  ['/settings/collection', 'Collection'],
+  ['/settings/projects', 'Projects'],
+  ['/settings/sources', 'Knowledge sources'],
+  ['/settings/feeds', 'Reset feeds'],
 ] as const;
 
-export function UsageNavigation() {
+export function SettingsNavigation() {
   const path = usePathname();
   return (
-    <nav aria-label="AI usage views" className="border-border flex flex-wrap gap-6 border-b">
+    <nav aria-label="Settings views" className="border-border flex flex-wrap gap-6 border-b">
       {VIEWS.map(([href, label]) => {
         const current = path === href;
         return (

@@ -80,7 +80,7 @@ Every implementation task inherits these requirements:
 
 | Task | Priority | Depends on | Status |
 | --- | --- | --- | --- |
-| [USG-015: Move configuration into global Settings and establish two Usage subtabs](usg-015-global-settings-and-navigation.md) | P1 | [USG-007](usg-007-map-project-identities.md), [USG-008](usg-008-collect-knowledge-source-access.md), [USG-014](usg-014-truthful-settings-and-collection-health.md) | Planned |
+| [USG-015: Move configuration into global Settings and establish two Usage subtabs](usg-015-global-settings-and-navigation.md) | P1 | [USG-007](usg-007-map-project-identities.md), [USG-008](usg-008-collect-knowledge-source-access.md), [USG-014](usg-014-truthful-settings-and-collection-health.md) | Done |
 | [USG-016: Build shared filters, chart interactions, and table preferences](usg-016-shared-filters-and-interactive-charts.md) | P1 | [USG-001](usg-001-metric-and-source-contract.md) | Planned |
 | [USG-017: Build the Tokens overview, composition bar, and activity chart](usg-017-tokens-overview-and-daily-volume.md) | P1 | [USG-012](usg-012-unified-filtered-usage-queries.md), [USG-015](usg-015-global-settings-and-navigation.md), [USG-016](usg-016-shared-filters-and-interactive-charts.md) | Planned |
 | [USG-018: Add interactive API-cost and tokens-by-model cards](usg-018-cost-and-model-cards.md) | P1 | [USG-013](usg-013-reuse-cost-and-environment-calculations.md), [USG-017](usg-017-tokens-overview-and-daily-volume.md) | Planned |

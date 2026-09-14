@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { MachineReporters } from "@/components/machine-reporters";
 import { PageHeader } from "@/components/page-header";
+import { TokenActivity } from "@/components/token-activity";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -443,6 +444,7 @@ export default function Home() {
   if (!reports.length)
     return (
       <Workspace>
+        <TokenActivity />
         <EmptyState
           title="Ready for the first monthly upload"
           description="The database is connected. Run the token skill with its upload configuration to populate this dashboard."
@@ -455,7 +457,7 @@ export default function Home() {
   return (
     <Workspace>
       <PageHeader
-        eyebrow={selectedLabel}
+        eyebrow={`Usage · tokens · ${selectedLabel}`}
         title="Monthly AI intelligence"
         description={`${partialMonth ? "Month to date · full report detail" : "Full monthly report"} · ${hourlyMachines ? `${hourlyMachines} of ${visibleRows.length} selected machine reports refresh hourly` : "Scheduled and manual report snapshots"}.${partialMonth ? " Prior-month percentage comparisons resume after this month closes." : ""}`}
         actions={
@@ -472,6 +474,8 @@ export default function Home() {
           </>
         }
       />
+
+      <TokenActivity />
 
       {error && (
         <Alert variant="destructive" role="alert">

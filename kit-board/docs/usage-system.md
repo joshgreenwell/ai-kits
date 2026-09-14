@@ -73,7 +73,9 @@ Reads the latest nonfailed **machine/month report** from `report_revisions` via 
 
 Production had 34 stored monthly revisions at audit time. July and August history is retained. September has Mac Codex and Mac Claude reports, but **no Windows report**. Latest September snapshots: Mac Codex September 13 at 05:04 UTC; Mac Claude September 11 at 17:15 UTC. These timestamps do not establish which scheduler produced each revision.
 
-### Usage & pace — `/usage/live`
+### Usage & pace — `/usage/live` (now Tokens `/usage` and Allowances `/usage/allowances`)
+
+USG-015 split this view: hourly activity sits above the monthly report under the Tokens subtab and the allowance sections form the Allowances subtab; `/usage/live` redirects to Allowances. The behaviour below is unchanged.
 
 Reads `/api/usage-live`: canonical hourly totals from `token_bucket_revisions`, allowance history through `allowance_percent_view`, and retained report baselines. It currently looks back 35 days; data outside the view's horizon is not deleted.
 
@@ -89,7 +91,7 @@ Reads `/api/usage-live`: canonical hourly totals from `token_bucket_revisions`, 
 
 The experimental cloud/uncollected token-equivalent and calibration UI is paused. Its backend/API and calibration evidence still exist. It contributes nothing to displayed token totals. The old daily-token budget UI has been removed.
 
-### Reset intelligence — `/usage/resets`
+### Reset calendar — `/usage/resets` (feed health moved to `/settings/feeds`)
 
 Stores and displays attributed public reset claims, separate from personal allowance readings. It has a calendar, provider/type filters, event details, announcements, banked-reset lifecycle, and feed health. Concurrent changes in this checkout switch Codex feeds to NextReset, retain Reset Radar for Claude, and remove the old Codex Reset probability panel and forecast banner. Their production deployment was not verified by this usage audit. [Reset feeds](reset-feeds.md) owns the current allowlist and release evidence.
 
@@ -97,7 +99,7 @@ Feed history and forecasts are external claims. They do not reset an account, re
 
 Opening the view can request a refresh, bounded by a shared 30-minute lease. `vercel.json` schedules a daily check at 13:15 UTC. The old `--refresh-feeds` local path belonged to v1; **the companion does not implement an hourly feed refresh**.
 
-### Connections — `/usage/connections`
+### Connections — `/settings` (formerly `/usage/connections`)
 
 Pairs one companion per machine and binds it to provider accounts. Shows version, last run, accepted/rejected counts, settings version, identity state, and per-adapter coverage. Provides pause, disable, binding controls, identity reconfirmation, and update notices.
 
@@ -105,7 +107,7 @@ The separate **Browser collectors (v1 quota extension)** card controls the old C
 
 An install, an account binding, a recognized sign-in, and a successful provider collection are four different states. A coverage-only run advances collector contact and no ledger, so the page now labels that line "last contact" and reports each binding's newest allowance reading, its reader, whether that reading is fresh at the install's cadence, and the adapter's `allowance` capability state beside it; a binding that shares an identity hash with an enabled sibling is marked with the recovery step. The browser card separates last contact from the newest sample the extension observed and when that sample was received. Each run also lists its accepted, duplicate, and rejected counts per record type, rejections broken down by reason. USG-014 added the health ladder (paired · bindings · identity · execution · records), the schedule verdict with the exact local action when the installed interval differs from the desired cadence, the build's capability report (version, digest, queue, backfill, detailed-report status per binding), and an overdue marker after two missed cadences; see [capability reports, health, and cadence](usage-collection.md#capability-reports-health-and-cadence). The general `/schedules` page still contains static `connected` flags from `lib/catalog.ts`, not an audit of each external scheduler.
 
-### Settings — `/usage/settings`
+### Collection settings — `/settings/collection` (formerly `/usage/settings`)
 
 Stores global collection defaults and per-install overrides. Each run fetches effective settings; the local deny list can only restrict them. A supplied group replaces that whole group rather than merging individual fields. Settings never install a missing adapter.
 

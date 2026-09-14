@@ -114,7 +114,7 @@ export default async function Schedules() {
                 <TableRow key={source.id as string} className="even:bg-foreground/[0.03] border-b-0">
                   <TableCell className="py-2">
                     <Link
-                      href="/usage/connections"
+                      href="/settings"
                       className="hover:text-primary font-semibold underline-offset-4 hover:underline"
                     >
                       {source.label as string}
@@ -157,7 +157,7 @@ export default async function Schedules() {
                 Daily · 13:15 UTC; hourly local checks
               </TableCell>
               <TableCell className="py-2">
-                <Link href="/usage/resets" className="text-primary text-xs underline-offset-4 hover:underline">
+                <Link href="/settings/feeds" className="text-primary text-xs underline-offset-4 hover:underline">
                   View feed health
                 </Link>
               </TableCell>

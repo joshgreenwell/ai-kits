@@ -52,6 +52,20 @@ export function Navigation() {
 
         <div className="ml-auto flex items-center gap-2">
           <Link
+            href="/settings"
+            scroll={false}
+            onNavigate={startSection}
+            aria-current={isCurrent('/settings') ? 'page' : undefined}
+            className={cn(
+              'focus-visible:ring-ring/50 rounded-md px-2.5 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-[3px]',
+              isCurrent('/settings')
+                ? 'bg-secondary text-foreground'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+            )}
+          >
+            Settings
+          </Link>
+          <Link
             href="/schedules"
             scroll={false}
             onNavigate={startSection}

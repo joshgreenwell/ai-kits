@@ -1,19 +1,3 @@
-import { PageHeader } from '@/components/page-header';
-import { Workspace } from '@/components/workspace';
-import { Badge } from '@/components/ui/badge';
-import { CompanionInstalls } from '@/components/companion-installs';
-import { BrowserConnections } from '@/components/browser-connections';
-
-export default function Connections() {
-  return (
-    <Workspace>
-      <PageHeader
-        eyebrow="Private collection · no inference"
-        title="Usage connections"
-        actions={<Badge variant="outline">Hourly by default</Badge>}
-      />
-      <CompanionInstalls />
-      <BrowserConnections />
-    </Workspace>
-  );
-}
+import { redirect } from 'next/navigation';
+/** Connections moved into global Settings. */
+export default function Connections() { redirect('/settings'); }

@@ -15,7 +15,7 @@ Keep reset tracking available within Allowances while moving connection diagnost
 
 ## Current gap
 
-Reset intelligence currently occupies its own usage subtab.
+The reset calendar still renders at `/usage/resets`, linked from Allowances rather than a subtab; feed health already moved to `/settings/feeds` in USG-015.
 
 ## Acceptance criteria
 

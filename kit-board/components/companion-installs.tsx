@@ -130,7 +130,7 @@ export function CompanionInstalls() {
         <h2 id="companion-heading" className="text-lg font-semibold tracking-tight">Companion installs</h2>
         <p className="text-muted-foreground max-w-[72ch] text-sm">
           One companion per machine and one browser collector per browser profile, paired with a one-time code. Collection modes live in{' '}
-          <Link href="/usage/settings" className="underline underline-offset-4">Settings</Link>; every install applies them on its next run.
+          <Link href="/settings/collection" className="underline underline-offset-4">Settings → Collection</Link>; every install applies them on its next run.
         </p>
       </div>
 

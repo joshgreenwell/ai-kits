@@ -1,12 +1,13 @@
 'use client';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { PageHeader } from '@/components/page-header';
 import { Workspace } from '@/components/workspace';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { EmptyState, ListRow, ListRows } from '@/components/kit';
+import { EmptyState } from '@/components/kit';
 import { ResetDot } from '@/components/reset-dot';
 import { Choice, when } from '@/components/telemetry-shared';
 import { ResetCalendar } from '@/components/reset-calendar';
@@ -61,7 +62,7 @@ export default function Resets() {
     <Workspace>
       <PageHeader
         eyebrow="Codex global resets · Claude window flushes"
-        title="Reset intelligence"
+        title="Reset calendar"
         actions={<Button variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>{busy ? 'Checking…' : 'Check feeds'}</Button>}
       />
 
@@ -151,37 +152,10 @@ export default function Resets() {
         </Card>
       </div>
 
-      <Card className="gap-0 overflow-hidden py-0">
-        <CardHeader className="p-4">
-          <CardTitle className="text-base">Feed health &amp; provenance</CardTitle>
-          <CardDescription>
-            Daily cloud check, hourly checks from the local collector, and cached checks when this
-            view opens. No AI calls.
-          </CardDescription>
-        </CardHeader>
-        <ListRows className="rounded-none border-x-0 border-b-0">
-          {feeds.map(f => (
-            <ListRow
-              key={f.source}
-              tone={stale(f) ? 'destructive' : 'default'}
-              title={
-                <a href={f.url} target="_blank" rel="noreferrer" className="hover:text-primary underline-offset-4 hover:underline">
-                  {f.label}
-                </a>
-              }
-              detail={`Last successful check ${when(f.succeeded_at)} · ${f.revisions} saved revisions${f.error ? ` · ${resetFeedFailureLabel(f.error)}` : ''}${f.payload?.coverage ? ` · archive checked ${when(f.payload.coverage.checked_at)} · posts/replies checked ${when(f.payload.coverage.direct_checked_at)}` : ''}`}
-              aside={<Badge variant={stale(f) || resetFeedCoverageNotes(f.payload).length ? 'soft-warning' : 'soft'}>{stale(f) ? 'stale / retry pending' : 'available'}</Badge>}
-            />
-          ))}
-        </ListRows>
-        <div className="border-border border-t p-4">
-          <p className="text-muted-foreground text-xs leading-relaxed">
-            Independent sources may revise or retract claims. The latest fetched revision is
-            displayed; earlier snapshots remain stored. Public forecasts never change the
-            calculator’s measured account reset time.
-          </p>
-        </div>
-      </Card>
+      <p className="text-muted-foreground text-xs leading-relaxed">
+        Feed health and provenance moved to <Link href="/settings/feeds" className="underline underline-offset-4">Settings → Reset feeds</Link>.{' '}
+        Independent sources may revise or retract claims; the latest fetched revision is displayed and earlier snapshots remain stored.
+      </p>
     </Workspace>
   );
 }

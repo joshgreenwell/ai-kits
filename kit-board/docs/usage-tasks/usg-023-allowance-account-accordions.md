@@ -33,7 +33,7 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Starting points
 
-- [app/(private)/usage/live/page.tsx](<../../app/(private)/usage/live/page.tsx>)
+- [app/(private)/usage/allowances/page.tsx](<../../app/(private)/usage/allowances/page.tsx>) (the USG-015 scaffold this task replaces)
 - [components/telemetry-shared.tsx](<../../components/telemetry-shared.tsx>)
 - [components/model-usage-history.tsx](<../../components/model-usage-history.tsx>)
 - [lib/telemetry-contract.ts](<../../lib/telemetry-contract.ts>)
