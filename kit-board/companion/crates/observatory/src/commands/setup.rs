@@ -6,7 +6,7 @@
 //! and offers to uninstall a v1 schedule.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 use std::str::FromStr;
 
@@ -18,7 +18,7 @@ use observatory_contract::{AccountId, BindingRequest, InstallOverride, Nullable,
 use observatory_core::config::{CompanionConfig, LocalBinding, LocalResource, Secrets};
 use observatory_core::discovery::{Discovered, DisplayIdentity, ObsidianVault, discover};
 use observatory_core::http::Client;
-use observatory_core::paths::{home_dir, write_private};
+use observatory_core::paths::{claude_settings_file, write_private};
 use observatory_core::run::{RunOptions, run as run_cycle};
 use observatory_core::service;
 use serde_json::{Value, json};
@@ -177,14 +177,11 @@ fn propose_resources(config: &mut CompanionConfig, vaults: &[ObsidianVault], pro
     changed
 }
 
-fn claude_settings_path() -> Option<PathBuf> {
-    home_dir().map(|home| home.join(".claude").join("settings.json"))
-}
-
-/// Points Claude Code's statusline at `observatory statusline`, preserving an
-/// existing custom command as a passthrough and backing the file up first.
+/// Points Claude Code's statusline at `observatory statusline` (in the profile's
+/// settings file when `CLAUDE_CONFIG_DIR` is set), preserving an existing custom
+/// command as a passthrough and backing the file up first.
 fn install_statusline_hook(dir: &Path) -> Result<Option<String>, CommandError> {
-    let Some(path) = claude_settings_path() else { return Ok(None) };
+    let Some(path) = claude_settings_file() else { return Ok(None) };
     let exe = std::env::current_exe()
         .map_err(|_| CommandError::Invalid("the companion executable path is unavailable".into()))?;
     let mut settings: Value = match fs::read(&path) {

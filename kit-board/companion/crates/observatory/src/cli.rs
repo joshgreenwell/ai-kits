@@ -43,7 +43,7 @@ pub enum Command {
     /// their local roots (local only); `add` and `remove` edit companion.json.
     Resources(ResourcesArgs),
     /// Effective mode and reason per adapter; prerequisite and credential checks.
-    Doctor,
+    Doctor(DoctorArgs),
     /// The cached effective settings document.
     Settings(SettingsArgs),
     /// Print the semantic version.
@@ -88,6 +88,13 @@ pub struct RunArgs {
     /// Collect and report what would be uploaded without uploading.
     #[arg(long)]
     pub dry_run: bool,
+    /// Do not contact the Observatory for the config document; use the cache or defaults.
+    #[arg(long)]
+    pub offline: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DoctorArgs {
     /// Do not contact the Observatory for the config document; use the cache or defaults.
     #[arg(long)]
     pub offline: bool,

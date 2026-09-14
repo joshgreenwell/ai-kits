@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isSparkWindow, quotaPace, tokenPace, telemetrySchema, connectionSchema } from '../lib/telemetry-contract';
+import { isSparkWindow, quotaOutlook, quotaPace, tokenPace, telemetrySchema, connectionSchema } from '../lib/telemetry-contract';
+import { readingFreshness } from '../lib/allowance-freshness';
 import { calendarDays, matchesResetType, resetDay, resetEntryKey, resetMarker, shiftMonth } from '../lib/reset-calendar';
 import type { ResetItem } from '../lib/reset-feeds';
 import { normalizeFeed } from '../lib/reset-feeds';
@@ -28,8 +29,59 @@ test('allowance outlook handles idle, exact capacity, missing and expired readin
   const exact = quotaPace([q('2026-09-09T16:00:00Z', 48), q('2026-09-09T18:00:00Z', 52)], now)!;
   assert.equal(exact.projectedUsedPercent, 100);
   assert.equal(exact.lastsUntilReset, true);
-  assert.equal(quotaPace([q('2026-09-09T18:00:00Z', 60)], now + 121 * 60_000)?.projectedUsedPercent, null);
+  assert.equal(quotaPace([q('2026-09-09T18:00:00Z', 60)], now + 136 * 60_000)?.projectedUsedPercent, null);
   assert.equal(quotaPace(idle.history, Date.parse(idle.resets_at))?.projectedUsedPercent, null);
+});
+test('allowance staleness follows the collection cadence with the shared two-sample rule', () => {
+  // Readings at 16:00 and 18:00; at cadence 60 the pace survives 134 minutes past the newest and is stale at 136.
+  const pair = [q('2026-09-09T16:00:00Z', 50), q('2026-09-09T18:00:00Z', 60)];
+  const fresh = quotaPace(pair, now + 134 * 60_000, 60)!;
+  assert.deepEqual([fresh.stale, fresh.staleReason, fresh.pointsPerHour, fresh.staleAfterMinutes], [false, null, 5, 135]);
+  const stale = quotaPace(pair, now + 136 * 60_000, 60)!;
+  assert.deepEqual([stale.stale, stale.staleReason, stale.pointsPerHour, stale.projectedUsedPercent], [true, 'age', null, null]);
+  assert.equal(quotaOutlook(pair, now + 136 * 60_000, 60)?.forecastSource, 'stale');
+  assert.equal(quotaOutlook(pair, now + 134 * 60_000, 60)?.forecastSource, 'current_window');
+  // Floor cases: cadences 15 and 30 fall under the two-hour floor, so 119 minutes is fresh and 121 is stale.
+  for (const cadence of [15, 30]) {
+    assert.equal(quotaPace(pair, now + 119 * 60_000, cadence)!.stale, false, `floor case: cadence ${cadence} at 119 minutes`);
+    assert.equal(quotaPace(pair, now + 121 * 60_000, cadence)!.stale, true, `floor case: cadence ${cadence} at 121 minutes`);
+  }
+  assert.equal(quotaPace(pair, now + 121 * 60_000)!.stale, false, 'the default cadence is sixty minutes');
+  // A reset that has passed is stale whatever the cadence, with its own reason.
+  const expired = quotaPace(pair, Date.parse('2026-09-10T18:00:00Z'), 60)!;
+  assert.deepEqual([expired.stale, expired.staleReason], [true, 'expired']);
+  // The card path (quotaOutlook at the source cadence) and the shared rule agree on a 125-minute-old reading at cadence 15.
+  const card = quotaOutlook(pair, now + 125 * 60_000, 15)!;
+  const rule = readingFreshness({ observedAt: '2026-09-09T18:00:00Z', resetsAt: '2026-09-10T18:00:00Z', now: now + 125 * 60_000, cadenceMinutes: 15 });
+  assert.deepEqual([card.stale, card.staleReason, card.forecastSource], [rule.stale, rule.reason, 'stale']);
+  assert.equal(rule.stale, true);
+});
+test('overlapping windows of one account are separate outlooks and the Spark window stays apart', () => {
+  // Mirrors the live page: readings are grouped per account and window key before forecasting, so the five-hour
+  // and weekly windows of one account never blend, and a Codex Spark window is its own meter beside the primary one.
+  const meter = (account: string, window_key: string, label: string, window_minutes: number, at: string, used: number, reset: string) =>
+    ({ account, sample: { window_key, label, observed_at: at, used_percent: used, resets_at: reset, window_minutes } });
+  const readings = [
+    meter('claude', 'five_hour', 'Claude · 5h', 300, '2026-09-09T16:00:00Z', 10, '2026-09-09T20:00:00Z'),
+    meter('claude', 'five_hour', 'Claude · 5h', 300, '2026-09-09T18:00:00Z', 20, '2026-09-09T20:00:00Z'),
+    meter('claude', 'seven_day', 'Claude · weekly', 10080, '2026-09-09T16:00:00Z', 40, '2026-09-12T00:00:00Z'),
+    meter('claude', 'seven_day', 'Claude · weekly', 10080, '2026-09-09T18:00:00Z', 44, '2026-09-12T00:00:00Z'),
+    meter('codex', 'codex:10080', 'Codex · weekly', 10080, '2026-09-09T18:00:00Z', 30, '2026-09-13T00:00:00Z'),
+    meter('codex', 'codex_spark:10080', 'Codex Spark · weekly', 10080, '2026-09-09T18:00:00Z', 6, '2026-09-13T00:00:00Z'),
+  ];
+  const outlooks = ['claude', 'codex'].flatMap(account => {
+    const own = readings.filter(r => r.account === account).map(r => r.sample);
+    return [...new Set(own.map(r => r.window_key))].map(key => quotaOutlook(own.filter(r => r.window_key === key), now)!);
+  });
+  assert.deepEqual(outlooks.map(o => [o.window_key, o.label, o.window_minutes, o.used_percent, o.resets_at, o.samples, o.pointsPerHour, o.forecastSource, isSparkWindow(o)]), [
+    ['five_hour', 'Claude · 5h', 300, 20, '2026-09-09T20:00:00.000Z', 2, 5, 'current_window', false],
+    ['seven_day', 'Claude · weekly', 10080, 44, '2026-09-12T00:00:00.000Z', 2, 2, 'current_window', false],
+    ['codex:10080', 'Codex · weekly', 10080, 30, '2026-09-13T00:00:00.000Z', 1, null, 'unavailable', false],
+    ['codex_spark:10080', 'Codex Spark · weekly', 10080, 6, '2026-09-13T00:00:00.000Z', 1, null, 'unavailable', true],
+  ], 'one outlook per window with the producer label, length, reset anchor, and its own pace');
+  assert.equal(outlooks.filter(o => !isSparkWindow(o)).length, 3, 'the Spark meter is the only one hidden by default');
+  // Without the grouping, one call over both Claude windows forecasts only the later-resetting window.
+  assert.equal(quotaOutlook(readings.filter(r => r.account === 'claude').map(r => r.sample), now)!.window_key, 'seven_day');
 });
 test('Spark visibility recognizes provider keys and human labels', () => {
   assert.equal(isSparkWindow({ window_key: 'codex_spark:weekly', label: 'Weekly' }), true);

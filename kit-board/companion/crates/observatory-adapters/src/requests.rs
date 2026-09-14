@@ -105,7 +105,9 @@ fn capability(
 /// because neither transcript format records every catalog dimension.
 /// `unmatched` and `no_evidence` inspections are expected outcomes for the
 /// resource dimension, never gaps; only forms the classifier cannot read make
-/// it partial.
+/// it partial. An adapter that also reads an allowance meter appends its
+/// `allowance` row (the eighth and last); the detail level does not gate it.
+#[allow(clippy::too_many_arguments)]
 pub fn execution_capabilities(
     detail_level: DetailLevel,
     project_attribution: ProjectAttributionSetting,
@@ -114,6 +116,7 @@ pub fn execution_capabilities(
     summary: EvidenceSummary,
     tools: ToolEvidenceSummary,
     resources: ResourceEvidenceSummary,
+    allowance: Option<CapabilityCoverage>,
 ) -> Vec<CapabilityCoverage> {
     if detail_level == DetailLevel::BucketsOnly {
         return [
@@ -129,6 +132,7 @@ pub fn execution_capabilities(
         .map(|dimension| {
             capability(dimension, CapabilityState::DisabledBySetting, Some("detail_level_buckets_only"))
         })
+        .chain(allowance)
         .collect();
     }
     let request_partial = scan_partial || summary.unbackfilled_requests > 0;
@@ -202,7 +206,7 @@ pub fn execution_capabilities(
     } else {
         (CapabilityState::Complete, None)
     };
-    vec![
+    let mut rows = vec![
         capability(CapabilityDimension::Requests, request_state, request_detail),
         capability(CapabilityDimension::TokenComposition, token_state, token_detail),
         capability(
@@ -214,7 +218,9 @@ pub fn execution_capabilities(
         capability(CapabilityDimension::Agent, agent_state, agent_detail),
         capability(CapabilityDimension::Tool, tool_state, tool_detail),
         capability(CapabilityDimension::Resource, resource_state, resource_detail),
-    ]
+    ];
+    rows.extend(allowance);
+    rows
 }
 
 /// Retained state can contain child requests collected while subagents were

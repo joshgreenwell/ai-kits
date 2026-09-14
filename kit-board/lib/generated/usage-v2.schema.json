@@ -2183,7 +2183,7 @@
             "maxLength": 30
           },
           "capabilities": {
-            "maxItems": 7,
+            "maxItems": 8,
             "type": "array",
             "items": {
               "type": "object",
@@ -2197,7 +2197,8 @@
                     "project",
                     "agent",
                     "tool",
-                    "resource"
+                    "resource",
+                    "allowance"
                   ]
                 },
                 "state": {

@@ -46,6 +46,7 @@ fn harness(provider: Provider, roots: Vec<PathBuf>, account: &str, since: &str) 
         enabled: true,
         identity_hash: None,
         identity: IdentityState::Confirmed,
+        identity_conflict: false,
         roots,
         codex_home: None,
         cursor_state_db: None,
@@ -134,7 +135,7 @@ fn assert_provider(provider: Provider, roots: Vec<PathBuf>, product: &'static st
     let metrics = scan(&h.state, &h.ctx, &h.binding, provider, product, true).unwrap();
     let mut malformed = metrics.malformed_lines;
     if with_inbox {
-        malformed += ingest_statusline_inbox(&h.state, &h.ctx, &h.binding).unwrap();
+        malformed += ingest_statusline_inbox(&h.state, &h.ctx, &[&h.binding]).unwrap().malformed;
     }
     let coverage = json!({"files": metrics.files, "bytes_read": metrics.bytes_read, "malformed_lines": malformed,
         "unavailable_roots": metrics.unavailable_roots});

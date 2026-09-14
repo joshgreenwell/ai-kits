@@ -6,6 +6,7 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { EmptyState, SparkBars, Stat, StatGroup } from '@/components/kit';
 import { Choice, type LiveData, when } from '@/components/telemetry-shared';
 import { quotaCycles, quotaOutlook } from '@/lib/telemetry-contract';
+import { meterLabel } from '@/lib/allowance-meters';
 
 type Outlook = NonNullable<ReturnType<typeof quotaOutlook>>;
 type WindowView = { account: LiveData['accounts'][number]; pace: Outlook };
@@ -71,7 +72,8 @@ export function ModelUsageHistory({ data, windows, now }: { data: LiveData; wind
   const [selectedWindowId, setSelectedWindowId] = useState('');
   const options = windows.map(window => ({
     id: `${window.account.id}:${window.pace.window_key}`,
-    label: `${window.account.label} · ${window.pace.label}`,
+    // The same canonical meter title the cards use, so a reader switch never renames a choice.
+    label: `${window.account.label} · ${meterLabel(window.pace.window_key, window.pace.label)}`,
     window,
   }));
   const selected = options.find(option => option.id === selectedWindowId) ?? options[0];

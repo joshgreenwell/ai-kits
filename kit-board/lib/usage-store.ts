@@ -3,6 +3,7 @@ import type postgres from 'postgres';
 import { RequestError, stableJson } from './contracts';
 import { readCache } from './read-cache';
 import { collectionSettingsSchema, installOverrideSchema, mergeSettings, type CollectionSettings, type InstallOverride } from './companion-settings';
+import { readingFreshness } from './allowance-freshness';
 import { projectRegistryMutationSchema } from './project-registry';
 import { knowledgeSourceMutationSchema } from './knowledge-source-registry';
 import {
@@ -30,14 +31,23 @@ type BindingRow = {
   identity_hash: string | null; identity_reset_at: string | null;
 };
 
+/** Accepted, duplicate, and rejected counts per record type; `invalid` collects records that failed to parse. */
+export type AcceptedByType = Record<string, { accepted: number; duplicate: number; rejected: number }>;
 export type BindingSummary = { id: string; install_id: string; account_id: string; account_label: string; provider: string; identity_hash: string | null;
   identity_reset_at: string | null; enabled: boolean; source_id: string; last_seen_at: string | null; coverage: unknown;
-  identity_state: 'confirmed' | 'unconfirmed' | 'reset'; v1_active: { id: string; machine_label: string; last_seen_at: string | null }[] };
+  identity_state: 'confirmed' | 'unconfirmed' | 'reset'; v1_active: { id: string; machine_label: string; last_seen_at: string | null }[];
+  // Newest ledger evidence per binding. `last_seen_at` above is collector contact and moves on coverage-only receipts; these do not.
+  last_observation: { allowance: { observed_at: string; resets_at: string | null; reader: string } | null; requests: string | null };
+  last_received: { allowance: string | null };
+  // Another enabled binding of the same install and provider holds this binding's non-null hash, so the
+  // companion cannot tell their readings apart (`confirmIdentity` refuses new duplicates; older rows may still hold one).
+  duplicate_identity: boolean };
 export type InstallSummary = { id: string; machine_label: string; kind: 'companion' | 'browser'; platform: string; arch: string; settings: InstallOverride;
   paused: boolean; disabled: boolean; companion_version: string | null; created_at: string; last_seen_at: string | null; last_config_fetch_at: string | null;
   bindings: BindingSummary[]; applied_settings_version: number | null; update_available: boolean;
+  cadence_minutes: CollectionSettings['cadence_minutes']; last_run_at: string | null; accepted_by_type: AcceptedByType;
   latest_run: { run_id: string; started_at: string; finished_at: string; companion_version: string; settings_version: number; coverage: AdapterCoverage[];
-    accepted_buckets: number; accepted_records: number; rejected_records: number; received_at: string } | null };
+    accepted_buckets: number; accepted_records: number; rejected_records: number; accepted_by_type: AcceptedByType; received_at: string } | null };
 export type InstallsSummary = { installs: InstallSummary[]; settings: CollectionSettings; settings_version: number; latest_companion_version: string | null; settings_updated_at: string };
 
 const CHANNEL_RANK = "CASE channel WHEN 'provider_api' THEN 0 WHEN 'app_server' THEN 1 WHEN 'local_file' THEN 2 WHEN 'local_db' THEN 2 ELSE 3 END";
@@ -175,14 +185,22 @@ export function createUsageStore(getDatabase?: () => Sql) {
     return { ok: true, settings_version: await bumpSettingsVersion(db) };
   }
 
-  /** Sets a binding's identity when it is unset or was reset by the UI; a different existing hash is a conflict. */
+  /**
+   * Sets a binding's identity when it is unset or was reset by the UI; a different existing hash is a
+   * conflict. A hash another binding of the same install and provider already holds is refused too
+   * (`identity_taken`): one account identity binds once per install, so readings can never be split
+   * between two bindings that claim the same sign-in.
+   */
   async function confirmIdentity(install: CompanionInstallRow, bindingId: string, input: unknown) {
     const data = identityRequestSchema.parse(input);
     if (!isUuid(bindingId)) throw new RequestError('Unknown binding', 404);
     const db = await sql();
-    const [binding] = await db`SELECT id, identity_hash, enabled FROM personal_hub.companion_bindings WHERE id = ${bindingId} AND install_id = ${install.id}`;
+    const [binding] = await db`SELECT id, provider, identity_hash, enabled FROM personal_hub.companion_bindings WHERE id = ${bindingId} AND install_id = ${install.id}`;
     if (!binding) throw new RequestError('Unknown binding', 404);
     if (binding.identity_hash === null) {
+      const [sibling] = await db`SELECT id FROM personal_hub.companion_bindings
+        WHERE install_id = ${install.id} AND provider = ${binding.provider} AND id <> ${bindingId} AND identity_hash = ${data.identity_hash}`;
+      if (sibling) throw new RequestError('identity_taken: another binding of this install already holds that identity', 409);
       await db`UPDATE personal_hub.companion_bindings SET identity_hash = ${data.identity_hash}, identity_reset_at = NULL WHERE id = ${bindingId}`;
     } else if (binding.identity_hash !== data.identity_hash) {
       throw new RequestError('The binding identity changed; approve the new identity in the Observatory first', 409);
@@ -236,6 +254,13 @@ export function createUsageStore(getDatabase?: () => Sql) {
       }
 
       const rejected: { record_id: string; reason: RejectionReason }[] = [...invalid];
+      // Per-type receipts, so "accepted uploads" is visible per reading kind. Buckets are v1 rows and stay in accepted_buckets.
+      const byType: AcceptedByType = {};
+      const count = (type: string, outcome: 'accepted' | 'duplicate' | 'rejected', n: number) => {
+        if (!n) return;
+        (byType[type] ??= { accepted: 0, duplicate: 0, rejected: 0 })[outcome] += n;
+      };
+      count('invalid', 'rejected', invalid.length);
       const requests: Row[] = [], usage: Row[] = [], readings: Row[] = [], money: Row[] = [];
       const agentEvents: Row[] = [], toolEvents: Row[] = [], resourceAccesses: Row[] = [];
       const projectIdentities = new Map<string, Row>();
@@ -290,7 +315,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
       for (const record of envelope.records) {
         const binding = bindings.get(record.binding_id);
         const reason = rejection(install, binding, record);
-        if (reason) { rejected.push({ record_id: record.record_id, reason }); continue; }
+        if (reason) { rejected.push({ record_id: record.record_id, reason }); count(record.record_type, 'rejected', 1); continue; }
         const base = { id: randomUUID(), account_id: binding!.account_id, binding_id: record.binding_id, provider: binding!.provider,
           adapter: record.adapter, observed_at: record.observed_at, basis: record.basis, content_hash: hash(contentSubject(record)) };
         switch (record.record_type) {
@@ -325,14 +350,12 @@ export function createUsageStore(getDatabase?: () => Sql) {
               provider_event_id: record.provider_event_id, provider_refreshed_at: record.provider_refreshed_at });
             break;
           }
-          case 'allowance.reading': {
-            // The readings ledger has no basis column: a reading is always provider-reported.
-            const { basis: _basis, ...reading } = base;
-            readings.push({ ...reading, reader: record.reader, meter_key: record.meter_key, label: record.label, kind: record.kind, value: record.value,
+          case 'allowance.reading':
+            // Meter key, label, window, reset anchor, and raw window id are stored as the producer sent them.
+            readings.push({ ...base, reader: record.reader, meter_key: record.meter_key, label: record.label, kind: record.kind, value: record.value,
               unit: record.unit, capacity: record.capacity, window_minutes: record.window_minutes, window_started_at: record.window_started_at,
               resets_at: record.resets_at, raw_window_id: record.raw_window_id });
             break;
-          }
           case 'money.entry':
             money.push({ ...base, entry_kind: record.entry_kind, amount: record.amount, unit: record.unit, source_unit: record.source_unit,
               price_basis: record.price_basis, period_start: record.period_start, period_end: record.period_end,
@@ -387,23 +410,40 @@ export function createUsageStore(getDatabase?: () => Sql) {
             last_seen = greatest(usage_knowledge_source_identities.last_seen, EXCLUDED.last_seen),
             configuration_version = coalesce(EXCLUDED.configuration_version, usage_knowledge_source_identities.configuration_version)`;
       }
-      const insert = async (table: string, rows: Row[]) => {
+      const insert = async (table: string, type: UsageRecord['record_type'], rows: Row[]) => {
         if (!rows.length) return;
         const inserted = await tx`INSERT INTO personal_hub.${tx(table)} ${tx(rows)} ON CONFLICT DO NOTHING RETURNING id`;
         acceptedRecords += inserted.length; duplicates += rows.length - inserted.length;
+        count(type, 'accepted', inserted.length); count(type, 'duplicate', rows.length - inserted.length);
       };
-      await insert('activity_requests', requests); await insert('account_usage_buckets', usage);
-      await insert('allowance_readings', readings); await insert('money_entries', money);
-      await insert('agent_events', agentEvents); await insert('tool_events', toolEvents); await insert('resource_accesses', resourceAccesses);
+      await insert('activity_requests', 'activity.request', requests); await insert('account_usage_buckets', 'account.usage_bucket', usage);
+      await insert('allowance_readings', 'allowance.reading', readings); await insert('money_entries', 'money.entry', money);
+      await insert('agent_events', 'agent.event', agentEvents); await insert('tool_events', 'tool.event', toolEvents);
+      await insert('resource_accesses', 'resource.access', resourceAccesses);
 
+      // The bodies of one run accumulate: counters add up, per-type counts merge key-wise, and coverage
+      // is replaced only by a body that carries some.
       await tx`INSERT INTO personal_hub.companion_runs (id, install_id, run_id, started_at, finished_at, companion_version, settings_version, coverage,
-          accepted_buckets, accepted_records, rejected_records)
+          accepted_buckets, accepted_records, rejected_records, accepted_by_type)
         VALUES (${randomUUID()}, ${install.id}, ${envelope.run.run_id}, ${envelope.run.started_at}, ${envelope.run.finished_at}, ${envelope.run.companion_version},
-          ${envelope.run.settings_version}, ${tx.json(envelope.coverage as postgres.JSONValue)}, ${acceptedBuckets}, ${acceptedRecords}, ${rejected.length})
+          ${envelope.run.settings_version}, ${tx.json(envelope.coverage as postgres.JSONValue)}, ${acceptedBuckets}, ${acceptedRecords}, ${rejected.length},
+          ${tx.json(byType as postgres.JSONValue)})
         ON CONFLICT (run_id) DO UPDATE SET
           accepted_buckets = companion_runs.accepted_buckets + EXCLUDED.accepted_buckets,
           accepted_records = companion_runs.accepted_records + EXCLUDED.accepted_records,
           rejected_records = companion_runs.rejected_records + EXCLUDED.rejected_records,
+          accepted_by_type = (
+            SELECT coalesce(jsonb_object_agg(totals.type, totals.counts), '{}'::jsonb) FROM (
+              SELECT pairs.type, jsonb_object_agg(pairs.outcome, pairs.total) AS counts FROM (
+                SELECT entry.type, entry.outcome, sum(entry.count)::int AS total FROM (
+                  SELECT t.key AS type, o.key AS outcome, o.value::int AS count
+                  FROM jsonb_each(companion_runs.accepted_by_type) t CROSS JOIN LATERAL jsonb_each_text(t.value) o
+                  UNION ALL
+                  SELECT t.key, o.key, o.value::int
+                  FROM jsonb_each(EXCLUDED.accepted_by_type) t CROSS JOIN LATERAL jsonb_each_text(t.value) o
+                ) entry GROUP BY entry.type, entry.outcome
+              ) pairs GROUP BY pairs.type
+            ) totals),
           coverage = CASE WHEN jsonb_array_length(EXCLUDED.coverage) > 0 THEN EXCLUDED.coverage ELSE companion_runs.coverage END,
           finished_at = EXCLUDED.finished_at
         WHERE companion_runs.install_id = EXCLUDED.install_id`;
@@ -716,29 +756,50 @@ export function createUsageStore(getDatabase?: () => Sql) {
     return !!a && !!b && (a[0] < b[0] || (a[0] === b[0] && (a[1] < b[1] || (a[1] === b[1] && a[2] < b[2]))));
   };
 
-  /** Installs with bindings, latest run, and applied settings version, for the Connections page. */
+  /**
+   * Installs with bindings, latest run, and applied settings version, for the Connections page.
+   * Each binding also carries the newest observation in its ledgers, read by `binding_id` through the
+   * `(binding_id, observed_at DESC)` indexes, so freshness is judged on evidence rather than on contact,
+   * and `duplicate_identity` when an enabled sibling of the same provider holds the same hash.
+   */
   async function listInstalls() {
     const db = await sql();
     const global = await globalSettings(db);
     const [installs, bindings, runs, activeV1] = await Promise.all([
       db`SELECT id, machine_label, kind, platform, arch, settings, paused, disabled, companion_version, created_at, last_seen_at, last_config_fetch_at
         FROM personal_hub.companion_installs ORDER BY created_at, id`,
-      db`SELECT b.id, b.install_id, b.account_id, b.provider, b.identity_hash, b.identity_reset_at, b.enabled, b.source_id, s.last_seen_at, s.coverage, a.label AS account_label
+      db`SELECT b.id, b.install_id, b.account_id, b.provider, b.identity_hash, b.identity_reset_at, b.enabled, b.source_id, s.last_seen_at, s.coverage, a.label AS account_label,
+          allowance.observed_at AS allowance_observed_at, allowance.resets_at AS allowance_resets_at, allowance.reader AS allowance_reader,
+          (SELECT max(r.received_at) FROM personal_hub.allowance_readings r WHERE r.binding_id = b.id) AS allowance_received_at,
+          requests.observed_at AS requests_observed_at,
+          EXISTS (SELECT 1 FROM personal_hub.companion_bindings o
+            WHERE o.install_id = b.install_id AND o.provider = b.provider AND o.id <> b.id AND o.enabled
+              AND o.identity_hash IS NOT NULL AND o.identity_hash = b.identity_hash) AS duplicate_identity
         FROM personal_hub.companion_bindings b JOIN personal_hub.telemetry_sources s ON s.id = b.source_id JOIN personal_hub.usage_accounts a ON a.id = b.account_id
+        LEFT JOIN LATERAL (SELECT r.observed_at, r.resets_at, r.reader FROM personal_hub.allowance_readings r
+          WHERE r.binding_id = b.id ORDER BY r.observed_at DESC LIMIT 1) allowance ON true
+        LEFT JOIN LATERAL (SELECT r.observed_at FROM personal_hub.activity_requests r
+          WHERE r.binding_id = b.id ORDER BY r.observed_at DESC LIMIT 1) requests ON true
         ORDER BY b.created_at, b.id`,
       db`SELECT DISTINCT ON (install_id) install_id, run_id, started_at, finished_at, companion_version, settings_version, coverage,
-          accepted_buckets, accepted_records, rejected_records, received_at
+          accepted_buckets, accepted_records, rejected_records, accepted_by_type, received_at
         FROM personal_hub.companion_runs ORDER BY install_id, finished_at DESC, received_at DESC`,
       db`SELECT id, account_id, machine_label, last_seen_at FROM personal_hub.telemetry_sources
         WHERE mode = 'local' AND NOT disabled AND last_seen_at > now() - interval '2 hours'`,
     ]);
     const result = installs.map(install => {
       const run = runs.find(r => r.install_id === install.id);
-      const own = bindings.filter(b => b.install_id === install.id).map(b => ({ ...b,
+      const own = bindings.filter(b => b.install_id === install.id).map(({ allowance_observed_at, allowance_resets_at, allowance_reader, allowance_received_at, requests_observed_at, ...b }) => ({ ...b,
         identity_state: b.identity_hash ? 'confirmed' : b.identity_reset_at ? 'reset' : 'unconfirmed',
-        v1_active: activeV1.filter(v => v.account_id === b.account_id).map(v => ({ id: v.id, machine_label: v.machine_label, last_seen_at: v.last_seen_at })) }));
+        v1_active: activeV1.filter(v => v.account_id === b.account_id).map(v => ({ id: v.id, machine_label: v.machine_label, last_seen_at: v.last_seen_at })),
+        last_observation: {
+          allowance: allowance_observed_at ? { observed_at: allowance_observed_at, resets_at: allowance_resets_at ?? null, reader: allowance_reader } : null,
+          requests: requests_observed_at ?? null },
+        last_received: { allowance: allowance_received_at ?? null } }));
       return { ...install, bindings: own, latest_run: run ?? null,
         applied_settings_version: run ? Number(run.settings_version) : null,
+        cadence_minutes: mergeSettings(global.stored, install.settings as InstallOverride).cadence_minutes,
+        last_run_at: run?.finished_at ?? null, accepted_by_type: run?.accepted_by_type ?? {},
         update_available: install.kind === 'companion' && behind(install.companion_version as string | null, global.latest_companion_version) };
     });
     return clone({ installs: result, settings: mergeSettings(global.stored), settings_version: global.settings_version,
@@ -788,9 +849,17 @@ export function createUsageStore(getDatabase?: () => Sql) {
     return { ok: true };
   }
 
+  /**
+   * The v2-only read model behind /api/usage-v2 (the live page's cards read the compatibility view,
+   * which unions the v1 browser samples). The current reading per (account, meter) is the newest
+   * observation from an enabled binding of a live install whose reader is one this store recognizes
+   * (`statusline`, `embedded`, `web_backend`); an exact tie falls to reader rank in that order, and an
+   * unknown reader never outranks a known one. Freshness is the shared rule at the binding's cadence.
+   */
   async function loadDashboard() {
     const db = await sql();
-    const [installs, ledgers, allowance] = await Promise.all([
+    const now = Date.now();
+    const [installs, ledgers, current] = await Promise.all([
       listInstalls(),
       db`SELECT
         (SELECT count(*)::int FROM personal_hub.activity_requests WHERE observed_at >= now() - interval '35 days') AS activity_requests,
@@ -800,21 +869,28 @@ export function createUsageStore(getDatabase?: () => Sql) {
         (SELECT count(*)::int FROM personal_hub.agent_events WHERE observed_at >= now() - interval '35 days') AS agent_events,
         (SELECT count(*)::int FROM personal_hub.tool_events WHERE observed_at >= now() - interval '35 days') AS tool_events,
         (SELECT count(*)::int FROM personal_hub.resource_accesses WHERE observed_at >= now() - interval '35 days') AS resource_accesses`,
-      // Current reading per meter: reader rank, then the freshest observation within two hours of the newest.
       db`WITH ranked AS (
-        SELECT r.account_id, r.meter_key, r.label, r.kind, r.value, r.unit, r.capacity, r.window_minutes, r.resets_at, r.reader, r.observed_at,
-          row_number() OVER (PARTITION BY r.account_id, r.meter_key ORDER BY
-            CASE r.reader WHEN 'statusline' THEN 1 WHEN 'embedded' THEN 2 WHEN 'web_backend' THEN 3 ELSE 0 END, r.observed_at DESC) AS rank,
-          max(r.observed_at) OVER (PARTITION BY r.account_id, r.meter_key) AS newest
+        SELECT r.account_id, r.meter_key, r.label, r.kind, r.value, r.unit, r.capacity, r.window_minutes, r.window_started_at, r.resets_at,
+          r.raw_window_id, r.reader, r.basis, r.observed_at, r.binding_id, i.settings AS install_settings,
+          row_number() OVER (PARTITION BY r.account_id, r.meter_key ORDER BY r.observed_at DESC,
+            CASE r.reader WHEN 'statusline' THEN 1 WHEN 'embedded' THEN 2 WHEN 'web_backend' THEN 3 END, r.received_at DESC, r.id DESC) AS rank
         FROM personal_hub.allowance_readings r
         JOIN personal_hub.companion_bindings b ON b.id = r.binding_id AND b.enabled
         JOIN personal_hub.companion_installs i ON i.id = b.install_id AND NOT i.disabled
-        WHERE r.observed_at >= now() - interval '35 days')
-        SELECT account_id, meter_key, label, kind, value, unit, capacity, window_minutes, resets_at, reader, observed_at FROM ranked
-        WHERE observed_at >= newest - interval '2 hours' AND rank = (SELECT min(rank) FROM ranked x WHERE x.account_id = ranked.account_id AND x.meter_key = ranked.meter_key AND x.observed_at >= x.newest - interval '2 hours')
-        ORDER BY account_id, meter_key`,
+        WHERE r.observed_at >= now() - interval '35 days' AND r.reader IN ('statusline', 'embedded', 'web_backend'))
+        SELECT account_id, meter_key, label, kind, value, unit, capacity, window_minutes, window_started_at, resets_at, raw_window_id, reader, basis,
+          observed_at, binding_id, install_settings
+        FROM ranked WHERE rank = 1 ORDER BY account_id, meter_key`,
     ]);
-    return clone({ ...installs, ledgers: ledgers[0], allowance, as_of: new Date().toISOString() });
+    const stored = (await globalSettings(db)).stored;
+    // The driver returns timestamptz columns as Date objects; the shared rule takes instants.
+    const instant = (value: unknown) => (value === null || value === undefined ? null : new Date(value as string).getTime());
+    const allowance = current.map(({ install_settings, ...row }) => {
+      const cadence = mergeSettings(stored, install_settings as InstallOverride).cadence_minutes;
+      const freshness = readingFreshness({ observedAt: instant(row.observed_at)!, resetsAt: instant(row.resets_at), now, cadenceMinutes: cadence });
+      return { ...row, cadence_minutes: cadence, stale: freshness.stale, stale_reason: freshness.reason, age_minutes: Math.round(freshness.ageMinutes) };
+    });
+    return clone({ ...installs, ledgers: ledgers[0], allowance, as_of: new Date(now).toISOString() });
   }
   const dashboardCache = readCache(30_000, loadDashboard);
   const usageDashboard = () => dashboardCache.get();

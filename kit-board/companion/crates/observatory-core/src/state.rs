@@ -5,7 +5,7 @@
 //! migrated in place. Every table holds counters, hashes, checkpoints, and
 //! bounded raw observations; never conversation text.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::io;
 use std::path::Path;
 use std::time::Duration;
@@ -13,7 +13,7 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: &str = "7";
+pub const SCHEMA_VERSION: &str = "8";
 
 /// The local-only rejection mark on a queued `resource.access` record whose
 /// key or configuration token no longer matches this machine's configuration.
@@ -95,6 +95,9 @@ CREATE TABLE IF NOT EXISTS local_resource_inspections (binding_id TEXT NOT NULL,
   PRIMARY KEY (binding_id, invocation_key));
 CREATE TABLE IF NOT EXISTS allowance_slots (binding_id TEXT NOT NULL, slot TEXT NOT NULL, payload TEXT NOT NULL,
   dirty INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (binding_id, slot));
+CREATE INDEX IF NOT EXISTS allowance_slots_slot ON allowance_slots(slot);
+CREATE TABLE IF NOT EXISTS allowance_quarantine (slot TEXT PRIMARY KEY, payload TEXT NOT NULL,
+  identity_hash TEXT, reason TEXT NOT NULL, stored_at TEXT NOT NULL, candidate_binding_id TEXT);
 CREATE TABLE IF NOT EXISTS observations (record_id TEXT PRIMARY KEY, adapter TEXT NOT NULL,
   observed_at TEXT NOT NULL, payload TEXT NOT NULL, stored_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS records (record_id TEXT PRIMARY KEY, binding_id TEXT NOT NULL, adapter TEXT NOT NULL,
@@ -124,6 +127,20 @@ pub struct AdapterStateRow {
     pub last_run_at: Option<String>,
     pub last_state: Option<String>,
     pub cursor: Option<String>,
+}
+
+/// A statusline sample held back from binding, with the stamp it carried and
+/// why it is held (`identity_ambiguous`, `identity_unconfirmed`, `unpaired_identity`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuarantinedSample {
+    pub slot: String,
+    pub payload: String,
+    pub identity_hash: Option<String>,
+    pub reason: String,
+    pub stored_at: String,
+    /// The lone binding an unstamped sample met while it was not yet confirmed
+    /// (`identity_unconfirmed`): the only binding the row may ever be released to.
+    pub candidate_binding_id: Option<String>,
 }
 
 /// The v1 per-file checkpoint.
@@ -420,11 +437,19 @@ impl State {
     /// Forward migrations. Version 1 predates project attribution, version 2
     /// predates nullable request and pricing evidence, and version 3 predates
     /// agent attribution, version 4 predates tool evidence, version 5
-    /// predates explicit project identity states, and version 6 predates
-    /// knowledge-source access evidence (new tables only, created above).
-    /// Every step is idempotent, so an interrupted upgrade resumes.
+    /// predates explicit project identity states, version 6 predates
+    /// knowledge-source access evidence, and version 7 predates the allowance
+    /// quarantine (both new tables only, created above). A version 8 file
+    /// written before the quarantine's candidate column existed gains it here
+    /// (version 8 is unreleased, so the number does not move). Every step is
+    /// idempotent, so an interrupted upgrade resumes.
     fn migrate(&self) -> Result<(), StateError> {
         let version = self.meta("schema_version")?;
+        if version.as_deref() == Some("8")
+            && !self.has_column("allowance_quarantine", "candidate_binding_id")?
+        {
+            self.conn.execute("ALTER TABLE allowance_quarantine ADD COLUMN candidate_binding_id TEXT", [])?;
+        }
         if version.as_deref() == Some("1") {
             for column in ["project_hash", "surface"] {
                 if !self.has_column("events", column)? {
@@ -584,6 +609,23 @@ impl State {
             params![cached.document, cached.settings_version as i64, cached.etag, cached.fetched_at],
         )?;
         Ok(())
+    }
+
+    /// Caches a config document as if it had been fetched, so an offline run
+    /// (`--offline`) sees its bindings and identity hashes. A test and
+    /// local-verification seam; production runs cache what the server sends.
+    pub fn seed_cached_config(
+        &self,
+        document: &observatory_contract::ConfigDocument,
+        fetched_at: &str,
+    ) -> Result<(), StateError> {
+        let text = serde_json::to_string(document).map_err(|_| StateError::Corrupt)?;
+        self.save_cached_config(&CachedConfig {
+            document: text,
+            settings_version: document.settings_version.get(),
+            etag: None,
+            fetched_at: fetched_at.to_owned(),
+        })
     }
 
     // --- adapter state ------------------------------------------------------
@@ -1699,6 +1741,128 @@ impl State {
         Ok(())
     }
 
+    /// Whether a content-keyed slot is already stored under any binding or held
+    /// in quarantine: a replayed sample is skipped before any binding decision.
+    /// Both probes are index lookups (`allowance_slots_slot`, the quarantine
+    /// key), so the replay check on a retained inbox does not grow with history.
+    pub fn allowance_slot_exists_anywhere(&self, slot: &str) -> Result<bool, StateError> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM allowance_slots WHERE slot = ?1)
+                 OR EXISTS(SELECT 1 FROM allowance_quarantine WHERE slot = ?1)",
+            params![slot],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// The newest `observed_at` among a binding's slots, for the freshness rule.
+    pub fn newest_allowance_observed_at(&self, binding: &str) -> Result<Option<String>, StateError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT max(json_extract(payload, '$.observed_at')) FROM allowance_slots WHERE binding_id = ?1",
+                params![binding],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    // --- allowance quarantine -----------------------------------------------
+
+    /// Holds a sample that could not be bound safely. Never emitted; every run
+    /// re-evaluates the rows against the current bindings. An unstamped sample
+    /// held as `identity_unconfirmed` records the lone binding it met, the only
+    /// one it may be released to. Returns false when the slot was already held.
+    pub fn quarantine_sample(
+        &self,
+        slot: &str,
+        payload: &str,
+        identity_hash: Option<&str>,
+        reason: &str,
+        stored_at: &str,
+        candidate_binding_id: Option<&str>,
+    ) -> Result<bool, StateError> {
+        let changed = self.conn.execute(
+            "INSERT OR IGNORE INTO allowance_quarantine
+                 (slot, payload, identity_hash, reason, stored_at, candidate_binding_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![slot, payload, identity_hash, reason, stored_at, candidate_binding_id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn quarantined_samples(&self) -> Result<Vec<QuarantinedSample>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT slot, payload, identity_hash, reason, stored_at, candidate_binding_id
+             FROM allowance_quarantine ORDER BY slot",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(QuarantinedSample {
+                slot: row.get(0)?,
+                payload: row.get(1)?,
+                identity_hash: row.get(2)?,
+                reason: row.get(3)?,
+                stored_at: row.get(4)?,
+                candidate_binding_id: row.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Held rows by reason.
+    pub fn quarantine_counts(&self) -> Result<BTreeMap<String, u64>, StateError> {
+        let mut statement =
+            self.conn.prepare("SELECT reason, count(*) FROM allowance_quarantine GROUP BY reason")?;
+        let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
+        let mut counts = BTreeMap::new();
+        for row in rows {
+            let (reason, count) = row?;
+            counts.insert(reason, count.max(0) as u64);
+        }
+        Ok(counts)
+    }
+
+    /// Re-labels a held row whose reason changed under the current bindings.
+    pub fn requarantine(&self, slot: &str, reason: &str) -> Result<(), StateError> {
+        self.conn.execute(
+            "UPDATE allowance_quarantine SET reason = ?2 WHERE slot = ?1 AND reason <> ?2",
+            params![slot, reason],
+        )?;
+        Ok(())
+    }
+
+    /// Moves a held row into a binding's slots (written once, dirty) and drops it.
+    pub fn release_quarantined(&self, slot: &str, binding: &str) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO allowance_slots (binding_id, slot, payload, dirty)
+             SELECT ?2, slot, payload, 1 FROM allowance_quarantine WHERE slot = ?1",
+            params![slot, binding],
+        )?;
+        self.conn.execute("DELETE FROM allowance_quarantine WHERE slot = ?1", params![slot])?;
+        Ok(())
+    }
+
+    /// Drops held rows stored before the cutoff, except those whose stamp still
+    /// pairs with one of the given hashes (a binding waiting for its conflict to
+    /// clear). Unstamped rows are never pairable. Returns the number removed.
+    pub fn prune_quarantine(&self, cutoff: &str, pairable_hashes: &[String]) -> Result<usize, StateError> {
+        let mut removed = 0;
+        let mut statement =
+            self.conn.prepare("SELECT slot, identity_hash FROM allowance_quarantine WHERE stored_at < ?1")?;
+        let rows = statement.query_map(params![cutoff], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        let stale: Vec<(String, Option<String>)> = rows.collect::<Result<Vec<_>, _>>()?;
+        for (slot, hash) in stale {
+            if hash.as_ref().is_some_and(|hash| pairable_hashes.contains(hash)) {
+                continue;
+            }
+            removed +=
+                self.conn.execute("DELETE FROM allowance_quarantine WHERE slot = ?1", params![slot])?;
+        }
+        Ok(removed)
+    }
+
     // --- records ------------------------------------------------------------
 
     /// Inserts or revises a record. Returns true when the stored row changed.
@@ -2147,7 +2311,7 @@ mod tests {
         assert_eq!(rows[0].calls, 2);
         assert_eq!(rows[0].total_tokens, 2 * 30 + 25);
         assert!(state.bucket_rows("other").unwrap().is_empty());
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("7"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("8"));
     }
 
     #[test]
@@ -2257,7 +2421,7 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("7"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("8"));
         let mut row = event("a", 10);
         row.project_hash = Some("h".repeat(64));
         row.project_key = row.project_hash.clone();
@@ -2315,7 +2479,7 @@ mod tests {
         let migrated = state.event("b", "legacy").unwrap().unwrap();
         assert_eq!(migrated.project_key, migrated.project_hash);
         assert_eq!(migrated.project_basis, "working_directory");
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("7"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("8"));
     }
 
     #[test]
@@ -2348,7 +2512,7 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("7"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("8"));
         let legacy = state.event("b", "legacy-child").unwrap().unwrap();
         assert!(!legacy.agent_observed);
         assert!(legacy.parent_session.is_some());
@@ -3017,13 +3181,178 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("7"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("8"));
         state.upsert_resource_access("b", &access("a", "read", "explicit_argument")).unwrap();
         state.upsert_resource_inspection("b", "inv-1", "matched", false).unwrap();
         assert_eq!(state.resource_accesses("b").unwrap().len(), 1);
         assert_eq!(state.resource_inspection_counts("b").unwrap().matched, 1);
         drop(state);
         State::open(&path).unwrap();
+    }
+
+    #[test]
+    fn version_seven_state_gains_allowance_quarantine() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sqlite3");
+        drop(State::open(&path).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "DROP TABLE allowance_quarantine;
+                 UPDATE meta SET value = '7' WHERE key = 'schema_version';",
+            )
+            .unwrap();
+        }
+        let state = State::open(&path).unwrap();
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("8"));
+        assert!(state.has_column("allowance_quarantine", "candidate_binding_id").unwrap());
+        assert!(state.quarantine_sample("s1", "{}", Some("h"), "unpaired_identity", "t", None).unwrap());
+        assert!(
+            state
+                .quarantine_sample("s2", "{}", None, "identity_unconfirmed", "t", Some("binding-a"))
+                .unwrap()
+        );
+        let held = state.quarantined_samples().unwrap();
+        assert_eq!(held.len(), 2);
+        assert_eq!(held[0].candidate_binding_id, None);
+        assert_eq!(held[1].candidate_binding_id.as_deref(), Some("binding-a"));
+        drop(state);
+        State::open(&path).unwrap();
+
+        // An unreleased version 8 file written before the candidate column existed gains it.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "DROP TABLE allowance_quarantine;
+                 CREATE TABLE allowance_quarantine (slot TEXT PRIMARY KEY, payload TEXT NOT NULL,
+                   identity_hash TEXT, reason TEXT NOT NULL, stored_at TEXT NOT NULL);
+                 INSERT INTO allowance_quarantine VALUES ('s3', '{}', NULL, 'identity_ambiguous', 't');",
+            )
+            .unwrap();
+        }
+        let state = State::open(&path).unwrap();
+        assert!(state.has_column("allowance_quarantine", "candidate_binding_id").unwrap());
+        let held = state.quarantined_samples().unwrap();
+        assert_eq!(held.len(), 1);
+        assert_eq!((held[0].slot.as_str(), held[0].candidate_binding_id.as_deref()), ("s3", None));
+        drop(state);
+        State::open(&path).unwrap();
+    }
+
+    #[test]
+    fn the_replay_check_is_an_index_lookup_on_both_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        state.upsert_allowance_slot("binding-a", "slot-1", "{}").unwrap();
+        state.quarantine_sample("slot-2", "{}", None, "identity_ambiguous", "t", None).unwrap();
+        assert!(state.allowance_slot_exists_anywhere("slot-1").unwrap(), "a stored slot");
+        assert!(state.allowance_slot_exists_anywhere("slot-2").unwrap(), "a held slot");
+        assert!(!state.allowance_slot_exists_anywhere("slot-3").unwrap());
+        let mut statement = state
+            .conn
+            .prepare(
+                "EXPLAIN QUERY PLAN
+                 SELECT EXISTS(SELECT 1 FROM allowance_slots WHERE slot = ?1)
+                     OR EXISTS(SELECT 1 FROM allowance_quarantine WHERE slot = ?1)",
+            )
+            .unwrap();
+        let plan: Vec<String> = statement
+            .query_map(params!["slot-1"], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            plan.iter().any(|step| step.contains("allowance_slots_slot")),
+            "the slot probe uses the slot index: {plan:?}"
+        );
+        assert!(
+            plan.iter().any(|step| step.contains("allowance_quarantine") && step.contains("INDEX")),
+            "the quarantine probe uses its primary key: {plan:?}"
+        );
+        // The only scan is the constant outer row; neither table is scanned.
+        assert!(
+            !plan.iter().any(|step| step.starts_with("SCAN") && step.contains("allowance")),
+            "no table scan: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn quarantined_samples_are_held_released_and_pruned_apart_from_slots() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        let payload = |observed: &str| {
+            format!(
+                r#"{{"window_key":"five_hour","observed_at":"{observed}","used_percent":10,"raw_window_id":"five_hour"}}"#
+            )
+        };
+        let hash_a = "a".repeat(64);
+        let hash_b = "b".repeat(64);
+        let hold = |slot: &str, observed: &str, hash: Option<&str>, reason: &str, stored: &str| {
+            state.quarantine_sample(slot, &payload(observed), hash, reason, stored, None).unwrap()
+        };
+        assert!(hold(
+            "paired",
+            "2026-09-01T01:00:00Z",
+            Some(&hash_a),
+            "unpaired_identity",
+            "2026-09-01T01:00:00.000Z"
+        ));
+        assert!(
+            !hold(
+                "paired",
+                "2026-09-01T01:00:00Z",
+                Some(&hash_a),
+                "unpaired_identity",
+                "2026-09-01T01:00:00.000Z"
+            ),
+            "a held slot is written once"
+        );
+        hold(
+            "orphan",
+            "2026-09-01T02:00:00Z",
+            Some(&hash_b),
+            "unpaired_identity",
+            "2026-09-01T02:00:00.000Z",
+        );
+        hold("unstamped", "2026-09-01T03:00:00Z", None, "identity_ambiguous", "2026-09-01T03:00:00.000Z");
+        hold("recent", "2026-09-10T03:00:00Z", None, "identity_unconfirmed", "2026-09-10T03:00:00.000Z");
+
+        // Held rows are invisible to the emitters and to the slot table.
+        assert!(state.dirty_allowance_slots("binding-a").unwrap().is_empty());
+        assert!(state.allowance_slot_exists_anywhere("paired").unwrap());
+        assert!(!state.allowance_slot_exists_anywhere("elsewhere").unwrap());
+        assert_eq!(
+            state.quarantine_counts().unwrap(),
+            BTreeMap::from([
+                ("identity_ambiguous".to_owned(), 1),
+                ("identity_unconfirmed".to_owned(), 1),
+                ("unpaired_identity".to_owned(), 2)
+            ])
+        );
+        state.requarantine("recent", "identity_ambiguous").unwrap();
+        assert_eq!(state.quarantine_counts().unwrap()["identity_ambiguous"], 2);
+
+        // Release moves the row into the binding's slots, dirty, and drops the hold.
+        state.release_quarantined("paired", "binding-a").unwrap();
+        let dirty = state.dirty_allowance_slots("binding-a").unwrap();
+        assert_eq!(dirty.len(), 1);
+        assert_eq!(dirty[0].0, "paired");
+        assert_eq!(state.quarantined_samples().unwrap().len(), 3);
+        assert!(state.allowance_slot_exists_anywhere("paired").unwrap());
+        assert_eq!(
+            state.newest_allowance_observed_at("binding-a").unwrap().as_deref(),
+            Some("2026-09-01T01:00:00Z")
+        );
+        assert_eq!(state.newest_allowance_observed_at("binding-b").unwrap(), None);
+
+        // Pruning keeps a stale row whose stamp still pairs with a binding.
+        let removed = state.prune_quarantine("2026-09-08T00:00:00.000Z", &[hash_b.clone()]).unwrap();
+        assert_eq!(removed, 1, "the unstamped stale row goes; the pairable one and the recent one stay");
+        let held: Vec<String> =
+            state.quarantined_samples().unwrap().into_iter().map(|row| row.slot).collect();
+        assert_eq!(held, vec!["orphan", "recent"]);
+        assert_eq!(state.prune_quarantine("2026-09-08T00:00:00.000Z", &[]).unwrap(), 1);
+        assert_eq!(state.quarantined_samples().unwrap().len(), 1);
     }
 
     #[test]

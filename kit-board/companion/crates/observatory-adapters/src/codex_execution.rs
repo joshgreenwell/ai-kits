@@ -2,7 +2,8 @@
 //! `~/.codex/archived_sessions` (or a configured home) as hourly buckets and, at
 //! `requests` detail, request records; plus the embedded `rate_limits` of each
 //! `token_count` as `allowance.reading` with reader `embedded` and meter key
-//! `<limit_id>:<minutes>`.
+//! `<limit_id>:<minutes>`. The `allowance` capability row reports the embedded
+//! reader (a fallback while an unimplemented reader is selected).
 
 use observatory_contract::settings::{CodexReader, DetailLevel};
 use observatory_contract::{
@@ -12,7 +13,7 @@ use observatory_core::adapter::{Adapter, AdapterError, Cursor, Outcome, Prefligh
 
 use crate::agents::record_from_event as agent_record_from_event;
 use crate::jsonl::{expand_user, scan};
-use crate::readings::emit_dirty_slots;
+use crate::readings::{codex_allowance_capability, emit_dirty_slots};
 use crate::requests::{
     EvidenceSummary, ToolEvidenceSummary, execution_capabilities, request_from_event,
     request_matches_agent_setting,
@@ -62,6 +63,7 @@ impl Adapter for CodexExecution {
         let mut tool_evidence = ToolEvidenceSummary::default();
         let mut resource_evidence = ResourceEvidenceSummary::for_run(ctx);
         let mut history_has_parse_gaps = false;
+        let mut newest_embedded: Option<String> = None;
         for binding in ctx.bindings_for(Provider::Codex).filter(|binding| binding.runnable()) {
             let metrics = scan(&state, ctx, binding, Provider::Codex, "codex_cli", include_subagents)?;
             outcome.files += metrics.files;
@@ -88,6 +90,11 @@ impl Adapter for CodexExecution {
                     self.parser_version(),
                     sink,
                 )?;
+                if let Some(observed) = state.newest_allowance_observed_at(binding.binding_id.as_str())?
+                    && newest_embedded.as_deref().is_none_or(|newest| newest < observed.as_str())
+                {
+                    newest_embedded = Some(observed);
+                }
             }
             if ctx.settings.execution.detail_level != DetailLevel::BucketsOnly {
                 let tool_events = state.tool_events(binding.binding_id.as_str())?;
@@ -171,6 +178,12 @@ impl Adapter for CodexExecution {
             evidence,
             tool_evidence,
             resource_evidence,
+            Some(codex_allowance_capability(
+                ctx.settings.allowance.codex_reader,
+                newest_embedded.as_deref(),
+                ctx.now_seconds,
+                ctx.settings.cadence_minutes.get(),
+            )),
         ));
         Ok(outcome)
     }

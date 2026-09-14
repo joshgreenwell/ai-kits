@@ -1,7 +1,9 @@
 //! The Claude Code statusline command. Reads the statusline JSON on stdin,
-//! appends allowance samples to the local inbox, prints the same one-line
-//! summary `statusline.py` prints, and always exits 0, printing `Claude` on
-//! any failure. No network, no SQLite, about a millisecond.
+//! stamps each allowance sample with the signed-in account's identity hash
+//! (from the Claude config file, cached by `stat`), writes a part file to the
+//! local inbox only when a reading changed or the heartbeat is due, prints the
+//! same one-line summary `statusline.py` prints, and always exits 0, printing
+//! `Claude` on any failure. No network, no SQLite, about a millisecond.
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -10,8 +12,10 @@ use std::process::{Command, ExitCode, Stdio};
 use jiff::Timestamp;
 use observatory_core::config::CompanionConfig;
 use observatory_core::inbox::{
-    record_statusline_status, samples_from_statusline, summary_line, write_statusline_samples,
+    IDENTITY_CACHE, StatuslineWrite, cached_claude_identity, record_statusline_status,
+    samples_from_statusline, summary_line, write_statusline_samples,
 };
+use observatory_core::paths::claude_config_file;
 use serde_json::Value;
 
 use crate::cli::StatuslineArgs;
@@ -73,13 +77,21 @@ pub fn statusline(dir: &Path, args: StatuslineArgs) -> ExitCode {
         return ExitCode::SUCCESS;
     };
     let now = Timestamp::now();
-    let samples = samples_from_statusline(&data, now);
+    let mut samples = samples_from_statusline(&data, now);
     let (inbox, passthrough) = inbox_path(dir, &args);
+    let mut written = StatuslineWrite::default();
     if !samples.is_empty() {
-        let _ = write_statusline_samples(&inbox, &samples, now);
+        // The stamp is the account signed in at observation, so the run can bind the
+        // reading to its own binding whichever account is signed in by then.
+        let identity =
+            claude_config_file().and_then(|file| cached_claude_identity(&dir.join(IDENTITY_CACHE), &file));
+        for sample in &mut samples {
+            sample.identity_hash = identity.clone();
+        }
+        written = write_statusline_samples(&inbox, &samples, now).unwrap_or_default();
     }
     // Diagnostics must never cost a real reading.
-    let _ = record_statusline_status(&inbox, &data, &samples, now);
+    let _ = record_statusline_status(&inbox, &data, &written.samples, now);
     let line = passthrough
         .and_then(|command| run_passthrough(&command, &input))
         .unwrap_or_else(|| summary_line(&samples));

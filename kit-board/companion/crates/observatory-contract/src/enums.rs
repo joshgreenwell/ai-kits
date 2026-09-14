@@ -257,6 +257,7 @@ string_enum! {
         Agent = "agent",
         Tool = "tool",
         Resource = "resource",
+        Allowance = "allowance",
     }
 }
 

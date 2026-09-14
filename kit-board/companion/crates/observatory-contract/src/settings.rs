@@ -351,8 +351,10 @@ impl CollectionSettings {
             Adapter::CursorExecution => {
                 (self.execution.cursor_local_state, "execution.cursor_local_state".to_owned())
             }
+            // The statusline reader (passive) and the OAuth reader (active, unimplemented) both
+            // belong to the account adapter; only `off` disables it.
             Adapter::ClaudeAccount => (
-                self.allowance.claude_reader == ClaudeReader::OauthUsage,
+                self.allowance.claude_reader != ClaudeReader::Off,
                 format!("allowance.claude_reader.{}", self.allowance.claude_reader),
             ),
             Adapter::CodexAccount => (
@@ -418,7 +420,11 @@ mod tests {
     fn gates_and_denies() {
         let settings = CollectionSettings::defaults();
         assert!(settings.gate(Adapter::ClaudeExecution).enabled);
-        assert!(!settings.gate(Adapter::ClaudeAccount).enabled);
+        assert!(settings.gate(Adapter::ClaudeAccount).enabled);
+        assert_eq!(settings.gate(Adapter::ClaudeAccount).mode_path, "allowance.claude_reader.statusline");
+        let mut reader_off = CollectionSettings::defaults();
+        reader_off.allowance.claude_reader = ClaudeReader::Off;
+        assert!(!reader_off.gate(Adapter::ClaudeAccount).enabled);
         assert!(settings.gate(Adapter::CodexAccount).enabled);
         assert!(!settings.gate(Adapter::CursorExecution).enabled);
         assert!(!settings.gate(Adapter::CursorExecution).provider_enabled);

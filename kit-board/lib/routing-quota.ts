@@ -1,3 +1,5 @@
+import { DEFAULT_CADENCE_MINUTES, readingFreshness, staleAfterMinutes } from './allowance-freshness';
+
 export type QuotaWindowState = {
   sample_id: string;
   window_key: string;
@@ -9,15 +11,18 @@ export type QuotaWindowState = {
   window_minutes: number | null;
   age_seconds: number | null;
   state: 'usable' | 'insufficient' | 'stale' | 'discontinuous';
+  stale_reason: 'age' | 'expired' | null;
   pace: { points_per_hour: number; projected_used_percent: number | null; exhaustion_at: string | null } | null;
   source_id: string;
   source_last_seen_at: string | null;
   source_age_seconds: number | null;
+  // Collector contact is reported beside the reading verdict, never folded into `state`.
+  collector_stale: boolean;
 };
 
 export type QuotaRow = {
   id: string; source_id: string; window_key: string; label: string; observed_at: string; used_percent: number;
-  resets_at: string; window_minutes: number; source_last_seen_at: string | null;
+  resets_at: string; window_minutes: number; source_last_seen_at: string | null; cadence_minutes?: number;
 };
 
 export function quotaWindowState(rows: QuotaRow[], now = Date.now()): QuotaWindowState | undefined {
@@ -34,10 +39,13 @@ export function quotaWindowState(rows: QuotaRow[], now = Date.now()): QuotaWindo
   if (!valid) return { sample_id: current.id, window_key: current.window_key, label: current.label, observed_at: current.observed_at,
     used_percent: Number.isFinite(usedPercent) ? usedPercent : null, remaining_percent: Number.isFinite(usedPercent) ? 100 - usedPercent : null,
     resets_at: current.resets_at, window_minutes: Number.isSafeInteger(windowMinutes) ? windowMinutes : null, age_seconds: null,
-    state: 'insufficient', pace: null, source_id: current.source_id, source_last_seen_at: current.source_last_seen_at, source_age_seconds: null };
+    state: 'insufficient', stale_reason: null, pace: null, source_id: current.source_id, source_last_seen_at: current.source_last_seen_at,
+    source_age_seconds: null, collector_stale: false };
+  const cadenceMinutes = current.cadence_minutes ?? DEFAULT_CADENCE_MINUTES;
+  const freshness = readingFreshness({ observedAt, resetsAt: resetAt, now, cadenceMinutes });
   const ageSeconds = Math.max(0, Math.floor((now - observedAt) / 1000));
   const sourceAgeSeconds = sourceSeenAt === null ? null : Math.max(0, Math.floor((now - sourceSeenAt) / 1000));
-  const stale = ageSeconds > 7_200 || resetAt <= now || (sourceAgeSeconds !== null && sourceAgeSeconds > 7_200);
+  const collectorStale = sourceAgeSeconds !== null && sourceAgeSeconds > staleAfterMinutes(cadenceMinutes) * 60;
   const previous = rows[1];
   const previousAt = previous ? Date.parse(previous.observed_at) : null;
   const previousUsed = previous ? Number(previous.used_percent) : null;
@@ -45,7 +53,7 @@ export function quotaWindowState(rows: QuotaRow[], now = Date.now()): QuotaWindo
     !Number.isFinite(previousAt) || !Number.isFinite(previousUsed) || previous.resets_at !== current.resets_at || previous.window_minutes !== current.window_minutes ||
     previousUsed! > usedPercent || (previousAt === observedAt && previousUsed !== usedPercent) || observedAt - previousAt! > 3 * 3_600_000
   );
-  const state: QuotaWindowState['state'] = stale ? 'stale' : discontinuous ? 'discontinuous' : 'usable';
+  const state: QuotaWindowState['state'] = freshness.stale ? 'stale' : discontinuous ? 'discontinuous' : 'usable';
   let pace: QuotaWindowState['pace'] = null;
   if (state === 'usable' && previous) {
     const elapsedHours = (observedAt - previousAt!) / 3_600_000;
@@ -55,6 +63,6 @@ export function quotaWindowState(rows: QuotaRow[], now = Date.now()): QuotaWindo
   }
   return { sample_id: current.id, window_key: current.window_key, label: current.label, observed_at: current.observed_at,
     used_percent: usedPercent, remaining_percent: 100 - usedPercent, resets_at: current.resets_at,
-    window_minutes: windowMinutes, age_seconds: ageSeconds, state, pace, source_id: current.source_id,
-    source_last_seen_at: current.source_last_seen_at, source_age_seconds: sourceAgeSeconds };
+    window_minutes: windowMinutes, age_seconds: ageSeconds, state, stale_reason: freshness.reason, pace, source_id: current.source_id,
+    source_last_seen_at: current.source_last_seen_at, source_age_seconds: sourceAgeSeconds, collector_stale: collectorStale };
 }

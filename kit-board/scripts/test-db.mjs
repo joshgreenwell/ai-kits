@@ -16,6 +16,7 @@ const port = String(55440 + Math.floor(Math.random() * 100));
 const databaseName = 'personal_hub_test';
 const usageDetailMigration = '20260913230451_extend_usage_detail_contract.sql';
 const knowledgeSourceMigration = '20260914003000_knowledge_source_registry.sql';
+const allowanceBasisMigration = '20260914010000_allowance_basis_and_run_counts.sql';
 
 async function seedUsageDetailUpgradeFixture(db) {
   // Synthetic row accepted by the original bucket schema. Its reasoning count is
@@ -96,6 +97,29 @@ async function seedKnowledgeSourceUpgradeFixture(db) {
   `);
 }
 
+async function seedAllowanceBasisUpgradeFixture(db) {
+  // A percent reading and a run accepted before the readings ledger kept `basis` and runs
+  // counted uploads per type. The migration must surface the reading as reported through
+  // the recreated view and leave the run's per-type counts empty rather than invented.
+  await db.unsafe(`
+    INSERT INTO personal_hub.allowance_readings
+      (id, account_id, binding_id, provider, adapter, reader, meter_key, label, kind,
+       value, unit, capacity, window_minutes, window_started_at, resets_at, raw_window_id,
+       observed_at, received_at, content_hash)
+      VALUES ('00000000-0000-4000-8000-000000000350', 'migration-upgrade-legacy',
+        '00000000-0000-4000-8000-000000000303', 'claude', 'claude_execution', 'statusline',
+        'five_hour', 'Claude · 5h', 'percent_used', 30, 'percent', NULL, 300, NULL,
+        '2026-09-01T05:00:00Z', 'five_hour', '2026-09-01T01:06:00Z', '2026-09-01T01:07:00Z',
+        repeat('5', 64));
+    INSERT INTO personal_hub.companion_runs
+      (id, install_id, run_id, started_at, finished_at, companion_version, settings_version,
+       coverage, accepted_buckets, accepted_records, rejected_records, received_at)
+      VALUES ('00000000-0000-4000-8000-000000000351', '00000000-0000-4000-8000-000000000302',
+        '00000000-0000-4000-8000-000000000352', '2026-09-01T01:05:00Z', '2026-09-01T01:07:00Z',
+        '1.0.0', 1, '[]'::jsonb, 0, 1, 0, '2026-09-01T01:07:00Z');
+  `);
+}
+
 async function onPath(file) {
   try { await run(process.platform === 'win32' ? 'where' : 'which', [file]); return true; } catch { return false; }
 }
@@ -162,6 +186,7 @@ try {
   for (const migration of migrations) {
     if (migration === usageDetailMigration) await seedUsageDetailUpgradeFixture(db);
     if (migration === knowledgeSourceMigration) await seedKnowledgeSourceUpgradeFixture(db);
+    if (migration === allowanceBasisMigration) await seedAllowanceBasisUpgradeFixture(db);
     await db.file(join(root, 'supabase/migrations', migration));
   }
   await db.end({ timeout: 1 });

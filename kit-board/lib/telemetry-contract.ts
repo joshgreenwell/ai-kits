@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DEFAULT_CADENCE_MINUTES, readingFreshness } from './allowance-freshness';
 
 const counter = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const stamp = z.iso.datetime({ offset: true }).refine(v => Date.parse(v) <= Date.now() + 300_000, 'Observation is in the future');
@@ -117,14 +118,17 @@ function percentile(values: number[], fraction: number) {
   return ordered[Math.round((ordered.length - 1) * fraction)];
 }
 
-/** Provider allowance forecasts stay in percentage points, never inferred from token counts. */
-export function quotaPace(samples: QuotaSample[], now = Date.now()) {
+/**
+ * Provider allowance forecasts stay in percentage points, never inferred from token counts.
+ * Staleness is the shared reading rule at the source's collection cadence (lib/allowance-freshness.ts).
+ */
+export function quotaPace(samples: QuotaSample[], now = Date.now(), cadenceMinutes = DEFAULT_CADENCE_MINUTES) {
   const ordered = [...samples].sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
   const latest = ordered.at(-1);
   if (!latest) return null;
   const observed = Date.parse(latest.observed_at), reset = Date.parse(latest.resets_at);
-  const ageMinutes = Math.max(0, (now - observed) / 60_000);
-  const stale = ageMinutes > 120 || reset <= now;
+  const freshness = readingFreshness({ observedAt: observed, resetsAt: reset, now, cadenceMinutes });
+  const { ageMinutes, stale } = freshness;
   // Changing reset anchors, a decrease, or a long collection gap starts a new segment.
   const segment = [latest];
   for (let i = ordered.length - 2; i >= 0; i--) {
@@ -141,7 +145,8 @@ export function quotaPace(samples: QuotaSample[], now = Date.now()) {
   // Anchor a forecast to the observation, not the page view time.
   const exhaustion = rate !== null && rate > 0 ? observed + remaining / rate * 3_600_000 : null;
   const projectedUsedPercent = rate === null ? null : latest.used_percent + rate * hoursLeft;
-  return { ...latest, ageMinutes, stale, remaining, samples: segment.length, measuredHours: hours,
+  return { ...latest, ageMinutes, stale, staleReason: freshness.reason, staleAfterMinutes: freshness.staleAfterMinutes,
+    remaining, samples: segment.length, measuredHours: hours,
     history: segment, projectedUsedPercent,
     pointsPerHour: rate, sustainablePointsPerDay: !stale && hoursLeft > 0 ? remaining / hoursLeft * 24 : null,
     exhaustionAt: exhaustion ? new Date(exhaustion).toISOString() : null,
@@ -149,11 +154,11 @@ export function quotaPace(samples: QuotaSample[], now = Date.now()) {
 }
 
 /** Seed a new reset window with recent completed-cycle pace, then yield to live evidence. */
-export function quotaOutlook(samples: QuotaSample[], now = Date.now()) {
+export function quotaOutlook(samples: QuotaSample[], now = Date.now(), cadenceMinutes = DEFAULT_CADENCE_MINUTES) {
   const cycles = quotaCycles(samples, now);
   const active = [...cycles].reverse().find(cycle => !cycle.completed) ?? cycles.at(-1);
   if (!active) return null;
-  const current = quotaPace(active.samples, now);
+  const current = quotaPace(active.samples, now, cadenceMinutes);
   if (!current) return null;
 
   const comparable = cycles

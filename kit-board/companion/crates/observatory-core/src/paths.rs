@@ -74,8 +74,26 @@ pub fn claude_projects_root() -> Option<PathBuf> {
 }
 
 /// Claude Code's top-level config, which names the signed-in account (no secret).
+/// Resolved in order: `OBSERVATORY_CLAUDE_CONFIG_FILE` (a test and override seam),
+/// `$CLAUDE_CONFIG_DIR/.claude.json` (a Claude Code profile; the statusline hook
+/// inherits the variable from the session that runs it), then `~/.claude.json`.
 pub fn claude_config_file() -> Option<PathBuf> {
+    if let Some(file) = std::env::var_os("OBSERVATORY_CLAUDE_CONFIG_FILE") {
+        return Some(PathBuf::from(file));
+    }
+    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+        return Some(PathBuf::from(dir).join(".claude.json"));
+    }
     home_dir().map(|home| home.join(".claude.json"))
+}
+
+/// Claude Code's settings file, where `setup` installs the statusline hook:
+/// `$CLAUDE_CONFIG_DIR/settings.json` under a profile, else `~/.claude/settings.json`.
+pub fn claude_settings_file() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+        return Some(PathBuf::from(dir).join("settings.json"));
+    }
+    home_dir().map(|home| home.join(".claude").join("settings.json"))
 }
 
 /// Claude Code's file-based OAuth store (Windows and Linux; macOS uses the Keychain).

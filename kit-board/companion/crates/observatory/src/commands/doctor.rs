@@ -1,18 +1,22 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use observatory_adapters::readings::{HookStatus, hook_status};
 use observatory_contract::settings::DetailLevel;
 use observatory_core::adapter::Preflight;
 use observatory_core::config::LocalResource;
 use observatory_core::credentials::CredentialPresence;
 use observatory_core::discovery::discover;
 use observatory_core::effective::effective;
+use observatory_core::inbox::read_statusline_status;
 use observatory_core::resources::resource_attribution_denied;
 use observatory_core::run::{RunOptions, prepare};
 use observatory_core::service;
-use serde_json::json;
+use observatory_core::state::State;
+use serde_json::{Value, json};
 
 use super::{CommandResult, print_json};
+use crate::cli::DoctorArgs;
 
 /// Why knowledge-source rows would or would not leave this machine, in the
 /// order the adapters' `resource` capability reports it: the detail level
@@ -33,11 +37,39 @@ fn resource_attribution_reason(
     }
 }
 
+/// The Claude statusline reader as `doctor` shows it: whether the hook in the
+/// Claude settings file names this configuration directory (or which other one),
+/// whether the sidecar shows it executing, and what the run holds in quarantine.
+/// Directories only; never a transcript path or a sample.
+fn statusline_report(ctx: &observatory_core::adapter::RunContext) -> Value {
+    let hook = hook_status(&ctx.claude_settings_path, &ctx.config_dir);
+    let hook_config_dir = match &hook {
+        HookStatus::Installed => Some(ctx.config_dir.to_string_lossy().into_owned()),
+        HookStatus::ConfigDirMismatch { config_dir } => Some(config_dir.clone()),
+        HookStatus::NotInstalled => None,
+    };
+    let sidecar = read_statusline_status(&ctx.statusline_inbox);
+    let quarantined = State::open_read_only(&ctx.state_path)
+        .and_then(|state| state.quarantine_counts())
+        .unwrap_or_default();
+    json!({
+        "hook": hook.as_str(),
+        "hook_config_dir": hook_config_dir,
+        "sidecar_present": sidecar.is_some(),
+        "last_invocation_at": sidecar.as_ref().and_then(|s| s.last_invocation_at.clone()),
+        "invocations": sidecar.as_ref().map(|s| s.invocations),
+        "offered_windows_ever": sidecar.as_ref().and_then(|s| s.offered_windows_ever.clone()),
+        "last_published_at": sidecar.as_ref().and_then(|s| s.last_published_at.clone()),
+        "quarantined": quarantined,
+    })
+}
+
 /// Effective mode and reason per adapter; prerequisite and credential checks
 /// reported as coverage states. Prints booleans and codes, never a token or a
-/// path outside the configuration directory.
-pub fn doctor(dir: &Path) -> CommandResult {
-    let options = RunOptions { dry_run: true, fetch_config: true, ..RunOptions::default() };
+/// path outside the configuration directory. `--offline` reads the cached
+/// config document instead of fetching it, like `run --offline`.
+pub fn doctor(dir: &Path, args: DoctorArgs) -> CommandResult {
+    let options = RunOptions { dry_run: true, fetch_config: !args.offline, ..RunOptions::default() };
     let prepared = prepare(dir, &options, false)?;
     let ctx = &prepared.ctx;
     let adapters = observatory_adapters::adapters();
@@ -106,6 +138,7 @@ pub fn doctor(dir: &Path) -> CommandResult {
         },
         "bindings": bindings,
         "adapters": rows,
+        "claude_statusline": statusline_report(ctx),
         "schedule": service::status(&prepared.config.install_id).ok(),
         "v1_schedules": service::v1_schedules(),
     }));

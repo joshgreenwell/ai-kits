@@ -4,7 +4,7 @@ Living document. Updated September 14, 2026.
 
 **Capability and roadmap reference, not a production status report.** Start with [the current-system audit](usage-system.md) for what is enabled and receiving data. Production currently uses `buckets_only` and project attribution `off`: the request ledger is empty. The tables below describe supported collection when enabled or clearly marked future work. V1 removal is separate in [the retirement runbook](usage-v1-retirement.md).
 
-The implementation in `companion/crates/observatory-adapters/src/stubs.rs` takes precedence over proposed paths below: Claude OAuth, Codex app-server/web-backend, both Cursor readers, and both Admin API readers are stubs. The v2 browser collector is also unimplemented. A setting, discovered store, or binding is not a working collector.
+The implementation in `companion/crates/observatory-adapters/src/stubs.rs` takes precedence over proposed paths below: Claude OAuth, Codex app-server/web-backend, both Cursor readers, and both Admin API readers are stubs. The v2 browser collector is also unimplemented. A setting, discovered store, or binding is not a working collector. The `claude_account` adapter is the exception to its own name: its OAuth reader is still a stub, but the adapter itself now runs the Claude statusline allowance reader (`companion/crates/observatory-adapters/src/claude_account.rs`), and selecting `oauth_usage` falls back to that reader rather than collecting nothing.
 
 This page says, per provider and surface, which usage facts the Observatory records, which it cannot, and which process produces each fact. Setup steps live in [usage collection](usage-collection.md), the operating map in [agent handoff](agent-handoff.md), and the wire contract in `lib/usage-contract.ts`. Update this page whenever a collector, a setting, or a provider capability changes: change the matrix cell, then the process section it points to, then the date above.
 
@@ -62,14 +62,16 @@ The Claude and Codex desktop apps write the same local transcript stores as thei
 
 | Meter | Reader | Per account | Per project | Process |
 | --- | --- | --- | --- | --- |
-| Claude five-hour and seven-day windows, Pro or Max | statusline JSON; OAuth endpoint reader planned | Yes | Planned: each statusline sample carries `workspace.project_dir` beside `rate_limits`, so the change between two samples can be attributed to the one project active in between | P3 |
+| Claude five-hour and seven-day windows, Pro or Max | statusline JSON read by the `claude_account` adapter, bound to an account by the identity stamped when the hook observed the sample; OAuth endpoint reader planned | Yes, per confirmed binding; an unattributable sample is held, never assigned to the first binding | Planned: each statusline sample carries `workspace.project_dir` beside `rate_limits`, so the change between two samples can be attributed to the one project active in between | P3 |
 | Claude spend limit behind an apps gateway | statusline | n/a for personal accounts | n/a | P3 |
-| Codex five-hour and weekly windows | `rate_limits` embedded in each `token_count`; app-server reader planned | Yes | Planned by the same delta method; the rollout carries `cwd` | P4 |
+| Codex five-hour and weekly windows | `rate_limits` embedded in each `token_count`, read by `codex_execution`; app-server reader planned | Yes | Planned by the same delta method; the rollout carries `cwd` | P4 |
 | Codex cloud tasks | none locally | shared with the meters above | No | P6 |
 | Cursor plan usage | hosted usage summary | Planned | No | P9 |
-| Claude.ai and ChatGPT in a browser | browser extension | Yes for Claude, planned for ChatGPT | No | P7 |
+| Claude.ai and ChatGPT in a browser | browser extension (v1) | Yes for Claude, planned for ChatGPT | No | P7 |
 
 Every provider meters per account. Nothing per project comes from a provider; the per-project rows are derived locally and stay in percentage points. They are never converted to tokens and never summed across windows.
+
+Attainable refresh differs per reader and is what freshness is judged against: the statusline observes on every Claude Code render while a session is in use and writes on a changed value or every fifteen minutes; the Codex embedded reader observes on each rollout write; both upload at the collection cadence. The v1 browser reader runs an hourly alarm and reads through a signed-in `claude.ai` tab open in that browser profile, posting an empty sample set when the usage it reaches cannot be parsed and nothing at all when no such tab exists. A reading is stale when its age exceeds `max(120, 2 × cadence_minutes + 15)` minutes or its own window has already reset; the companion's `no_recent_samples` capability detail uses the same formula. The current reading per account and meter is the newest observation among readers this system recognizes (`statusline`, `embedded`, `web_backend`), an exact tie decided in that order; an unrecognized reader never wins. A coverage-only receipt advances collector contact and never the meter.
 
 ## Table 4. Agent attribution by source
 
@@ -147,10 +149,11 @@ Setting: `execution.project_attribution` in Usage → Settings, `off` by default
 
 ### P3. Claude statusline inbox
 
-`observatory statusline` reads the JSON Claude Code passes to the statusline command and appends the `rate_limits` windows to a local inbox; the next run turns them into `allowance.reading` records with reader `statusline` and meter keys `five_hour` and `seven_day`.
+`observatory statusline` reads the JSON Claude Code passes to the statusline command and appends the `rate_limits` windows to a local inbox; the next run turns them into `allowance.reading` records with reader `statusline` and meter keys `five_hour` and `seven_day`. Since USG-009 the reader lives in the `claude_account` adapter (parser version `2.0.0+statusline1`, channel `hook_snapshot`), which also reports the Claude `allowance` capability row; `claude_execution` no longer touches the inbox.
 
 - The windows appear only for Pro and Max sign-ins, and only after the first API response of a session.
-- The inbox is machine-wide and is attributed to the install's first Claude binding.
+- The inbox is machine-wide, so each sample carries an identity stamp instead: the hash of the account named by the Claude config file the session used (`OBSERVATORY_CLAUDE_CONFIG_FILE`, else `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`), read only when the file's `stat` changed and cached beside the configuration. The run binds a stamped sample to the enabled Claude binding whose confirmed hash equals the stamp, whichever account is signed in by then. A sample that matches several such bindings, none of them, or no confirmed binding at all when it carries no stamp is held in a local quarantine (`identity_ambiguous`, `unpaired_identity`, `identity_unconfirmed`), re-evaluated on every run, and pruned after `max(local_raw_retention_days, 7)` days unless its stamp still pairs with an enabled binding. Held samples are never emitted and never assigned to the first binding.
+- The hook writes one part file per changed reading rather than one file per UTC hour, on a changed `(used_percent, resets_at)` or every fifteen minutes, so concurrent sessions never overwrite each other and an idle meter still proves the hook runs. The run prunes the inbox after the adapters, retention `max(local_raw_retention_days, 2)` days, even when the reader is denied.
 - The receiver deliberately keeps no `cwd`, session id, transcript path, or prompt today.
 - Planned: when project attribution is `hashed`, keep `sha256(["project", workspace.project_dir])` on each sample and, at read time only, attribute the change between two consecutive samples to a project when exactly one project was active in between. Samples with more than one active project, a reset between them, or a gap longer than the window stay unattributed. This needs a nullable `project_hash` on `allowance.reading` in the contract, so it is a contract change with schema regeneration, migration, and fixtures.
 
@@ -160,6 +163,7 @@ Each Codex `token_count` event embeds the account's `rate_limits` (`primary` and
 
 - The rollout that carries the reading also carries `cwd`, so the per-project delta method of P3 applies once the contract field exists.
 - Local turns and cloud tasks draw from the same five-hour bucket. A meter that drops with no local activity is cloud or another-device usage; the Observatory reports it as unattributed account usage and never allocates it.
+- `codex_execution` reports the Codex `allowance` capability row beside its request rows: `reader_off` when the reader is off, `reader_fallback_embedded` while the unimplemented `app_server` or `web_backend` reader is selected, and otherwise `complete`, with `no_recent_samples` when the newest embedded reading is past the freshness threshold. The reading is a by-product of the rollout scan, so the embedded meter is only as fresh as the last Codex turn on this machine.
 
 ### P5. Claude Code cloud sessions
 
@@ -178,6 +182,8 @@ No local rollout is written. Individual ChatGPT plan users see plan usage in set
 ### P7. Browser adapters
 
 `claude_browser`, `codex_browser`, and `cursor_browser` read the allowance meters of a signed-in web app through the browser extension and submit `allowance.reading` records only: never tokens, never money, never a project. The Claude extension exists and is quota-only by design; the Codex and Cursor readers are planned.
+
+The extension in service today is the v1 one. It runs an hourly alarm and reads Claude's own account and usage endpoints inside a signed-in `claude.ai` tab that must be open in that browser profile; with no such tab it posts nothing, and usage it cannot parse becomes an empty sample set. Its samples reach the live cards through the compatibility view with reader `v1`, judged at the default cadence. An empty post advances the source's last contact and nothing else, so Connections reports each browser source's last contact, its newest observation, and when that observation was received as three separate facts.
 
 ### P8. Provider Admin APIs
 

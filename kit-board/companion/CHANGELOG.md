@@ -21,6 +21,38 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
   `resources_configured`, `resources_invalid`, `obsidian_config_found`,
   `resource_attribution_effective`, and `resource_attribution_reason`; the execution parser version
   moves to `+v1.1.0-detail5`, so retained transcripts replay once.
+- Allowance coverage: `CapabilityDimension` gains `allowance` and the per-adapter maximum rises from
+  seven capability rows to eight. Envelope v2 has no runtime negotiation, so the server and the
+  `20260914010000_allowance_basis_and_run_counts.sql` migration must be deployed before a companion
+  that reports the row is installed.
+- The Claude statusline allowance reader moved from `claude_execution` into `claude_account`
+  (parser version `2.0.0+statusline1`, channel `hook_snapshot`, reader `statusline`; record ids
+  unchanged). `allowance.claude_reader` now gates that adapter, `off` being the only value that stops
+  it; mode `oauth_usage` keeps the statusline reader running as the documented fallback and reports
+  `partial` / `not_implemented`. The local deny entry `allowance.claude_reader.statusline`, or a
+  dotted prefix, removes the reader in either mode and holds queued statusline readings on the machine.
+  `codex_execution` reports the Codex embedded row.
+- Allowance identity: `observatory statusline` stamps each sample with the account signed in when it
+  observed the reading, resolving the Claude config file as `OBSERVATORY_CLAUDE_CONFIG_FILE`, then
+  `$CLAUDE_CONFIG_DIR/.claude.json`, then `~/.claude.json`, and caching its evidence by `stat` in
+  `claude-identity-cache.json`. The run binds a stamped sample to the binding holding that hash,
+  whichever account is signed in by then, and holds what it cannot attribute in the schema-8
+  `allowance_quarantine` table as `identity_ambiguous`, `identity_unconfirmed`, or `unpaired_identity`
+  rather than assigning it to the install's first Claude binding. Held rows are re-evaluated every run,
+  released only to a binding that can own them, and pruned after `max(local_raw_retention_days, 7)`
+  days unless their stamp still pairs with an enabled binding. The run also skips confirming an
+  identity a sibling binding already holds, or that two enabled unconfirmed siblings could both claim.
+- The statusline hook writes one part file per changed reading
+  (`<inbox>/<YYYY-MM-DDTHH>-<observed microseconds>.json`) instead of overwriting an hour file, on a
+  changed `(used_percent, resets_at)` or every fifteen minutes, with the kept state
+  `claude-statusline-latest.json` and the sidecar (now carrying `last_offered_at` and
+  `offered_windows_ever`; `published_windows` means written this invocation) beside the inbox. The run
+  prunes the inbox after the adapters, retention `max(local_raw_retention_days, 2)` days, even when the
+  reader is denied. `setup` installs the hook into `$CLAUDE_CONFIG_DIR/settings.json` when that
+  variable is set.
+- `doctor` gains a `claude_statusline` block (hook state and the configuration directory it names,
+  sidecar presence and counters, held samples by reason) and an `--offline` flag mirroring
+  `run --offline`.
 
 ### 2.0.0 (phase 1: core)
 

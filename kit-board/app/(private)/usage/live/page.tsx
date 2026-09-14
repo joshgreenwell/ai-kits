@@ -9,10 +9,16 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EmptyState, SparkBars, Stat, StatGroup } from '@/components/kit';
-import { Choice, tokens, useLiveData, when } from '@/components/telemetry-shared';
+import { Choice, tokens, useLiveData, when, type LiveData } from '@/components/telemetry-shared';
 import { isSparkWindow, quotaOutlook, tokenPace } from '@/lib/telemetry-contract';
+import { DEFAULT_CADENCE_MINUTES } from '@/lib/allowance-freshness';
 import { AllowanceCard } from '@/components/allowance-card';
 import { ModelUsageHistory } from '@/components/model-usage-history';
+
+// /api/usage-live reports each source's effective collection cadence and each reading's source,
+// so a card is judged stale at the cadence of the collector that produced its newest reading.
+type LiveSource = LiveData['sources'][number];
+type LiveQuota = LiveData['quotas'][number];
 
 function SectionHeading({ id, number, title, description, action }: { id: string; number: string; title: string; description: string; action?: ReactNode }) {
   return (
@@ -44,9 +50,13 @@ export default function LiveUsage() {
   const bars = [...chart]; const max = Math.max(1, ...chart.values());
   const projected = pace.tokensPerHour * 24;
   const windows = useMemo(() => data?.accounts.filter(a => account === 'all' || a.id === account).flatMap(a => {
-    const samples = data.quotas.filter(q => q.account_id === a.id);
+    const cadenceBySource = new Map((data.sources as LiveSource[]).map(s => [s.id, s.cadence_minutes ?? DEFAULT_CADENCE_MINUTES]));
+    const samples = (data.quotas as LiveQuota[]).filter(q => q.account_id === a.id);
     return [...new Set(samples.map(q => q.window_key))].flatMap(key => {
-      const pace = quotaOutlook(samples.filter(q => q.window_key === key), now);
+      const rows = samples.filter(q => q.window_key === key);
+      const newest = rows.reduce((best, row) => (Date.parse(row.observed_at) > Date.parse(best.observed_at) ? row : best), rows[0]);
+      const cadence = (newest.source_id && cadenceBySource.get(newest.source_id)) || DEFAULT_CADENCE_MINUTES;
+      const pace = quotaOutlook(rows, now, cadence);
       return pace ? [{ account: a, pace }] : [];
     });
   }) ?? [], [account, data, now]);

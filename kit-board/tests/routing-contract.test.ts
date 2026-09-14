@@ -52,6 +52,14 @@ test('quota state preserves missing pace, resets, and stale source observations'
   assert.equal(quotaWindowState([quota('2026-09-10T18:00:00Z', 5, '2026-09-12T19:00:00Z'), quota('2026-09-10T17:00:00Z', 90)], now)?.state, 'discontinuous');
   assert.equal(quotaWindowState([quota('2026-09-10T18:00:00Z', 50), quota('2026-09-10T18:00:00Z', 40)], now)?.state, 'discontinuous');
   assert.equal(quotaWindowState([quota('2026-09-10T15:00:00Z', 40)], now)?.state, 'stale');
+  assert.equal(quotaWindowState([quota('2026-09-10T15:00:00Z', 40)], now)?.stale_reason, 'age');
+  assert.equal(quotaWindowState([quota('2026-09-10T16:46:00Z', 40)], now)?.state, 'usable', 'the reading rule allows two cadences plus fifteen minutes');
+  assert.equal(quotaWindowState([{ ...quota('2026-09-10T16:46:00Z', 40), cadence_minutes: 15 }], now)?.state, 'stale', 'a faster cadence expects a fresher reading');
+  assert.equal(quotaWindowState([quota('2026-09-10T18:00:00Z', 40, '2026-09-10T18:30:00Z')], now)?.stale_reason, 'expired');
+  // Collector contact is reported beside the reading verdict and never decides it.
+  const quietCollector = quotaWindowState([{ ...quota('2026-09-10T18:00:00Z', 40), source_last_seen_at: '2026-09-10T12:00:00Z' }], now);
+  assert.deepEqual([quietCollector?.state, quietCollector?.collector_stale], ['usable', true]);
+  assert.equal(fresh?.collector_stale, false);
   assert.equal(quotaWindowState([{ ...quota('not-a-date', 40) }], now)?.state, 'insufficient');
   assert.equal(quotaWindowState([{ ...quota('2026-09-10T18:00:00Z', Number.NaN) }], now)?.state, 'insufficient');
   assert.equal(quotaWindowState([{ ...quota('2026-09-10T18:00:00Z', 40), window_minutes: 0 }], now)?.state, 'insufficient');

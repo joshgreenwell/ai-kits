@@ -423,6 +423,7 @@ def valid_envelopes() -> dict[str, dict]:
                     {"dimension": "agent", "state": "complete", "detail_code": None},
                     {"dimension": "tool", "state": "complete", "detail_code": None},
                     {"dimension": "resource", "state": "partial", "detail_code": "indirect_access_unknown"},
+                    {"dimension": "allowance", "state": "complete", "detail_code": "no_recent_samples"},
                 ])]},
     }
 

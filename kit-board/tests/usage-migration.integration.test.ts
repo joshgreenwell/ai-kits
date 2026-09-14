@@ -80,6 +80,46 @@ maybe('usage detail migration preserves legacy bucket evidence and enforces new 
       ['unassigned', true, 'unassigned', false],
       'only rows classified under the latest configuration count as current',
     );
+    // Allowance basis and per-type run counts: a reading accepted before the column existed is
+    // reported as provider-reported through the recreated view, which keeps invoker rights.
+    const [legacyReading] = await sql`
+      SELECT r.basis AS raw_basis, v.basis AS view_basis, v.reader, v.origin
+      FROM personal_hub.allowance_readings r
+      JOIN personal_hub.allowance_percent_view v ON v.id = r.id
+      WHERE r.id = '00000000-0000-4000-8000-000000000350'
+    `;
+    assert.deepEqual(
+      [legacyReading.raw_basis, legacyReading.view_basis, legacyReading.reader, legacyReading.origin],
+      ['reported', 'reported', 'statusline', 'allowance_readings'],
+      'a reading retained before the basis column is reported, on the ledger and through the view',
+    );
+    const [viewOptions] = await sql`
+      SELECT reloptions @> '{security_invoker=true}'::text[] AS invoker
+      FROM pg_class WHERE oid = 'personal_hub.allowance_percent_view'::regclass
+    `;
+    assert.equal(viewOptions.invoker, true, 'replacing the view restates security_invoker');
+    const [legacyRun] = await sql`
+      SELECT accepted_by_type FROM personal_hub.companion_runs
+      WHERE id = '00000000-0000-4000-8000-000000000351'
+    `;
+    assert.deepEqual(legacyRun.accepted_by_type, {}, 'a run accepted before per-type counts existed reports none rather than invented ones');
+    await assert.rejects(
+      sql`INSERT INTO personal_hub.allowance_readings
+        (id, account_id, binding_id, provider, adapter, reader, meter_key, label, kind,
+         value, unit, window_minutes, resets_at, observed_at, basis, content_hash)
+        VALUES ('00000000-0000-4000-8000-000000000353', ${accountId}, ${bindingId},
+          'claude', 'claude_account', 'statusline', 'five_hour', 'Claude · 5h', 'percent_used',
+          30, 'percent', 300, '2026-09-01T09:00:00Z', '2026-09-01T08:00:00Z', 'guessed', ${'e'.repeat(64)})`,
+      /allowance_readings_basis_check/,
+      'basis is a closed set',
+    );
+    const indexes = await sql`
+      SELECT indexname FROM pg_indexes WHERE schemaname = 'personal_hub'
+        AND indexname IN ('allowance_readings_binding_recent', 'activity_requests_binding_recent')
+      ORDER BY indexname
+    `;
+    assert.deepEqual(indexes.map(row => row.indexname), ['activity_requests_binding_recent', 'allowance_readings_binding_recent']);
+
     await assert.rejects(
       sql`ALTER TABLE personal_hub.account_usage_buckets
         VALIDATE CONSTRAINT account_usage_buckets_reasoning_subset_check`,

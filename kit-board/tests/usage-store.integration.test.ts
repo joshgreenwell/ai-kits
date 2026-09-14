@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import postgres from 'postgres';
-import { stableJson } from '../lib/contracts';
+import { RequestError, stableJson } from '../lib/contracts';
+import { telemetrySchema } from '../lib/telemetry-contract';
 import { usageEnvelopeSchema, type UsageEnvelope } from '../lib/usage-contract';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -42,6 +43,8 @@ const providerBucket = (binding_id: string, pricing?: Record<string, unknown>) =
 const reading = (binding_id: string, adapter: string, channel: string, reader: string, observed_at = '2026-09-02T03:20:00.000Z', value = 30) => ({ ...header(adapter, channel, binding_id, observed_at), basis: 'reported',
   record_type: 'allowance.reading', meter_key: 'five_hour', label: 'Claude · 5h', kind: 'percent_used', value, unit: 'percent', capacity: null, window_minutes: 300,
   window_started_at: null, resets_at: '2026-09-02T05:00:00.000Z', reader, raw_window_id: 'five_hour' });
+const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+const inHours = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
 const bucket = { session_hash: sha('sess'), hour: '2026-09-02T02:00:00.000Z', model: 'claude-opus-4-1', input_tokens: 5, cached_tokens: 20, cache_write_tokens: 8, output_tokens: 24, total_tokens: 57, calls: 2 };
 const coverage = (adapter: string, state = 'ok', detail_code: string | null = null) => ({ adapter, state, detail_code, stores_discovered: 1, files: 1, bytes_read: 10, records_emitted: 1,
   malformed: 0, rejected_by_server: 0, duration_ms: 5, cursor_state: 'complete', probe_requests: 0, parser_version: '2.0.0' });
@@ -434,6 +437,160 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     const reconciled = await store.reconcile(account, '2026-09-01T00:00:00Z', '2026-09-03T00:00:00Z');
     assert.equal(reconciled.covered_requests.requests, 11, 'revisions of one request are one covered request');
     assert.equal(reconciled.unattributed.total, 150 - (155 + 0 + 9 * 150), 'reported account usage stays independent from covered request revisions');
+
+    // Each binding reports the newest evidence in its ledgers separately from collector contact.
+    const claudeBinding = mine.bindings.find(b => b.id === bindingId)!, codexBinding = mine.bindings.find(b => b.id === codexId)!;
+    assert.deepEqual(claudeBinding.last_observation, { allowance: null, requests: '2026-09-02T03:20:00.000Z' });
+    assert.deepEqual(claudeBinding.last_received, { allowance: null });
+    assert.deepEqual(codexBinding.last_observation, { allowance: { observed_at: '2026-09-02T03:20:00.000Z', resets_at: '2026-09-02T05:00:00.000Z', reader: 'embedded' }, requests: null });
+    assert.ok(codexBinding.last_received.allowance, 'the newest receipt of a reading is reported beside its observation');
+    assert.equal(mine.cadence_minutes, 60);
+    assert.equal(mine.last_run_at, mine.latest_run!.finished_at);
+    assert.deepEqual(mine.accepted_by_type, mine.latest_run!.accepted_by_type);
+    assert.equal(mine.latest_run!.accepted_by_type['activity.request'].accepted, 1, 'the latest run counts its accepted uploads per type');
+
+    // The bodies of one run merge their per-type counts key-wise, including records that failed to parse.
+    const sharedRun = run();
+    const laterReading = reading(codexId, 'codex_execution', 'local_file', 'embedded', '2026-09-02T03:40:00.000Z', 35);
+    const foreignReading = reading(randomUUID(), 'codex_execution', 'local_file', 'embedded', '2026-09-02T03:41:00.000Z');
+    const bodyOne = await store.ingestUsage(current, envelope({ run: sharedRun, records: [laterReading, foreignReading] }), [{ record_id: randomUUID(), reason: 'invalid' }]);
+    assert.deepEqual([bodyOne.accepted.records, bodyOne.rejected.length], [1, 2]);
+    const bodyTwo = await store.ingestUsage(current, envelope({ run: sharedRun, records: [laterReading, request(bindingId, 'claude_execution', 'run-two')] }));
+    assert.deepEqual([bodyTwo.accepted.records, bodyTwo.duplicates], [1, 1]);
+    const [mergedRun] = await sql`SELECT accepted_by_type, accepted_records, rejected_records FROM personal_hub.companion_runs WHERE run_id = ${sharedRun.run_id}`;
+    assert.deepEqual(mergedRun.accepted_by_type, {
+      'allowance.reading': { accepted: 1, duplicate: 1, rejected: 1 },
+      'activity.request': { accepted: 1, duplicate: 0, rejected: 0 },
+      invalid: { accepted: 0, duplicate: 0, rejected: 1 },
+    }, 'two bodies of one run sum per type');
+    assert.deepEqual([Number(mergedRun.accepted_records), Number(mergedRun.rejected_records)], [2, 2]);
+
+    // A coverage-only receipt advances collector contact and nothing else: ledgers and observations stay put.
+    await sql`UPDATE personal_hub.telemetry_sources SET last_seen_at = '2026-09-02T04:00:00Z' WHERE id = ${codexBinding.source_id}`;
+    await sql`UPDATE personal_hub.companion_installs SET last_seen_at = '2026-09-02T04:00:00Z' WHERE id = ${install.id}`;
+    const ledgerCount = async () => Number((await sql`SELECT
+        (SELECT count(*) FROM personal_hub.allowance_readings WHERE account_id IN (${account}, ${codexAccount}))
+        + (SELECT count(*) FROM personal_hub.activity_requests WHERE account_id = ${account}) AS rows`)[0].rows);
+    const ledgerBefore = await ledgerCount();
+    const coverageOnly = await store.ingestUsage(current, envelope({ coverage: [coverage('codex_execution'), coverage('claude_execution')] }));
+    assert.deepEqual([coverageOnly.accepted, coverageOnly.duplicates], [{ buckets: 0, records: 0 }, 0]);
+    assert.equal(await ledgerCount(), ledgerBefore, 'a coverage-only envelope writes no ledger rows');
+    const afterCoverage = (await store.listInstalls()).installs.find(i => i.id === install.id)!;
+    const codexAfter = afterCoverage.bindings.find(b => b.id === codexId)!;
+    assert.deepEqual(codexAfter.last_observation.allowance, { observed_at: '2026-09-02T03:40:00.000Z', resets_at: '2026-09-02T05:00:00.000Z', reader: 'embedded' },
+      'the newest observation is the reading accepted before the coverage-only receipt');
+    assert.ok(Date.parse(codexAfter.last_seen_at!) > Date.parse('2026-09-02T04:00:00Z'), 'collector contact still advances');
+    assert.ok(Date.parse(afterCoverage.last_seen_at!) > Date.parse('2026-09-02T04:00:00Z'));
+
+    // The current reading per meter: newest observation among supported readers, ties by reader rank, unknown readers never winning.
+    const weekly = (reader: string, observed_at: string, value: number, basis = 'reported') => ({ ...reading(bindingId, 'claude_execution', 'hook_snapshot', reader, observed_at, value),
+      basis, meter_key: 'seven_day', label: reader === 'web_backend' ? 'Weekly · all models' : 'Claude · weekly', window_minutes: 10080, resets_at: inHours(2), raw_window_id: 'seven_day' });
+    const tieAt = minutesAgo(125);
+    const selection = await store.ingestUsage(current, envelope({ records: [
+      weekly('embedded', minutesAgo(130), 39), weekly('statusline', tieAt, 40, 'exact'), weekly('web_backend', tieAt, 41, 'estimated'), weekly('oauth_usage', minutesAgo(100), 60)] }));
+    assert.equal(selection.accepted.records, 4);
+    const currentMeter = (dashboard: Awaited<ReturnType<typeof store.usageDashboard>>) =>
+      (dashboard.allowance as Record<string, unknown>[]).find(row => row.account_id === account && row.meter_key === 'seven_day')!;
+    const chosen = currentMeter(await store.usageDashboard());
+    assert.deepEqual([chosen.reader, chosen.value, chosen.basis, chosen.observed_at, chosen.raw_window_id, chosen.label, chosen.cadence_minutes, chosen.stale, chosen.stale_reason],
+      ['statusline', 40, 'exact', tieAt, 'seven_day', 'Claude · weekly', 60, false, null],
+      'an exact tie falls to reader rank, a newer unknown reader never wins, and 125 minutes is fresh at cadence 60');
+    assert.equal(chosen.age_minutes, 125);
+    const [storedBasis] = await sql`SELECT basis FROM personal_hub.allowance_readings WHERE account_id = ${account} AND meter_key = 'seven_day' AND reader = 'web_backend'`;
+    assert.equal(storedBasis.basis, 'estimated', 'the readings ledger keeps the wire basis');
+    assert.deepEqual((await sql`SELECT reader, basis FROM personal_hub.allowance_percent_view WHERE account_id = ${account} AND window_key = 'seven_day' ORDER BY reader`).map(r => [r.reader, r.basis]),
+      [['embedded', 'reported'], ['oauth_usage', 'reported'], ['statusline', 'exact'], ['web_backend', 'estimated']], 'the compatibility view exposes basis');
+    await store.updateInstall({ id: install.id, action: 'override', settings: { cadence_minutes: 15 } });
+    const faster = currentMeter(await store.usageDashboard());
+    assert.deepEqual([faster.reader, faster.cadence_minutes, faster.stale, faster.stale_reason], ['statusline', 15, true, 'age'],
+      'the same reading is stale once the install collects every fifteen minutes');
+    assert.equal((await store.listInstalls()).installs.find(i => i.id === install.id)!.cadence_minutes, 15);
+
+    // Recency beats rank: a strictly newer reading from a lower-ranked supported reader is current with its own label
+    // and basis, and the statusline is current again only once it is the newest. Ingestion leaves the thirty-second
+    // dashboard cache alone, so each read re-applies the override to invalidate it first.
+    const readDashboard = async () => { await store.updateInstall({ id: install.id, action: 'override', settings: { cadence_minutes: 15 } }); return store.usageDashboard(); };
+    const newerWeb = minutesAgo(90);
+    assert.equal((await store.ingestUsage(current, envelope({ records: [weekly('web_backend', newerWeb, 45, 'estimated')] }))).accepted.records, 1);
+    const web = currentMeter(await readDashboard());
+    assert.deepEqual([web.reader, web.value, web.basis, web.observed_at, web.label, web.raw_window_id, web.stale, web.stale_reason],
+      ['web_backend', 45, 'estimated', newerWeb, 'Weekly · all models', 'seven_day', false, null], 'a strictly newer lower-ranked supported reading wins with its own label and basis');
+    const newerStatusline = minutesAgo(80);
+    assert.equal((await store.ingestUsage(current, envelope({ records: [weekly('statusline', newerStatusline, 46, 'exact')] }))).accepted.records, 1);
+    const back = currentMeter(await readDashboard());
+    assert.deepEqual([back.reader, back.value, back.basis, back.observed_at, back.label], ['statusline', 46, 'exact', newerStatusline, 'Claude · weekly'],
+      'the statusline is current again by recency once the web reading is the older one');
+
+    // Overlapping meters of one account are separate rows: the five-hour and weekly windows of the Claude account, and the
+    // Codex Spark weekly window beside the Codex primary window, each keep the producer's label, raw window id, and length.
+    const meter = (binding_id: string, adapter: string, reader: string, meter_key: string, label: string, window_minutes: number, raw_window_id: string, value: number, resets_at: string) =>
+      ({ ...reading(binding_id, adapter, adapter === 'codex_execution' ? 'local_file' : 'hook_snapshot', reader, minutesAgo(10), value), meter_key, label, window_minutes, raw_window_id, resets_at });
+    const overlapping = await store.ingestUsage(current, envelope({ records: [
+      meter(bindingId, 'claude_execution', 'statusline', 'five_hour', 'Claude · 5h', 300, 'five_hour', 20, inHours(3)),
+      meter(bindingId, 'claude_execution', 'statusline', 'seven_day', 'Claude · weekly', 10080, 'seven_day', 47, inHours(100)),
+      meter(codexId, 'codex_execution', 'embedded', 'codex_spark:10080', 'Codex Spark · weekly', 10080, 'secondary', 12, inHours(100)),
+    ] }));
+    assert.equal(overlapping.accepted.records, 3);
+    const currentRows = (await readDashboard()).allowance as Record<string, unknown>[];
+    const meters = (id: string) => currentRows.filter(row => row.account_id === id).map(row => [row.meter_key, row.label, row.raw_window_id, row.window_minutes, row.value, row.reader]).sort();
+    assert.deepEqual(meters(account), [
+      ['five_hour', 'Claude · 5h', 'five_hour', 300, 20, 'statusline'],
+      ['seven_day', 'Claude · weekly', 'seven_day', 10080, 47, 'statusline'],
+    ], 'one current row per meter key, with the producer label, raw window id, and window length intact');
+    assert.deepEqual(meters(codexAccount), [
+      ['codex_spark:10080', 'Codex Spark · weekly', 'secondary', 10080, 12, 'embedded'],
+      ['five_hour', 'Claude · 5h', 'five_hour', 300, 35, 'embedded'],
+    ], 'the Spark window is its own meter beside the primary window');
+    const viewMeters = async (id: string) => (await sql`SELECT DISTINCT ON (window_key) window_key, label, window_minutes, used_percent FROM personal_hub.allowance_percent_view
+      WHERE account_id = ${id} ORDER BY window_key, observed_at DESC`).map(r => [r.window_key, r.label, Number(r.window_minutes), Number(r.used_percent)]);
+    assert.deepEqual(await viewMeters(account), [['five_hour', 'Claude · 5h', 300, 20], ['seven_day', 'Claude · weekly', 10080, 47]], 'the compatibility view keeps overlapping windows apart');
+    assert.deepEqual(await viewMeters(codexAccount), [['codex_spark:10080', 'Codex Spark · weekly', 10080, 12], ['five_hour', 'Claude · 5h', 300, 35]]);
+
+    // One identity binds once per install and provider: a sibling binding cannot claim a hash already held.
+    const siblingAccount = `claude-${randomUUID().slice(0, 8)}`;
+    const sibling = (await store.createBinding(current, { account_id: siblingAccount, provider: 'claude', account_label: 'Claude sibling', identity_hash: null })).binding.binding_id;
+    await assert.rejects(store.confirmIdentity(current, sibling, { identity_hash: sha('identity-2') }),
+      (error: unknown) => error instanceof RequestError && error.status === 409 && /identity_taken/.test(error.message),
+      'the hash the first Claude binding holds is refused with its own reason');
+    assert.equal((await sql`SELECT identity_hash FROM personal_hub.companion_bindings WHERE id = ${sibling}`)[0].identity_hash, null);
+    assert.equal((await store.confirmIdentity(current, sibling, { identity_hash: sha('identity-sibling') })).identity_hash, sha('identity-sibling'));
+
+    // A duplicate that predates the refusal is disclosed on every binding that shares its hash with an enabled sibling,
+    // so the Observatory can say which binding to re-confirm; a distinct hash clears the flag.
+    const duplicates = async () => Object.fromEntries((await store.listInstalls()).installs.flatMap(i => i.bindings.map(b => [b.id, b.duplicate_identity] as const)));
+    await sql`UPDATE personal_hub.companion_bindings SET identity_hash = ${sha('identity-2')} WHERE id = ${sibling}`;
+    const seeded = await duplicates();
+    assert.deepEqual([seeded[bindingId], seeded[sibling], seeded[codexId], seeded[secondBinding]], [true, true, false, false],
+      'both Claude bindings of the install share the hash; another provider and another install do not');
+    await store.updateInstall({ id: install.id, action: 'binding_disable', binding_id: sibling });
+    const oneDisabled = await duplicates();
+    assert.deepEqual([oneDisabled[bindingId], oneDisabled[sibling]], [false, true], 'only an enabled sibling makes a binding ambiguous');
+    await store.updateInstall({ id: install.id, action: 'binding_enable', binding_id: sibling });
+    await sql`UPDATE personal_hub.companion_bindings SET identity_hash = ${sha('identity-sibling')} WHERE id = ${sibling}`;
+    const distinct = await duplicates();
+    assert.deepEqual([distinct[bindingId], distinct[sibling]], [false, false]);
+
+    // The browser reader: an empty post is contact, not a reading.
+    const { createTelemetryStore } = await import('../lib/telemetry-store');
+    const telemetry = createTelemetryStore(() => sql);
+    const browserKey = randomBytes(32).toString('base64url'), browserSourceId = randomUUID();
+    await sql`INSERT INTO personal_hub.telemetry_sources (id, account_id, machine_label, mode, key_hash) VALUES (${browserSourceId}, ${account}, 'Chrome · test', 'browser', ${sha(browserKey)})`;
+    const browserSource = await telemetry.telemetrySource(bearer(browserKey));
+    assert.deepEqual([browserSource.id, browserSource.mode, browserSource.provider], [browserSourceId, 'browser', 'claude']);
+    const post = (quotas: unknown[]) => telemetrySchema.parse({ schema_version: 1, observed_at: '2026-09-02T06:00:00Z', buckets: [], quotas, coverage: { collector_version: 'browser-1.0.0' } });
+    const sample = { window_key: 'five_hour', label: '5-hour allowance', observed_at: '2026-09-02T06:00:00Z', used_percent: 12, resets_at: '2026-09-02T08:00:00Z', window_minutes: 300 };
+    assert.equal((await telemetry.ingestBrowserQuotas(browserSource, post([sample]))).quotas, 1);
+    await assert.rejects(telemetry.ingestBrowserQuotas(browserSource, telemetrySchema.parse({ ...post([]), buckets: [bucket] })), /quota readings only/);
+    const browserConnection = async () => (await telemetry.browserConnections()).sources.find(s => s.id === browserSourceId)!;
+    const withReading = await browserConnection();
+    assert.equal(withReading.last_observation, '2026-09-02T06:00:00.000Z');
+    assert.ok(withReading.last_received && withReading.last_seen_at);
+    await sql`UPDATE personal_hub.telemetry_sources SET last_seen_at = '2026-09-02T06:30:00Z' WHERE id = ${browserSourceId}`;
+    assert.deepEqual((await telemetry.ingestBrowserQuotas(browserSource, post([]))).quotas, 0);
+    const afterEmpty = await browserConnection();
+    assert.ok(Date.parse(afterEmpty.last_seen_at!) > Date.parse('2026-09-02T06:30:00Z'), 'an empty post advances last contact');
+    assert.deepEqual([afterEmpty.last_observation, afterEmpty.last_received], [withReading.last_observation, withReading.last_received], 'but never the reading');
+    assert.equal((await telemetry.browserConnections()).cadence_minutes, 60, 'the extension reads hourly');
 
     // The release check keeps the previous value on failure and stores a semver on success.
     const failing = await store.syncCompanionRelease((async () => { throw new TypeError('offline'); }) as unknown as typeof fetch);

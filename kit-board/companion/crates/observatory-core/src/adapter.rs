@@ -41,6 +41,11 @@ pub struct BindingContext {
     pub enabled: bool,
     pub identity_hash: Option<Sha256Hex>,
     pub identity: IdentityState,
+    /// Whether the run saw a real identity conflict for this binding: a 409 on
+    /// confirmation, a roots-pin drift, or a server hash withdrawn after being
+    /// set. A local mismatch alone (another account signed in now) is `Changed`
+    /// without conflict, so readings stamped with this binding's hash still bind.
+    pub identity_conflict: bool,
     /// Claude transcript roots or Codex session roots, resolved.
     pub roots: Vec<PathBuf>,
     pub codex_home: Option<PathBuf>,
@@ -79,6 +84,9 @@ pub struct RunContext {
     pub statusline_inbox: PathBuf,
     /// Where tool hook receivers append their snapshots.
     pub hook_inbox: PathBuf,
+    /// Claude Code's settings file, read for the installed `statusLine.command`
+    /// (never written by a run). Defaults to the profile's file; tests inject one.
+    pub claude_settings_path: PathBuf,
     pub dry_run: bool,
     pub deadline: Instant,
     cancel: Arc<AtomicBool>,
@@ -102,6 +110,8 @@ impl RunContext {
         budget: Duration,
     ) -> Self {
         let hook_inbox = config_dir.join("inbox").join("hooks");
+        let claude_settings_path = crate::paths::claude_settings_file()
+            .unwrap_or_else(|| config_dir.join("claude-settings-unavailable.json"));
         RunContext {
             now,
             now_seconds: now.as_microsecond() as f64 / 1e6,
@@ -117,6 +127,7 @@ impl RunContext {
             state_path,
             statusline_inbox,
             hook_inbox,
+            claude_settings_path,
             dry_run,
             deadline: Instant::now() + budget,
             cancel: Arc::new(AtomicBool::new(false)),
@@ -127,6 +138,13 @@ impl RunContext {
     /// the validated `companion.json` entries here.
     pub fn with_resources(mut self, resources: ResourceConfiguration) -> Self {
         self.resources = resources;
+        self
+    }
+
+    /// The Claude settings file to read the statusline hook from; tests point
+    /// it at a synthetic file so the hook status never depends on the machine.
+    pub fn with_claude_settings_path(mut self, path: PathBuf) -> Self {
+        self.claude_settings_path = path;
         self
     }
 

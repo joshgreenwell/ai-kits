@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { countdown, when } from '@/components/telemetry-shared';
 import { Stat, StatGroup } from '@/components/kit';
 import { quotaOutlook } from '@/lib/telemetry-contract';
+import { meterLabel } from '@/lib/allowance-meters';
 import { cn } from 'cn';
 
 type Pace = NonNullable<ReturnType<typeof quotaOutlook>>;
@@ -98,16 +99,22 @@ export function AllowanceCard({ account, pace: p, now }: { account: { label: str
   const projected = p.projectedUsedPercent;
   const over = projected !== null && projected > 100;
   const hourly = p.window_minutes < 1440;
-  // Rows from the compatibility view carry the reader that produced the number.
+  // Rows from the compatibility view carry the reader and basis that produced the number.
   const reader = (p as { reader?: string }).reader;
+  const basis = (p as { basis?: string }).basis;
   // A weekly window scoped to one model: capped separately, and that model's use also counts toward the shared weekly window.
   const scoped = p.window_key.startsWith('seven_day_');
   const rateUnit = hourly ? 'hour' : 'day';
+  // The title is canonical per meter key so a reader switch never renames the card; the reading keeps its own label.
+  const title = meterLabel(p.window_key, p.label);
+  const staleText = p.staleReason === 'expired'
+    ? 'This window has reset; a reading from the new window is needed to resume the forecast.'
+    : `The last reading is ${Math.round(p.ageMinutes)} minutes old (stale after ${p.staleAfterMinutes}); a fresh reading is needed to resume the forecast.`;
 
   const verdict =
     projected === null
       ? p.stale
-        ? 'A fresh allowance reading is needed to resume the forecast.'
+        ? staleText
         : 'At least 30 minutes of readings in this reset window are needed.'
       : p.remaining === 0
         ? 'This allowance is fully used. Waiting for the next reset.'
@@ -118,8 +125,8 @@ export function AllowanceCard({ account, pace: p, now }: { account: { label: str
   return (
     <Card className={cn('gap-4 overflow-hidden py-0', over && 'border-destructive/45')}>
       <CardHeader className="p-4">
-        <CardDescription>{account.label} · {p.completedCycles} completed {p.completedCycles === 1 ? 'cycle' : 'cycles'} in view{reader && reader !== 'v1' ? ` · via ${reader}` : ''}</CardDescription>
-        <CardTitle className="text-base">{p.label}</CardTitle>
+        <CardDescription>{account.label} · {p.completedCycles} completed {p.completedCycles === 1 ? 'cycle' : 'cycles'} in view{reader && reader !== 'v1' ? ` · via ${reader}` : ''}{basis && basis !== 'reported' ? ` · ${basis}` : ''}</CardDescription>
+        <CardTitle className="text-base">{title}</CardTitle>
         <CardAction>
           <span className="flex flex-wrap justify-end gap-1.5">
             {scoped && <Badge variant="soft-info">model-scoped weekly</Badge>}
@@ -138,7 +145,7 @@ export function AllowanceCard({ account, pace: p, now }: { account: { label: str
           </p>
           <div
             role="meter"
-            aria-label={`${account.label} ${p.label} usage`}
+            aria-label={`${account.label} ${title} usage`}
             aria-valuenow={p.used_percent}
             aria-valuemin={0}
             aria-valuemax={100}
@@ -208,7 +215,7 @@ export function AllowanceCard({ account, pace: p, now }: { account: { label: str
                 : p.forecastSource === 'current_window'
                   ? 'The forecast uses continuous history from this window.'
                   : p.forecastSource === 'stale'
-                    ? 'The latest reading is stale, so the active projection is paused.'
+                    ? `The latest reading is stale (${p.staleReason === 'expired' ? 'its window has reset' : 'older than the collection cadence allows'}), so the active projection is paused.`
                     : 'No comparable completed cycle or usable live segment is available yet.'}
             {scoped ? ' This window is capped for one model; that model’s use also counts toward the shared weekly window.' : ''}
             {' '}Resets, decreases and gaps over 3h restart live history. Above 100% shows demand

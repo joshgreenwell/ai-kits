@@ -118,7 +118,7 @@ pub fn dispatch(cli: Cli) -> CommandResult {
         Command::Status => status::status(&dir),
         Command::Projects => projects::projects(&dir),
         Command::Resources(args) => resources::resources(&dir, args),
-        Command::Doctor => doctor::doctor(&dir),
+        Command::Doctor(args) => doctor::doctor(&dir, args),
         Command::Settings(args) => settings::settings(&dir, args),
         Command::Version => {
             println!("{}", observatory_core::VERSION);

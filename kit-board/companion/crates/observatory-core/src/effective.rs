@@ -87,17 +87,22 @@ pub fn effective(
             mode_path,
         );
     }
-    if bindings
-        .iter()
-        .filter(|binding| binding.enabled)
-        .all(|binding| binding.identity == IdentityState::Changed)
-    {
-        return Effective::blocked(
-            adapter,
-            CoverageState::IdentityChanged,
-            DetailCode::IdentityChanged,
-            mode_path,
-        );
+    let enabled = bindings.iter().filter(|binding| binding.enabled);
+    if enabled.clone().all(|binding| binding.identity == IdentityState::Changed) {
+        // The statusline reader binds each sample by the identity stamped when it was
+        // observed, so a Claude binding whose local evidence merely differs today (another
+        // account signed in) still receives its own readings; only a real conflict
+        // (a 409, a roots-pin drift, a withdrawn hash) keeps the account adapter off.
+        let stamped_reader_can_bind =
+            adapter == Adapter::ClaudeAccount && enabled.clone().any(|binding| !binding.identity_conflict);
+        if !stamped_reader_can_bind {
+            return Effective::blocked(
+                adapter,
+                CoverageState::IdentityChanged,
+                DetailCode::IdentityChanged,
+                mode_path,
+            );
+        }
     }
     Effective { adapter, runs: true, state: CoverageState::Ok, detail: None, mode_path }
 }
@@ -116,6 +121,7 @@ mod tests {
             enabled,
             identity_hash: None,
             identity,
+            identity_conflict: false,
             roots: vec![],
             codex_home: None,
             cursor_state_db: None,
@@ -140,8 +146,20 @@ mod tests {
         let e = effective(Adapter::CodexExecution, &settings, &[], std::slice::from_ref(&claude));
         assert_eq!((e.state, e.detail), (CoverageState::PrerequisiteMissing, Some(DetailCode::NoBinding)));
 
+        // The account adapter runs the statusline reader by default; `off` is the only mode off.
         let e = effective(Adapter::ClaudeAccount, &settings, &[], std::slice::from_ref(&claude));
+        assert!(e.runs);
+        let mut reader_off = CollectionSettings::defaults();
+        reader_off.allowance.claude_reader = observatory_contract::settings::ClaudeReader::Off;
+        let e = effective(Adapter::ClaudeAccount, &reader_off, &[], std::slice::from_ref(&claude));
         assert_eq!((e.state, e.detail), (CoverageState::DisabledBySetting, Some(DetailCode::ModeOff)));
+        let e = effective(
+            Adapter::ClaudeAccount,
+            &settings,
+            &["allowance.claude_reader".into()],
+            std::slice::from_ref(&claude),
+        );
+        assert_eq!((e.state, e.detail), (CoverageState::DeniedLocally, Some(DetailCode::Denied)));
 
         let e = effective(
             Adapter::CursorExecution,
@@ -163,6 +181,18 @@ mod tests {
 
         let changed = binding(Provider::Claude, true, IdentityState::Changed);
         let e = effective(Adapter::ClaudeExecution, &settings, &[], std::slice::from_ref(&changed));
+        assert_eq!((e.state, e.detail), (CoverageState::IdentityChanged, Some(DetailCode::IdentityChanged)));
+        // A local mismatch alone (the other account is signed in) keeps the transcript scan
+        // off but lets the account adapter bind the readings stamped with this binding's hash.
+        let e = effective(Adapter::ClaudeAccount, &settings, &[], std::slice::from_ref(&changed));
+        assert!(e.runs, "a switched account is not an identity conflict for the statusline reader");
+        let conflict = BindingContext { identity_conflict: true, ..changed.clone() };
+        let e = effective(Adapter::ClaudeAccount, &settings, &[], std::slice::from_ref(&conflict));
+        assert_eq!((e.state, e.detail), (CoverageState::IdentityChanged, Some(DetailCode::IdentityChanged)));
+        let e = effective(Adapter::ClaudeAccount, &settings, &[], &[conflict.clone(), changed.clone()]);
+        assert!(e.runs, "one binding without conflict is enough");
+        let disabled_only = BindingContext { enabled: false, ..changed.clone() };
+        let e = effective(Adapter::ClaudeAccount, &settings, &[], &[conflict, disabled_only]);
         assert_eq!((e.state, e.detail), (CoverageState::IdentityChanged, Some(DetailCode::IdentityChanged)));
 
         let mut paused = CollectionSettings::defaults();

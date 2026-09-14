@@ -71,8 +71,8 @@ impl AdapterCoverage {
         let Some(capabilities) = &self.capabilities else {
             return;
         };
-        if capabilities.len() > 7 {
-            out.push(Violation { path: format!("{path}.capabilities"), rule: "at most 7 capabilities" });
+        if capabilities.len() > 8 {
+            out.push(Violation { path: format!("{path}.capabilities"), rule: "at most 8 capabilities" });
         }
         let mut dimensions = HashSet::new();
         if capabilities.iter().any(|capability| !dimensions.insert(capability.dimension)) {

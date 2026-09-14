@@ -2,15 +2,15 @@ import { requireSameOrigin, requireSession } from '@/lib/auth';
 import { readJson, RequestError } from '@/lib/contracts';
 import { database } from '@/lib/db';
 import { failure, privateHeaders } from '@/lib/http';
+import { telemetryStore } from '@/lib/telemetry-store';
 
 // Browser connections are the last v1 collectors still in service (the quota extension
-// has no v2 replacement yet). Local-script connections stay retired.
+// has no v2 replacement yet). Local-script connections stay retired. Each source reports
+// its last contact separately from the newest reading it observed and delivered.
 export async function GET() {
   try {
     await requireSession();
-    const sources = await database()`SELECT id, account_id, machine_label, disabled, last_seen_at
-      FROM personal_hub.telemetry_sources WHERE mode = 'browser' ORDER BY created_at`;
-    return Response.json({ sources }, { headers: privateHeaders });
+    return Response.json(await telemetryStore.browserConnections(), { headers: privateHeaders });
   } catch (error) { return failure(error); }
 }
 export async function POST(request: Request) {

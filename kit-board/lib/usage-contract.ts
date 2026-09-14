@@ -248,7 +248,7 @@ export const resourceAccessSchema = z.object({ ...header, record_type: z.literal
 }).strict();
 
 export const capabilityCoverageSchema = z.object({
-  dimension: z.enum(['requests','token_composition','pricing','project','agent','tool','resource']),
+  dimension: z.enum(['requests','token_composition','pricing','project','agent','tool','resource','allowance']),
   state: z.enum(['complete','partial','unsupported','disabled_by_setting','unknown']),
   detail_code: code.nullable(),
 }).strict();
@@ -261,7 +261,7 @@ export const adapterCoverageSchema = z.object({
   stores_discovered: counter, files: counter, bytes_read: counter, records_emitted: counter,
   malformed: counter, rejected_by_server: counter, duration_ms: counter,
   cursor_state: z.enum(['complete','more','unknown']), probe_requests: counter, parser_version: z.string().max(30),
-  capabilities: z.array(capabilityCoverageSchema).max(7).optional(),
+  capabilities: z.array(capabilityCoverageSchema).max(8).optional(),
 }).strict().superRefine((coverage, ctx) => {
   const dimensions = coverage.capabilities?.map(capability => capability.dimension) ?? [];
   if (new Set(dimensions).size !== dimensions.length) {

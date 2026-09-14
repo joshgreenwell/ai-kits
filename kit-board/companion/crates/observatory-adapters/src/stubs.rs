@@ -2,12 +2,12 @@
 //! checks). Each reports its prerequisites honestly in `preflight` and, when
 //! asked to collect, reports coverage `failed` with `unrecognized_payload` at
 //! parser version `0`. None of them makes a network request, spawns a process,
-//! or reads a credential.
+//! or reads a credential. The Claude account adapter lives in `claude_account`:
+//! its statusline reader is real, and its OAuth reader reports `not_implemented`.
 
 use observatory_contract::{Adapter as AdapterId, CoverageState, DetailCode, Provider};
 use observatory_core::adapter::{Adapter, AdapterError, Cursor, Outcome, Preflight, RunContext, Sink};
 use observatory_core::config::Secrets;
-use observatory_core::credentials::{CredentialPresence, claude_credential_presence};
 use observatory_core::discovery::find_executable;
 
 const STUB_PARSER_VERSION: &str = "0";
@@ -20,46 +20,6 @@ fn blocked(state: CoverageState, detail: DetailCode) -> Preflight {
 
 fn not_recognized() -> Result<Outcome, AdapterError> {
     Err(AdapterError::Unrecognized)
-}
-
-/// `claude_account`: Claude's private OAuth usage interface. Phase 2.
-#[derive(Debug, Default)]
-pub struct ClaudeAccount;
-
-impl Adapter for ClaudeAccount {
-    fn id(&self) -> AdapterId {
-        AdapterId::ClaudeAccount
-    }
-    fn parser_version(&self) -> &'static str {
-        STUB_PARSER_VERSION
-    }
-    fn preflight(&self, ctx: &RunContext) -> Preflight {
-        if !ctx.bindings_for(Provider::Claude).any(|binding| binding.runnable()) {
-            return blocked(CoverageState::PrerequisiteMissing, DetailCode::NoBinding);
-        }
-        match claude_credential_presence() {
-            CredentialPresence::Present { .. } => {
-                blocked(CoverageState::PrerequisiteMissing, DetailCode::NotImplemented)
-            }
-            CredentialPresence::Expired => {
-                blocked(CoverageState::CredentialUnavailable, DetailCode::CredentialExpired)
-            }
-            CredentialPresence::Missing => {
-                blocked(CoverageState::CredentialUnavailable, DetailCode::CredentialMissing)
-            }
-            CredentialPresence::Unknown => {
-                blocked(CoverageState::CredentialUnavailable, DetailCode::CredentialMissing)
-            }
-        }
-    }
-    fn collect(
-        &self,
-        _ctx: &RunContext,
-        _cursor: Option<Cursor>,
-        _sink: &mut dyn Sink,
-    ) -> Result<Outcome, AdapterError> {
-        not_recognized()
-    }
 }
 
 /// `codex_account`: the Codex app-server protocol client. Phase 2.

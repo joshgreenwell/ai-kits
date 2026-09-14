@@ -13,9 +13,9 @@ use jiff::tz::TimeZone;
 use observatory_contract::IdentityRequest;
 use observatory_contract::settings::{DetailLevel, ProjectAttribution, ToolDetail};
 use observatory_contract::{
-    AdapterCoverage, AgentClass, Arch, BucketEntry, CollectionSettings, ConfigDocument, Counter,
-    CoverageState, CursorState, DetailCode, Envelope, Nullable, Platform, Provider, Record, Run, Sha256Hex,
-    Stamp, Text, ToolClass, Uuid,
+    AdapterCoverage, AgentClass, Arch, BucketEntry, CapabilityCoverage, CollectionSettings, ConfigDocument,
+    Counter, CoverageState, CursorState, DetailCode, Envelope, Nullable, Platform, Provider, Reader, Record,
+    Run, Sha256Hex, Stamp, Text, ToolClass, Uuid,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -27,6 +27,7 @@ use crate::config::{CompanionConfig, ConfigError};
 use crate::discovery;
 use crate::effective::{Effective, effective};
 use crate::http::{Client, ConfigFetch, HttpError};
+use crate::inbox::{prune_statusline_files, statusline_reader_denied};
 use crate::outbox;
 use crate::paths;
 use crate::pyjson::{digest, epoch_text};
@@ -97,6 +98,9 @@ pub struct AdapterSummary {
     pub malformed: u64,
     pub invalid: u64,
     pub duration_ms: u64,
+    /// The per-dimension capability rows the adapter reported, when it ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Vec<CapabilityCoverage>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -165,6 +169,76 @@ pub fn configured_resources(config: &CompanionConfig) -> (ResourceConfiguration,
     }
     let home = paths::home_dir().map(|home| home.to_string_lossy().into_owned());
     (ResourceConfiguration::from_local(&valid, home.as_deref()), skipped)
+}
+
+/// What `prepare` weighs for one binding's identity.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct IdentityEvidence {
+    /// The server's hash after this run's confirmation attempt, if any.
+    server_hash: Option<Sha256Hex>,
+    /// The account this machine's config names now, when readable.
+    local: Option<Sha256Hex>,
+    /// The server hash was set in an earlier run.
+    previously_set: bool,
+    /// The roots pin recorded earlier differs from the current roots.
+    pin_drifted: bool,
+    /// Confirmation answered 409.
+    refused: bool,
+}
+
+/// What the run decided about a binding's identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct IdentityDecision {
+    state: IdentityState,
+    /// A real conflict, as opposed to a local mismatch: a 409, a roots-pin drift
+    /// the server and the machine do not both explain away, or a withdrawn hash.
+    conflict: bool,
+    /// The server and the machine name the same account, so the roots pin may
+    /// follow an edited root set instead of marking the binding `Changed` forever.
+    refresh_pin: bool,
+}
+
+fn decide_identity(evidence: &IdentityEvidence) -> IdentityDecision {
+    let agrees = matches!((&evidence.server_hash, &evidence.local),
+        (Some(server), Some(local)) if server == local);
+    let conflict = evidence.refused
+        || (evidence.pin_drifted && !agrees)
+        || (evidence.server_hash.is_none() && evidence.previously_set);
+    let state = if conflict {
+        IdentityState::Changed
+    } else if evidence.server_hash.is_some() {
+        match (&evidence.server_hash, &evidence.local) {
+            // Another account is signed in now; the binding keeps its own hash and waits.
+            (Some(server), Some(local)) if server != local => IdentityState::Changed,
+            _ => IdentityState::Confirmed,
+        }
+    } else {
+        IdentityState::Unconfirmed
+    };
+    IdentityDecision { state, conflict, refresh_pin: agrees && !conflict }
+}
+
+/// Whether to post the local evidence as a binding's identity: only when the
+/// server holds none for it, no sibling binding of the same provider already
+/// holds that hash, and no enabled sibling is waiting for a hash too. The
+/// Observatory refuses a sibling's hash as `identity_taken`; and with two
+/// enabled bindings both unconfirmed, the evidence is ambiguous between them,
+/// so neither posts it. Skipping the post leaves the binding `Unconfirmed`, and
+/// the allowance reader reports what it cannot tell apart (`identity_ambiguous`
+/// for unstamped samples, `unpaired_identity` for stamped ones). Disabling one
+/// of the bindings in the Observatory leaves one candidate, which then confirms.
+fn should_confirm<'a>(
+    server_hash: Option<&Sha256Hex>,
+    local: Option<&Sha256Hex>,
+    siblings: impl IntoIterator<Item = (bool, Option<&'a Sha256Hex>)>,
+) -> bool {
+    match (server_hash, local) {
+        (None, Some(local)) => !siblings.into_iter().any(|(enabled, hash)| match hash {
+            Some(hash) => hash == local,
+            None => enabled,
+        }),
+        _ => false,
+    }
 }
 
 fn local_identity(binding: &crate::config::LocalBinding) -> Option<Sha256Hex> {
@@ -275,12 +349,19 @@ pub fn prepare(config_dir: &Path, options: &RunOptions, take_lock: bool) -> Resu
             let previous_pin = state.meta(&pin_key)?;
             let evidence = local_identity(&local);
             // A null server hash means the binding was created without evidence or the Observatory
-            // approved a re-confirmation. Either way the install may post what it observes now; a
-            // hash the Observatory has not approved is refused with 409 and pauses the binding.
+            // approved a re-confirmation. Either way the install may post what it observes now,
+            // unless a sibling binding already holds that hash or an enabled sibling has none
+            // either; a hash the Observatory has not approved is refused with 409 and pauses
+            // the binding.
             let mut server_hash = server.identity_hash.clone().into_inner();
-            let mut identity_conflict = false;
-            if server_hash.is_none()
-                && options.fetch_config
+            let mut refused = false;
+            let siblings = document
+                .bindings
+                .iter()
+                .filter(|other| other.binding_id != server.binding_id && other.provider == server.provider)
+                .map(|other| (other.enabled, other.identity_hash.as_ref()));
+            if options.fetch_config
+                && should_confirm(server_hash.as_ref(), evidence.as_ref(), siblings)
                 && let Some(local_hash) = &evidence
                 && let Ok(client) = Client::new(&config.url, Some(config.key.clone()))
             {
@@ -289,29 +370,24 @@ pub fn prepare(config_dir: &Path, options: &RunOptions, take_lock: bool) -> Resu
                     &IdentityRequest { identity_hash: local_hash.clone() },
                 ) {
                     Ok(response) => server_hash = response.identity_hash.into_inner(),
-                    Err(HttpError::Status(409)) => identity_conflict = true,
+                    Err(HttpError::Status(409)) => refused = true,
                     Err(_) => {}
                 }
             }
-            let identity = if identity_conflict || previous_pin.as_deref().is_some_and(|p| p != pin.as_str())
-            {
-                IdentityState::Changed
-            } else if let Some(hash) = &server_hash {
-                match &evidence {
-                    Some(local_hash) if local_hash != hash => IdentityState::Changed,
-                    _ => IdentityState::Confirmed,
-                }
-            } else if state.meta(&format!("identity_hash:{}", local.binding_id))?.is_some() {
+            let hash_key = format!("identity_hash:{}", local.binding_id);
+            let decision = decide_identity(&IdentityEvidence {
+                server_hash: server_hash.clone(),
+                local: evidence,
                 // The server hash is null after having been set and could not be re-confirmed yet.
-                IdentityState::Changed
-            } else {
-                IdentityState::Unconfirmed
-            };
-            if previous_pin.is_none() {
+                previously_set: state.meta(&hash_key)?.is_some(),
+                pin_drifted: previous_pin.as_deref().is_some_and(|p| p != pin.as_str()),
+                refused,
+            });
+            if previous_pin.is_none() || decision.refresh_pin {
                 state.set_meta(&pin_key, pin.as_str())?;
             }
             if let Some(hash) = &server_hash {
-                state.set_meta(&format!("identity_hash:{}", local.binding_id), hash.as_str())?;
+                state.set_meta(&hash_key, hash.as_str())?;
             }
             bindings.push(BindingContext {
                 binding_id: server.binding_id.clone(),
@@ -319,7 +395,8 @@ pub fn prepare(config_dir: &Path, options: &RunOptions, take_lock: bool) -> Resu
                 provider: server.provider,
                 enabled: server.enabled,
                 identity_hash: server_hash.clone(),
-                identity,
+                identity: decision.state,
+                identity_conflict: decision.conflict,
                 roots,
                 codex_home: local.codex_home.clone().or_else(paths::codex_home),
                 cursor_state_db: local.cursor_state_db.clone().or_else(paths::cursor_state_db),
@@ -335,6 +412,7 @@ pub fn prepare(config_dir: &Path, options: &RunOptions, take_lock: bool) -> Resu
                 enabled: true,
                 identity_hash: None,
                 identity: IdentityState::Unconfirmed,
+                identity_conflict: false,
                 roots,
                 codex_home: local.codex_home.clone().or_else(paths::codex_home),
                 cursor_state_db: local.cursor_state_db.clone().or_else(paths::cursor_state_db),
@@ -747,6 +825,15 @@ fn pending_records_for_agent_setting_with_limit(
                     }) {
                         continue;
                     }
+                    // A statusline reading stays home under a deny of the statusline reader even
+                    // while the server selects `oauth_usage`, whose gate names the other reader.
+                    if let Record::AllowanceReading(reading) = &record
+                        && reading.adapter == AdapterId::ClaudeAccount
+                        && reading.reader == Reader::Statusline
+                        && local_policy.is_some_and(|policy| statusline_reader_denied(policy.deny))
+                    {
+                        continue;
+                    }
                     if let Record::ResourceAccess(access) = &record
                         && let Some(policy) = local_policy
                     {
@@ -912,6 +999,17 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
             }
         }
     });
+    // The run prunes the statusline inbox, not the reader, so a blocked or denied
+    // reader never lets the hook's part files accumulate.
+    let inbox_keep_days = ctx.settings.local_raw_retention_days.get().max(2) as i64;
+    let pruned = prune_statusline_files(&ctx.statusline_inbox, ctx.now, inbox_keep_days);
+    if pruned > 0 {
+        tracing::debug!(
+            code = "statusline_inbox_pruned",
+            count = pruned,
+            "old statusline part files removed"
+        );
+    }
 
     // Persist records from every sink, isolating anything invalid.
     let retention_days = ctx.settings.local_raw_retention_days.get();
@@ -1005,6 +1103,7 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
             malformed: entry.malformed.get(),
             invalid,
             duration_ms: entry.duration_ms.get(),
+            capabilities: entry.capabilities.clone(),
         });
         adapter_rows.push(AdapterStateRow {
             adapter: id.as_str().to_owned(),
@@ -1171,6 +1270,147 @@ mod tests {
                 updated_at: updated_at.into(),
             })
             .unwrap();
+    }
+
+    fn hash(fill: char) -> Sha256Hex {
+        Sha256Hex::try_from(std::iter::repeat_n(fill, 64).collect::<String>()).unwrap()
+    }
+
+    #[test]
+    fn identity_decisions_separate_a_switched_account_from_a_conflict() {
+        let confirmed =
+            IdentityEvidence { server_hash: Some(hash('a')), local: Some(hash('a')), ..Default::default() };
+        assert_eq!(
+            decide_identity(&confirmed),
+            IdentityDecision { state: IdentityState::Confirmed, conflict: false, refresh_pin: true }
+        );
+        // Another account signed in: `Changed`, but not a conflict, so stamped readings still bind.
+        let switched = IdentityEvidence { local: Some(hash('b')), ..confirmed.clone() };
+        assert_eq!(
+            decide_identity(&switched),
+            IdentityDecision { state: IdentityState::Changed, conflict: false, refresh_pin: false }
+        );
+        // Unreadable local evidence keeps the server's word.
+        let unreadable = IdentityEvidence { local: None, ..confirmed.clone() };
+        assert_eq!(decide_identity(&unreadable).state, IdentityState::Confirmed);
+        assert!(!decide_identity(&unreadable).refresh_pin);
+        // A roots edit is forgiven while both sides name the same account, and refreshes the pin.
+        let edited = IdentityEvidence { pin_drifted: true, ..confirmed.clone() };
+        assert_eq!(
+            decide_identity(&edited),
+            IdentityDecision { state: IdentityState::Confirmed, conflict: false, refresh_pin: true }
+        );
+        let edited_and_switched = IdentityEvidence { pin_drifted: true, ..switched.clone() };
+        assert_eq!(decide_identity(&edited_and_switched).state, IdentityState::Changed);
+        assert!(decide_identity(&edited_and_switched).conflict);
+        assert!(decide_identity(&IdentityEvidence { pin_drifted: true, ..unreadable }).conflict);
+        // A 409 is a conflict whatever else is true, and no pin moves under a conflict.
+        let refused = IdentityEvidence { refused: true, ..confirmed.clone() };
+        assert_eq!(
+            decide_identity(&refused),
+            IdentityDecision { state: IdentityState::Changed, conflict: true, refresh_pin: false }
+        );
+        // A withdrawn hash (approve_identity in the Observatory) is a conflict until re-confirmed.
+        let withdrawn = IdentityEvidence {
+            server_hash: None,
+            local: Some(hash('a')),
+            previously_set: true,
+            ..Default::default()
+        };
+        assert_eq!(decide_identity(&withdrawn).state, IdentityState::Changed);
+        assert!(decide_identity(&withdrawn).conflict);
+        // Never confirmed: unconfirmed, no conflict.
+        let fresh = IdentityEvidence { server_hash: None, local: Some(hash('a')), ..Default::default() };
+        assert_eq!(
+            decide_identity(&fresh),
+            IdentityDecision { state: IdentityState::Unconfirmed, conflict: false, refresh_pin: false }
+        );
+    }
+
+    #[test]
+    fn confirmation_is_skipped_when_a_sibling_holds_the_local_hash() {
+        let a = hash('a');
+        let b = hash('b');
+        assert!(should_confirm(None, Some(&a), []));
+        assert!(should_confirm(None, Some(&a), [(true, Some(&b))]));
+        assert!(
+            !should_confirm(None, Some(&a), [(true, Some(&b)), (true, Some(&a))]),
+            "the sibling's hash would be refused as taken"
+        );
+        assert!(
+            !should_confirm(None, Some(&a), [(false, Some(&a))]),
+            "a disabled sibling's hash is refused as taken too"
+        );
+        assert!(!should_confirm(Some(&a), Some(&a), []), "already confirmed");
+        assert!(!should_confirm(None, None, []), "nothing to post");
+    }
+
+    #[test]
+    fn confirmation_is_skipped_while_an_enabled_sibling_has_no_hash_either() {
+        let a = hash('a');
+        let b = hash('b');
+        // Two enabled bindings, both unconfirmed: the evidence is ambiguous between them.
+        assert!(!should_confirm(None, Some(&a), [(true, None)]));
+        assert!(!should_confirm(None, Some(&a), [(true, Some(&b)), (true, None)]));
+        // Disabling the other binding in the Observatory leaves one candidate, which confirms.
+        assert!(should_confirm(None, Some(&a), [(false, None)]));
+        assert!(should_confirm(None, Some(&a), [(false, None), (true, Some(&b))]));
+    }
+
+    /// A statusline reading as `claude_account` emits it, stored as pending.
+    fn queued_statusline_reading(state: &State) -> Record {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/usage-v2/wire/valid/companion-all-record-types.json"
+        ))
+        .unwrap();
+        let mut value = fixture["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| record["record_type"] == "allowance.reading")
+            .cloned()
+            .unwrap();
+        value["record_id"] = json!("00000000-0000-4000-8000-0000000000aa");
+        value["adapter"] = json!("claude_account");
+        value["channel"] = json!("hook_snapshot");
+        value["reader"] = json!("statusline");
+        value["meter_key"] = json!("five_hour");
+        value["label"] = json!("Claude · 5h");
+        value["raw_window_id"] = json!("five_hour");
+        let record: Record = serde_json::from_value(value).unwrap();
+        save_record(state, &record, "2026-09-02T04:01:00.000Z");
+        record
+    }
+
+    #[test]
+    fn queued_statusline_readings_stay_home_under_a_statusline_deny_whichever_reader_is_selected() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        queued_statusline_reading(&state);
+        let no_resources = ResourceConfiguration::default();
+        let pending = |settings: &CollectionSettings, deny: &[&str]| {
+            let deny: Vec<String> = deny.iter().map(|entry| (*entry).to_owned()).collect();
+            pending_records_for_current_settings(&state, settings, &deny, &no_resources).unwrap().len()
+        };
+        let statusline = CollectionSettings::defaults();
+        assert_eq!(pending(&statusline, &[]), 1);
+        assert_eq!(pending(&statusline, &["allowance.claude_reader.statusline"]), 0);
+        assert_eq!(pending(&statusline, &["allowance.claude_reader"]), 0);
+        assert_eq!(pending(&statusline, &["allowance.codex_reader"]), 1, "an unrelated deny");
+
+        // Under `oauth_usage` the adapter's gate names the OAuth reader; the statusline
+        // reader's own path still keeps its readings local.
+        let mut oauth = CollectionSettings::defaults();
+        oauth.allowance.claude_reader = observatory_contract::settings::ClaudeReader::OauthUsage;
+        assert_eq!(pending(&oauth, &[]), 1);
+        assert_eq!(pending(&oauth, &["allowance.claude_reader.statusline"]), 0);
+        assert_eq!(pending(&oauth, &["allowance.claude_reader.oauth_usage"]), 0, "the adapter's gate");
+        assert_eq!(pending(&oauth, &["allowance.claude_reader"]), 0);
+        assert_eq!(pending(&oauth, &["claude_account"]), 0);
+        assert_eq!(pending(&oauth, &["providers.claude"]), 0);
+        assert_eq!(pending(&oauth, &["allowance.claude_reader.statusline.extra"]), 1, "not a prefix");
+        assert_eq!(pending(&oauth, &["allowance.codex_reader.embedded"]), 1);
+        assert_eq!(state.record_counts().unwrap().2, 0, "a deny rejects nothing");
     }
 
     #[test]

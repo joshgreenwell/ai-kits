@@ -29,6 +29,7 @@ fn binding(id: &str, provider: Provider, account: &str, roots: Vec<PathBuf>) -> 
         enabled: true,
         identity_hash: None,
         identity: IdentityState::Confirmed,
+        identity_conflict: false,
         roots,
         codex_home: None,
         cursor_state_db: None,

@@ -1,0 +1,89 @@
+---
+source: crates/observatory-adapters/tests/snapshots.rs
+assertion_line: 119
+expression: value
+---
+{
+  "buckets": [],
+  "capabilities": [
+    {
+      "detail_code": "no_recent_samples",
+      "dimension": "allowance",
+      "state": "complete"
+    }
+  ],
+  "coverage": {
+    "bytes_read": 1396,
+    "detail": null,
+    "files": 4,
+    "malformed": 2,
+    "records_emitted": 3,
+    "state": "ok",
+    "stores_discovered": 1
+  },
+  "records": [
+    {
+      "adapter": "claude_account",
+      "basis": "reported",
+      "binding_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "capacity": null,
+      "channel": "hook_snapshot",
+      "kind": "percent_used",
+      "label": "Claude · 5h",
+      "meter_key": "five_hour",
+      "observed_at": "2026-09-02T03:10:00Z",
+      "parser_version": "2.0.0+statusline1",
+      "raw_window_id": "five_hour",
+      "reader": "statusline",
+      "record_id": "13486486-5651-5cb2-a493-e9ecf4ea64c7",
+      "record_type": "allowance.reading",
+      "resets_at": "2026-09-02T05:00:00Z",
+      "unit": "percent",
+      "value": 15,
+      "window_minutes": 300,
+      "window_started_at": null
+    },
+    {
+      "adapter": "claude_account",
+      "basis": "reported",
+      "binding_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "capacity": null,
+      "channel": "hook_snapshot",
+      "kind": "percent_used",
+      "label": "Claude · 5h",
+      "meter_key": "five_hour",
+      "observed_at": "2026-09-02T02:10:00Z",
+      "parser_version": "2.0.0+statusline1",
+      "raw_window_id": "five_hour",
+      "reader": "statusline",
+      "record_id": "4f435274-a28d-5069-b767-4e12fbc7c053",
+      "record_type": "allowance.reading",
+      "resets_at": "2026-09-02T05:00:00Z",
+      "unit": "percent",
+      "value": 12,
+      "window_minutes": 300,
+      "window_started_at": null
+    },
+    {
+      "adapter": "claude_account",
+      "basis": "reported",
+      "binding_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "capacity": null,
+      "channel": "hook_snapshot",
+      "kind": "percent_used",
+      "label": "Claude · weekly",
+      "meter_key": "seven_day",
+      "observed_at": "2026-09-02T02:10:00Z",
+      "parser_version": "2.0.0+statusline1",
+      "raw_window_id": "seven_day",
+      "reader": "statusline",
+      "record_id": "b977bc9d-4bbf-5cf7-863b-c1bc580a45cc",
+      "record_type": "allowance.reading",
+      "resets_at": "2026-09-08T00:00:00Z",
+      "unit": "percent",
+      "value": 40.5,
+      "window_minutes": 10080,
+      "window_started_at": null
+    }
+  ]
+}

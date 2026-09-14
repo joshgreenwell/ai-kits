@@ -9,20 +9,12 @@ import { Input } from '@/components/ui/input';
 import { CopyButton, EmptyState, Field, ListRow, ListRows, StatusBadge, type RunStatus } from '@/components/kit';
 import { when } from '@/components/telemetry-shared';
 import { fetchPrivateJson } from '@/lib/fetch-private-json';
+import { readingFreshness } from '@/lib/allowance-freshness';
 import type { AdapterCoverage } from '@/lib/usage-contract';
-import type { CollectionSettings } from '@/lib/companion-settings';
+import type { InstallsSummary, InstallSummary } from '@/lib/usage-store';
 
-export type InstallsData = {
-  installs: {
-    id: string; machine_label: string; kind: 'companion' | 'browser'; platform: string; arch: string;
-    paused: boolean; disabled: boolean; companion_version: string | null; created_at: string; last_seen_at: string | null;
-    applied_settings_version: number | null; update_available: boolean;
-    latest_run: { run_id: string; finished_at: string; companion_version: string; settings_version: number; coverage: AdapterCoverage[];
-      accepted_buckets: number; accepted_records: number; rejected_records: number } | null;
-    bindings: { id: string; account_id: string; account_label: string; provider: string; enabled: boolean; identity_state: 'confirmed' | 'unconfirmed' | 'reset';
-      last_seen_at: string | null; v1_active: { id: string; machine_label: string; last_seen_at: string | null }[] }[];
-  }[];
-  settings: CollectionSettings; settings_version: number; latest_companion_version: string | null;
+// The store's own summary shape is the client type, so a field the Connections page renders cannot drift from what the API returns.
+export type InstallsData = Pick<InstallsSummary, 'installs' | 'settings' | 'settings_version' | 'latest_companion_version'> & {
   ledgers?: Record<string, number>; as_of?: string;
 };
 
@@ -42,6 +34,33 @@ const coverageStatus: Record<AdapterCoverage['state'], RunStatus> = {
   ok: 'validated', partial: 'incomplete', failed: 'failed', disabled_by_setting: 'disabled', denied_locally: 'disabled',
   prerequisite_missing: 'incomplete', credential_unavailable: 'incomplete', identity_changed: 'incomplete', rate_limited: 'incomplete',
 };
+type Capability = NonNullable<AdapterCoverage['capabilities']>[number];
+const capabilityStatus: Record<Capability['state'], RunStatus> = {
+  complete: 'validated', partial: 'incomplete', unsupported: 'incomplete', disabled_by_setting: 'disabled', unknown: 'incomplete',
+};
+
+/** The allowance capability row the provider's adapter reported in the latest run, if any. */
+function allowanceCapability(run: InstallSummary['latest_run'], provider: string) {
+  for (const entry of run?.coverage ?? []) {
+    if (!entry.adapter.startsWith(`${provider}_`)) continue;
+    const capability = entry.capabilities?.find(c => c.dimension === 'allowance');
+    if (capability) return { adapter: entry.adapter, ...capability };
+  }
+  return null;
+}
+
+/** Newest allowance reading per binding, judged by the shared freshness rule at the install's cadence. */
+function allowanceReading(binding: InstallSummary['bindings'][number], cadenceMinutes: number, now: number) {
+  const reading = binding.last_observation.allowance;
+  if (!reading) return null;
+  const freshness = readingFreshness({ observedAt: reading.observed_at, resetsAt: reading.resets_at, now, cadenceMinutes });
+  return { ...reading, ...freshness };
+}
+
+function acceptedByTypeText(counts: InstallSummary['accepted_by_type']) {
+  return Object.entries(counts).map(([type, c]) =>
+    `${type} ${c.accepted} accepted${c.duplicate ? `, ${c.duplicate} duplicate` : ''}${c.rejected ? `, ${c.rejected} rejected` : ''}`).join(' · ');
+}
 
 async function mutate(url: string, method: string, body: unknown) {
   const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -164,11 +183,12 @@ export function CompanionInstalls() {
                     className="border-b-0"
                     title={<span className="flex flex-wrap items-center gap-2">{install.machine_label} <Badge variant="outline">{install.kind}</Badge>{install.paused && !install.disabled && <Badge variant="soft-warning">paused</Badge>}{install.update_available && <Badge variant="soft-info">update available</Badge>}</span>}
                     detail={<>
-                      {install.companion_version ?? 'version unknown'} · {install.platform}/{install.arch} · last run {run ? when(run.finished_at) : 'never'} · applied settings v{install.applied_settings_version ?? '—'}{data.settings_version !== install.applied_settings_version ? ' (pending)' : ''}
+                      {install.companion_version ?? 'version unknown'} · {install.platform}/{install.arch} · last run {install.last_run_at ? when(install.last_run_at) : 'never'} · applied settings v{install.applied_settings_version ?? '—'}{data.settings_version !== install.applied_settings_version ? ' (pending)' : ''}
                       {run && <span className="mt-0.5 block">{run.accepted_buckets} buckets · {run.accepted_records} records accepted · {run.rejected_records} rejected</span>}
+                      {run && Object.keys(install.accepted_by_type).length > 0 && <span className="mt-0.5 block">{acceptedByTypeText(install.accepted_by_type)}</span>}
                     </>}
                     aside={<>
-                      <StatusBadge status={status}>{install.disabled ? 'disabled' : run ? `last seen ${when(install.last_seen_at)}` : 'never run'}</StatusBadge>
+                      <StatusBadge status={status} title="Last contact is any accepted upload, readings or not; each binding lists its newest reading below.">{install.disabled ? 'disabled' : run ? `last contact ${when(install.last_seen_at)}` : 'never run'}</StatusBadge>
                       {!install.disabled && (install.paused
                         ? <Button variant="outline" size="sm" onClick={() => void act({ id: install.id, action: 'resume' }, 'Install resumed; it applies on the next run.')}>Resume</Button>
                         : <Button variant="outline" size="sm" onClick={() => void act({ id: install.id, action: 'pause' }, 'Install paused; it stops on the next run.')}>Pause</Button>)}
@@ -176,12 +196,24 @@ export function CompanionInstalls() {
                     </>}
                   />
                   <div className="grid gap-2 px-4 pb-3">
-                    {install.bindings.map(binding => (
+                    {install.bindings.map(binding => {
+                      const reading = allowanceReading(binding, install.cadence_minutes, now);
+                      const capability = allowanceCapability(run, binding.provider);
+                      return (
                       <div key={binding.id} className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
                         <span className="text-foreground">{binding.account_label}</span>
                         <span className="text-muted-foreground">{binding.account_id} · {binding.provider}</span>
                         <Badge variant={binding.identity_state === 'confirmed' ? 'soft' : binding.identity_state === 'reset' ? 'soft-warning' : 'outline'}>identity {binding.identity_state}</Badge>
+                        {binding.duplicate_identity && <span className="text-warning">shares an identity with another binding — approve re-confirmation on one of them, then sign into that account and run</span>}
                         {!binding.enabled && <Badge variant="outline">binding disabled</Badge>}
+                        <span className="text-muted-foreground" title={reading ? `received ${when(binding.last_received.allowance)} · stale after ${reading.staleAfterMinutes} min at cadence ${install.cadence_minutes}` : undefined}>
+                          {reading ? `last allowance reading ${when(reading.observed_at)} (${reading.reader} · ${reading.stale ? 'stale' : 'fresh'})` : 'no readings yet'}
+                        </span>
+                        {capability && (
+                          <StatusBadge status={capabilityStatus[capability.state]} title={`${capability.adapter} · allowance ${capability.state}`}>
+                            allowance {capability.state}{capability.detail_code ? ` (${capability.detail_code})` : ''}
+                          </StatusBadge>
+                        )}
                         {binding.v1_active.length > 0 && <Badge variant="soft-warning" title={binding.v1_active.map(v => v.machine_label).join(', ')}>v1 schedule still reporting for this account</Badge>}
                         {!install.disabled && (
                           <span className="flex gap-1">
@@ -190,7 +222,8 @@ export function CompanionInstalls() {
                           </span>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                     {run && run.coverage.length > 0 && (
                       <div className="flex flex-wrap gap-1.5">
                         {run.coverage.map(entry => (

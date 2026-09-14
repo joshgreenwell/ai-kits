@@ -1,17 +1,14 @@
 //! `claude_execution`: Claude Code transcripts under `~/.claude/projects` (or
 //! configured roots) as hourly buckets and, at `requests` detail, request
-//! records; plus the statusline inbox as `allowance.reading` with reader
-//! `statusline` and meter keys `five_hour` and `seven_day`.
+//! records. The statusline inbox belongs to `claude_account`, which binds each
+//! sample by the identity stamped on it.
 
-use observatory_contract::settings::{ClaudeReader, DetailLevel};
-use observatory_contract::{
-    Adapter as AdapterId, Channel, CoverageState, CursorState, DetailCode, Provider, Reader,
-};
+use observatory_contract::settings::DetailLevel;
+use observatory_contract::{Adapter as AdapterId, CoverageState, CursorState, DetailCode, Provider};
 use observatory_core::adapter::{Adapter, AdapterError, Cursor, Outcome, Preflight, RunContext, Sink};
 
 use crate::agents::record_from_event as agent_record_from_event;
 use crate::jsonl::{expand_user, scan};
-use crate::readings::{emit_dirty_slots, ingest_statusline_inbox};
 use crate::requests::{
     EvidenceSummary, ToolEvidenceSummary, execution_capabilities, request_from_event,
     request_matches_agent_setting,
@@ -56,8 +53,6 @@ impl Adapter for ClaudeExecution {
         let mut outcome = Outcome::ok();
         let include_subagents = ctx.settings.execution.include_subagents;
         let project_attribution = ctx.effective_project_attribution();
-        let read_inbox = ctx.settings.allowance.claude_reader != ClaudeReader::Off;
-        let mut inbox_bound = false;
         let mut evidence = EvidenceSummary::default();
         let mut tool_evidence = ToolEvidenceSummary::default();
         let mut resource_evidence = ResourceEvidenceSummary::for_run(ctx);
@@ -77,20 +72,6 @@ impl Adapter for ClaudeExecution {
                 outcome.state = CoverageState::Partial;
                 outcome.detail = Some(DetailCode::PartialRead);
                 outcome.cursor_state = CursorState::More;
-            }
-            // The statusline inbox is machine-wide; the first Claude binding owns it.
-            if read_inbox && !inbox_bound {
-                inbox_bound = true;
-                outcome.malformed += ingest_statusline_inbox(&state, ctx, binding)?;
-                outcome.records_emitted += emit_dirty_slots(
-                    &state,
-                    binding,
-                    AdapterId::ClaudeExecution,
-                    Channel::HookSnapshot,
-                    Reader::Statusline,
-                    self.parser_version(),
-                    sink,
-                )?;
             }
             if ctx.settings.execution.detail_level != DetailLevel::BucketsOnly {
                 let tool_events = state.tool_events(binding.binding_id.as_str())?;
@@ -174,6 +155,7 @@ impl Adapter for ClaudeExecution {
             evidence,
             tool_evidence,
             resource_evidence,
+            None,
         ));
         Ok(outcome)
     }

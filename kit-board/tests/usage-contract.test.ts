@@ -103,7 +103,9 @@ test('settings merge with defaults, overrides replace whole groups, and gates fo
   assert.equal(merged.allowance.codex_reader, 'off');
   assert.equal(merged.cadence_minutes, 60);
   assert.equal(adapterGate(defaultCollectionSettings, 'claude_execution').enabled, true);
-  assert.equal(adapterGate(defaultCollectionSettings, 'claude_account').enabled, false);
+  assert.equal(adapterGate(defaultCollectionSettings, 'claude_account').enabled, true, 'the statusline reader runs under claude_account');
+  assert.equal(adapterGate(defaultCollectionSettings, 'claude_account').mode_path, 'allowance.claude_reader.statusline');
+  assert.equal(adapterGate(mergeSettings(defaultCollectionSettings, { allowance: { claude_reader: 'off', codex_reader: 'embedded', cursor_reader: 'off' } }), 'claude_account').enabled, false);
   assert.equal(adapterGate(defaultCollectionSettings, 'codex_account').mode_path, 'allowance.codex_reader.app_server');
   assert.equal(adapterGate(defaultCollectionSettings, 'cursor_execution').provider_enabled, false);
   assert.equal(adapterGate(merged, 'claude_execution').enabled, false, 'paused wins');

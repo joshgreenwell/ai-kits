@@ -46,17 +46,17 @@ shows "update available" when an install's reported version is behind
 | Command | What it does |
 | --- | --- |
 | `observatory connect --url <observatory> --code XXXX-XXXX [--label <machine>] [--since YYYY-MM-DD]` | Exchanges a one-time pairing code for an install id and key and writes `companion.json` (`0600`). `--since` sets the backfill start (default: the first day of the current UTC month); the first run pins it in state, so choose it before that run. The URL must be `https`, or `http` to `localhost`/`127.0.0.1`, with no userinfo; redirects are errors. |
-| `observatory setup [--yes] [--bind claude=claude-primary]... [--secrets]` | Discovers Claude Code, Codex, and Cursor stores; shows each signed-in identity; proposes bindings; offers each Obsidian vault from the application's own registry as a knowledge source (key `obsidian.<vault id>`, folder name as the local label; default no, skipped under `--yes`); asks once each about the private-interface readers, the Claude statusline hook (an existing statusline command is preserved as a passthrough), and the schedule; writes bindings and this install's settings override; runs a dry run, a first publish, and `service install`; offers to remove a v1 schedule. |
+| `observatory setup [--yes] [--bind claude=claude-primary]... [--secrets]` | Discovers Claude Code, Codex, and Cursor stores; shows each signed-in identity; proposes bindings; offers each Obsidian vault from the application's own registry as a knowledge source (key `obsidian.<vault id>`, folder name as the local label; default no, skipped under `--yes`); asks once each about the private-interface readers, the Claude statusline hook (written into `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set, else `~/.claude/settings.json`; an existing statusline command is preserved as a passthrough), and the schedule; writes bindings and this install's settings override; runs a dry run, a first publish, and `service install`; offers to remove a v1 schedule. |
 | `observatory run [--dry-run] [--offline]` | One collection cycle (below). |
 | `observatory service install\|uninstall\|status` | LaunchAgent `com.personal-observatory.companion.<install-id>`, Task Scheduler task `Personal Observatory Companion <install-id>`, or systemd user timer `personal-observatory-companion.timer`, at the effective cadence. Uninstall removes only what it installed. |
-| `observatory statusline` | Claude Code statusline command: reads the statusline JSON on stdin, appends allowance samples to the inbox, prints the same one-line summary `statusline.py` printed, always exits 0 (`Claude` on any failure). No network, no SQLite. |
+| `observatory statusline` | Claude Code statusline command: reads the statusline JSON on stdin, stamps each allowance sample with the signed-in account's identity hash, writes a part file to the inbox only when a reading changed or the fifteen-minute heartbeat is due, prints the same one-line summary `statusline.py` printed, always exits 0 (`Claude` on any failure). No network, no SQLite. |
 | `observatory hook claude\|cursor` | Tool hook receivers: append a bounded snapshot (event name, tool name, hashed session id) to the local inbox and exit 0. |
 | `observatory status` | Last run summary, outbox depth, last receipt, schedule state, per-adapter state. |
 | `observatory projects` | Every working directory this install has seen, per binding, with its `project_hash` and first and last sighting. Local only: this listing is how a hash gets a label on the Observatory. |
 | `observatory resources` | Every knowledge source in `companion.json` with its key, label, source, roots (and how many exist), connectors, validation problem, and, once a run has created the state, the `cfg:` token its rows carry; the local deny state; per binding, access counts by key, kind, and evidence basis and inspection counts by class. Local only: roots, labels, and connector ids never leave the machine. |
 | `observatory resources add --key <key> --root <dir>... [--connector <id>]... [--label <text>] [--source <text>]` | Adds a source, or replaces the one with the same key, after validation (key `^[a-z0-9_.:-]{1,64}$`; roots absolute or `~/`-anchored; connectors `mcp:<namespace>` or `url:<prefix>`; at least one root or connector). The next run replays retained transcripts under the new configuration. |
 | `observatory resources remove --key <key>` | Removes a source. Future runs stop uploading rows for that key; rows the Observatory already holds are append-only and stay. |
-| `observatory doctor` | Effective mode and reason per adapter, prerequisite and credential checks as coverage states, discovery booleans (including Obsidian's registry and vault count), `resources_configured`, `resources_invalid`, `resource_attribution_effective` with its reason (`detail_level`, `denied_locally`, `no_resources`, `ok`), v1 schedules found. Never a token or a path outside the configuration directory. |
+| `observatory doctor [--offline]` | Effective mode and reason per adapter, prerequisite and credential checks as coverage states, discovery booleans (including Obsidian's registry and vault count), `resources_configured`, `resources_invalid`, `resource_attribution_effective` with its reason (`detail_level`, `denied_locally`, `no_resources`, `ok`), a `claude_statusline` block (below), v1 schedules found. `--offline` reads the cached config document instead of fetching it, like `run --offline`. Never a token or a path outside the configuration directory. |
 | `observatory settings show` | The cached effective settings document and its `settings_version`. |
 | `observatory version` | The semantic version, also reported in every envelope. |
 | `observatory serve` | Placeholder; live mode is a later phase. |
@@ -110,9 +110,11 @@ The adapter keeps its own analyzers, state, artifacts, and usage-publisher crede
 | `companion.json` | install id and key, Observatory URL, per-binding root overrides, `deny` list, optional `since`, optional `resources` (knowledge sources with their local roots); `0600` | same; pass the selected root consistently with `--config-dir` |
 | `secrets.json` (opt-in) | Admin API keys; read only by `anthropic_api` and `openai_api` | same |
 | `<install-id>.sqlite3`, `<install-id>.lock` | state and the run lock | same |
-| `inbox/claude-statusline/`, `inbox/hooks/` | hook inboxes; one file per UTC hour | same |
-| `claude-statusline-status.json` | the statusline sidecar (invocations, offered windows; no session field) | same |
-| Claude Code stores read | `~/.claude/projects/**`, `~/.claude.json` (account for display), Keychain `Claude Code-credentials` (presence only in phase 1) | `%USERPROFILE%\.claude\projects`, `.claude\.credentials.json` (expiry only) |
+| `inbox/claude-statusline/`, `inbox/hooks/` | hook inboxes; the statusline writes one part file per changed reading (`<YYYY-MM-DDTHH>-<observed microseconds>.json`), tool hooks one line per invocation | same |
+| `inbox/claude-statusline-status.json` | the statusline sidecar beside the inbox, never inside it (`last_invocation_at`, `invocations`, `last_offered_at`, `offered_windows`, `offered_windows_ever`, `published_windows`, `last_published_at`; no session field) | same |
+| `inbox/claude-statusline-latest.json` | the hook's kept state beside the inbox: the last reading per identity stamp and window (`used_percent`, `resets_at`, `kept_at`), which tells a changed reading from a repeat | same |
+| `claude-identity-cache.json` | the hook's identity cache per Claude config file (`mtime_ns`, `size`, `evidence_hash` or null); no secret and no account uuid | same |
+| Claude Code stores read | `~/.claude/projects/**`, the config file (`$CLAUDE_CONFIG_DIR/.claude.json` when set, else `~/.claude.json`: the account, for display and for the statusline stamp), `~/.claude/settings.json` (the installed `statusLine.command`, read never written by a run), Keychain `Claude Code-credentials` (presence only in phase 1) | `%USERPROFILE%\.claude\projects`, `.claude\.credentials.json` (expiry only) |
 | Codex stores read | `~/.codex/sessions`, `~/.codex/archived_sessions`, `~/.codex/auth.json` (`tokens.account_id` only, for display) | same under `%USERPROFILE%` |
 
 Store paths are discovered at setup, can be overridden per binding in `companion.json`
@@ -174,18 +176,78 @@ Outbox rebuild applies adapter, provider, and mode denies to pending records as 
 before a local deny was added remains local while that rule is active; a resource deny leaves queued
 `resource.access` records pending rather than dropping them, so lifting it uploads them.
 
+`allowance.claude_reader` needs one extra rule, because two readers share one adapter. `claude_account`
+runs the statusline reader whenever `allowance.claude_reader` is not `off`, and under `oauth_usage` the
+adapter's own gate names the unimplemented reader while the statusline still runs as the fallback. So
+`allowance.claude_reader.statusline`, or a dotted prefix of it, removes the statusline reader in either
+mode and keeps statusline readings already in the outbox on the machine. `allowance.claude_reader.oauth_usage`
+keeps its existing meaning as the adapter's gate under that mode.
+
 ## Adapters
 
 | Adapter | Phase | In this version |
 | --- | --- | --- |
-| `claude_execution` | 1 | Ported. Buckets; `allowance.reading` from the statusline inbox (reader `statusline`, meters `five_hour`, `seven_day`, and every model-scoped weekly window `seven_day_<model>`, labelled `Claude · weekly · <Model>`); nullable token accounting and recorded effort, tier, speed, reasoning, and cache TTL on `activity.request` at `detail_level` `requests`. |
-| `codex_execution` | 1 | Ported. Buckets; embedded `rate_limits` as `allowance.reading` (reader `embedded`, meter `<limit_id>:<minutes>`); nullable token accounting and recorded effort, context size, reasoning, and reported totals on `activity.request` at `requests`. |
-| `claude_account` | 2 | Stub. Preflight reports the Keychain item or `.credentials.json` state; collect reports `unrecognized_payload` until `provider/claude/*` fixtures exist. |
+| `claude_execution` | 1 | Ported. Buckets; nullable token accounting and recorded effort, tier, speed, reasoning, and cache TTL on `activity.request` at `detail_level` `requests`. The statusline inbox belongs to `claude_account`. |
+| `codex_execution` | 1 | Ported. Buckets; embedded `rate_limits` as `allowance.reading` (reader `embedded`, meter `<limit_id>:<minutes>`) and the Codex `allowance` capability row; nullable token accounting and recorded effort, context size, reasoning, and reported totals on `activity.request` at `requests`. |
+| `claude_account` | 2 | The Claude allowance meter (parser version `2.0.0+statusline1`). Ingests the statusline inbox, binds each sample by the identity stamped on it, quarantines what it cannot bind, and emits `allowance.reading` (reader `statusline`, meters `five_hour`, `seven_day`, and every model-scoped weekly window `seven_day_<model>`, labelled `Claude · weekly · <Model>`) plus the Claude `allowance` capability row. Its OAuth usage reader is still unimplemented: mode `oauth_usage` does the same statusline work and reports `partial` / `not_implemented`. |
 | `codex_account` | 2 | Stub. Preflight reports whether `codex` is on `PATH`. |
 | `cursor_execution`, `cursor_account` | 3 | Stubs. Preflight reports whether `state.vscdb` exists. |
 | `anthropic_api`, `openai_api` | 5 | Stubs. Preflight reports whether the key is in `secrets.json`. |
 
 Stubs never make a network request, spawn a process, or read a credential.
+
+### The Claude statusline reader
+
+`observatory statusline` runs inside Claude Code, once per render, with no network and no SQLite. It
+resolves the Claude config file in order — `OBSERVATORY_CLAUDE_CONFIG_FILE` (a test and override seam),
+`$CLAUDE_CONFIG_DIR/.claude.json` (the profile of the session that started it), then `~/.claude.json` —
+and hashes the `oauthAccount.accountUuid` it finds there into each sample's `identity_hash`, the same
+`sha256(stableJson([provider, account uuid]))` a binding confirms. The uuid itself is never stored. The file is parsed only when its
+`stat` changed since `claude-identity-cache.json`, so the usual cost is one `stat`; a signed-out file
+caches null, a file over 8 MB is not parsed, and a half-written file yields nothing without touching the
+cache. v1 `collect.py` ignores the stamp, and the six-field slot digest excludes it, so an identical
+reading is still one reading.
+
+A window is written only when its `(used_percent, resets_at)` differs from the kept reading for that
+stamp and window, or that reading is older than fifteen minutes, so an idle meter still proves the hook
+runs. Each write is its own part file, `<inbox>/<YYYY-MM-DDTHH>-<observed microseconds>.json`, atomic and
+`0600`, so concurrent sessions never share a file; a lost kept-state update costs one duplicate sample,
+which the digest removes at ingest. The kept state and the sidecar sit beside the inbox, never inside it,
+because v1 `collect.py` parses every file in the inbox as samples. The run — not the reader — prunes the
+inbox afterwards, retention `max(local_raw_retention_days, 2)` days by the thirteen-character hour prefix
+of each file name, so a blocked or denied reader never lets part files accumulate.
+
+`claude_account` binds a stamped sample to the enabled Claude binding whose confirmed hash equals the
+stamp and that is free of identity conflict, whichever account is signed in at run time; several
+candidates hold it as `identity_ambiguous` and none as `unpaired_identity`. An unstamped sample binds
+only to a lone enabled confirmed binding, and is otherwise held as `identity_unconfirmed` (one binding,
+not yet confirmed, recorded as its only candidate) or `identity_ambiguous`. Held samples live in the
+schema-8 `allowance_quarantine` table, never appear among the dirty slots, and are re-evaluated every
+run: a stamped row is released once its hash binds, an unstamped `identity_unconfirmed` row only to the
+candidate binding it was held for once that binding is confirmed, and an unstamped ambiguous row never —
+nothing can later establish whose reading it was. Held rows are pruned after
+`max(local_raw_retention_days, 7)` days unless their stamp still pairs with an enabled binding's hash. A
+digest already stored or already held is skipped before any binding decision.
+
+The run also declines to confirm an identity it cannot attribute: it does not post the local evidence
+when a sibling binding of the same install and provider already holds that hash (the Observatory would
+answer 409 `identity_taken`), or when another *enabled* sibling of that provider still has a null hash,
+because the evidence is then ambiguous between them. Both bindings stay `Unconfirmed` until one candidate
+remains — disable one binding in the Observatory, or sign into the other account and run.
+
+The `allowance` capability row reads that evidence first: `disabled_by_setting` / `reader_off`; else,
+when this run bound, released, or held a sample or the sidecar shows a recent invocation, the first of
+`identity_ambiguous`, `identity_unconfirmed`, `unpaired_identity`, `quarantined_samples`,
+`no_samples_offered`, `reader_fallback_statusline`, `hook_config_dir_mismatch`, else `complete` with
+`no_recent_samples` when the newest bound sample is older than `max(120, 2 × cadence + 15)` minutes. With
+no evidence at all the hook installation speaks: `unsupported` / `hook_not_installed` when no
+`statusLine.command` runs the `statusline` subcommand with a `--config-dir` (the executable path is never
+matched), `partial` / `hook_config_dir_mismatch` when it names another directory, `unknown` /
+`hook_not_executing` when the command is installed but the sidecar is missing or stale — which is where
+Windows MSIX redirection shows up. `observatory doctor` prints the same facts in a `claude_statusline`
+block: hook state, the directory it names, whether the sidecar exists, its last invocation, invocation
+count, offered windows and last publication, and the held samples by reason. Directories and counts only;
+never a sample or a transcript path.
 
 ### The v1 parity port
 
@@ -262,10 +324,12 @@ rows) so retained files still eligible under `since` are replayed; interrupted r
 Unresolved parse gaps are stored separately, survive a deleted source or checkpoint invalidation,
 and clear only after that file is successfully replayed from the start.
 Hourly identities and values remain under the v1 parity gate. Coverage adds request,
-token-composition, pricing, agent, tool, and resource capability states, including detail-level
-gating, partial source history, unmapped tool forms, truncated tool names, and, for resources,
-`denied_locally`, `no_resources_configured`, `unsupported_forms`, `unresolved_paths`,
-`ambiguous_connectors`, and `scan_partial`.
+token-composition, pricing, agent, tool, resource, and allowance capability states — eight dimensions,
+the per-adapter maximum — including detail-level gating, partial source history, unmapped tool forms,
+truncated tool names, for resources `denied_locally`, `no_resources_configured`, `unsupported_forms`,
+`unresolved_paths`, `ambiguous_connectors`, and `scan_partial`, and for allowance the reader-health
+codes above. The detail level does not gate the allowance row: an install at `buckets_only` still
+reports its meters.
 
 Envelope v2 also defines optional detail blocks for token accounting, pricing, agent attribution,
 and explicit project state, plus independent `agent.event`, `tool.event`, and `resource.access`
@@ -274,10 +338,11 @@ attribution, supported agent lifecycle events, tool invocation and result events
 rows for locally configured sources. The stub producers omit those blocks and remain wire-compatible.
 Missing blocks mean the producer did not report that capability; they are not zero, No project, a
 main agent, or success.
-The server and `20260913230451_extend_usage_detail_contract.sql` migration must be deployed before
-shipping a producer that emits the new variants. There is no runtime version negotiation inside
-schema version 2, so this server-first order prevents an older server from retaining an upgraded
-companion's outbox behind a contract error.
+The server and the `20260913230451_extend_usage_detail_contract.sql` and
+`20260914010000_allowance_basis_and_run_counts.sql` migrations must be deployed before shipping a
+producer that emits the new variants, the `allowance` coverage dimension included. There is no runtime
+version negotiation inside schema version 2, so this server-first order prevents an older server from
+retaining an upgraded companion's outbox behind a contract error.
 
 The event semantic keys exclude collector identity and observation time. Invocation and result
 events share an invocation key but have distinct semantic keys, so several results or a revised
@@ -314,8 +379,10 @@ owner can veto any of them.
   provider requests, and keying by turn would collapse them into one canonical row.
 - **`include_subagents: false` skips Claude Code `subagents/` transcripts entirely** rather than
   counting them without a parent; v1 counted every file, so the default (`true`) keeps parity.
-- **The statusline inbox is machine-wide** and is attributed to the first Claude binding of the
-  install (the machine has one Claude Code sign-in).
+- **The statusline inbox is machine-wide**, so each sample carries the identity of the account
+  signed in when it was observed and the run binds it to that account's binding. Attributing the
+  inbox to the install's first Claude binding, which this port originally did, was replaced in
+  USG-009; a sample that cannot be attributed is held rather than assigned.
 - **All envelopes of one run share `run_id`**; the server must upsert `companion_runs` on
   `run_id`, summing counts and replacing coverage.
 - **`identity_hash = sha256(stableJson([provider, account uuid]))`**, the same derivation the
@@ -375,8 +442,8 @@ cargo deny check                        # advisories, licenses, duplicate versio
   (wire envelopes, the parity corpus, `MANIFEST.json`) and runs `collect.py` for `expected.json`.
 - `scripts/bench.py --bytes 1000000000 --exe target/release/observatory` generates synthetic
   JSONL and times `run --dry-run --offline`; CI runs a 64 MB version on each OS (informational).
-- Snapshots of each execution adapter's normalized output live in
-  `crates/observatory-adapters/tests/snapshots/`; review a change with `cargo insta review` or
+- Snapshots of each collecting adapter's normalized output (both execution adapters and
+  `claude_account`) live in `crates/observatory-adapters/tests/snapshots/`; review a change with `cargo insta review` or
   `INSTA_UPDATE=always cargo test -p observatory-adapters`.
 - The vendored schema `crates/observatory-contract/schema/usage-v2.schema.json` is the
   `z.toJSONSchema(usageEnvelopeSchema, { io: 'input' })` output of the section 1.1 definition
@@ -408,7 +475,11 @@ Bearer: the install key (`Authorization: Bearer <key>`), except `pair`.
 | `POST /api/v1/usage` | envelope v2 | `{ ok, schema_version, run_id, accepted: { buckets, records }, duplicates, rejected: [{ record_id, reason }] }` |
 
 Every body is strict on both sides: an unknown field in a response is a contract change and
-fails loudly.
+fails loudly. The identity endpoint answers 409 both for a hash the Observatory has not approved for
+that binding and for one a sibling binding of the same install and provider already holds
+(`identity_taken`). The companion normally avoids the second case by not posting a hash a sibling
+holds; a refusal it does receive is treated as an identity conflict, so the binding waits rather than
+taking another account's readings.
 
 ## Release
 

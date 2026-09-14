@@ -69,7 +69,7 @@ export function adapterGate(settings: CollectionSettings, adapter: Adapter): Gat
       case 'claude_execution': return [settings.execution.claude_local_logs, 'execution.claude_local_logs'];
       case 'codex_execution': return [settings.execution.codex_local_history, 'execution.codex_local_history'];
       case 'cursor_execution': return [settings.execution.cursor_local_state, 'execution.cursor_local_state'];
-      case 'claude_account': return [settings.allowance.claude_reader === 'oauth_usage', `allowance.claude_reader.${settings.allowance.claude_reader}`];
+      case 'claude_account': return [settings.allowance.claude_reader !== 'off', `allowance.claude_reader.${settings.allowance.claude_reader}`];
       case 'codex_account': return [settings.allowance.codex_reader === 'app_server' || settings.allowance.codex_reader === 'web_backend', `allowance.codex_reader.${settings.allowance.codex_reader}`];
       case 'cursor_account': return [settings.allowance.cursor_reader !== 'off' || settings.account_history.cursor_usage_events, `allowance.cursor_reader.${settings.allowance.cursor_reader}`];
       case 'anthropic_api': return [settings.billing.anthropic_admin_api, 'billing.anthropic_admin_api'];

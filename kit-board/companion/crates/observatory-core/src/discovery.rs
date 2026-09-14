@@ -83,9 +83,19 @@ fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_slice(&bytes).ok()
 }
 
-/// The Claude Code account from `~/.claude.json` (`oauthAccount`), if signed in.
+/// The Claude Code account from the resolved config file (`oauthAccount`), if signed in.
 pub fn claude_identity() -> Option<DisplayIdentity> {
-    let value = read_json(&paths::claude_config_file()?)?;
+    claude_identity_in(&paths::claude_config_file()?)
+}
+
+/// The Claude Code account named by one config file (`oauthAccount.accountUuid`).
+pub fn claude_identity_in(path: &Path) -> Option<DisplayIdentity> {
+    claude_identity_from(&read_json(path)?)
+}
+
+/// The Claude Code account named by a parsed config document. Only the account
+/// uuid and the email beside it are read; every other field is dropped.
+pub fn claude_identity_from(value: &Value) -> Option<DisplayIdentity> {
     let account = value.get("oauthAccount")?.as_object()?;
     let uuid = account.get("accountUuid")?.as_str()?.to_owned();
     let label = account
@@ -194,6 +204,26 @@ mod tests {
         assert_eq!(hash, Sha256Hex::digest(br#"["claude","abc"]"#));
         assert_eq!(short("1234567890"), "…567890");
         assert_eq!(short("12345678"), "12345678");
+    }
+
+    #[test]
+    fn claude_identity_reads_only_the_account_uuid() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("claude.json");
+        fs::write(
+            &file,
+            r#"{"oauthAccount":{"accountUuid":"11111111-2222-4333-8444-555555555555","emailAddress":"synthetic@example.test","organizationUuid":"SECRET-ORG"},"primaryApiKey":"SECRET-KEY"}"#,
+        )
+        .unwrap();
+        let identity = claude_identity_in(&file).unwrap();
+        assert_eq!(identity.label, "synthetic@example.test");
+        assert_eq!(identity.evidence_hash, identity_hash("claude", "11111111-2222-4333-8444-555555555555"));
+        assert!(!format!("{identity:?}").contains("SECRET"));
+        fs::write(&file, br#"{"oauthAccount":{"accountUuid":"12345678"}}"#).unwrap();
+        assert_eq!(claude_identity_in(&file).unwrap().label, "12345678");
+        fs::write(&file, br#"{"numStartups":3}"#).unwrap();
+        assert!(claude_identity_in(&file).is_none(), "signed out");
+        assert!(claude_identity_in(&dir.path().join("missing.json")).is_none());
     }
 
     #[test]
