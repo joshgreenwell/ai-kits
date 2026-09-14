@@ -157,12 +157,21 @@ export function createUsageStore(getDatabase?: () => Sql) {
     const db = await sql();
     return db.begin(async transaction => {
       const tx = transaction as unknown as Sql;
+      // Every path that assigns an identity takes the same parent-row lock. This
+      // serializes sibling checks across server instances without preventing old
+      // duplicate rows from remaining visible for explicit reconfirmation.
+      await tx`SELECT id FROM personal_hub.companion_installs WHERE id = ${install.id} FOR UPDATE`;
       await tx`INSERT INTO personal_hub.usage_accounts (id, provider, label) VALUES (${data.account_id}, ${data.provider}, ${data.account_label}) ON CONFLICT DO NOTHING`;
       const [account] = await tx`SELECT provider FROM personal_hub.usage_accounts WHERE id = ${data.account_id}`;
       if (account.provider !== data.provider) throw new RequestError('Account belongs to another provider', 409);
       const [existing] = await tx`SELECT id AS binding_id, account_id, provider, enabled, identity_hash FROM personal_hub.companion_bindings
         WHERE install_id = ${install.id} AND account_id = ${data.account_id}`;
       if (existing) return { created: false, binding: clone(existing) };
+      if (data.identity_hash !== null) {
+        const [sibling] = await tx`SELECT id FROM personal_hub.companion_bindings
+          WHERE install_id = ${install.id} AND provider = ${data.provider} AND identity_hash = ${data.identity_hash}`;
+        if (sibling) throw new RequestError('identity_taken: another binding of this install already holds that identity', 409);
+      }
       const sourceId = randomUUID(), bindingId = randomUUID();
       await tx`INSERT INTO personal_hub.telemetry_sources (id, account_id, machine_label, mode, key_hash)
         VALUES (${sourceId}, ${data.account_id}, ${install.machine_label}, 'companion', ${hash(randomBytes(32).toString('base64url'))})`;
@@ -195,17 +204,21 @@ export function createUsageStore(getDatabase?: () => Sql) {
     const data = identityRequestSchema.parse(input);
     if (!isUuid(bindingId)) throw new RequestError('Unknown binding', 404);
     const db = await sql();
-    const [binding] = await db`SELECT id, provider, identity_hash, enabled FROM personal_hub.companion_bindings WHERE id = ${bindingId} AND install_id = ${install.id}`;
-    if (!binding) throw new RequestError('Unknown binding', 404);
-    if (binding.identity_hash === null) {
-      const [sibling] = await db`SELECT id FROM personal_hub.companion_bindings
-        WHERE install_id = ${install.id} AND provider = ${binding.provider} AND id <> ${bindingId} AND identity_hash = ${data.identity_hash}`;
-      if (sibling) throw new RequestError('identity_taken: another binding of this install already holds that identity', 409);
-      await db`UPDATE personal_hub.companion_bindings SET identity_hash = ${data.identity_hash}, identity_reset_at = NULL WHERE id = ${bindingId}`;
-    } else if (binding.identity_hash !== data.identity_hash) {
-      throw new RequestError('The binding identity changed; approve the new identity in the Observatory first', 409);
-    }
-    return { ok: true, binding_id: bindingId, identity_hash: data.identity_hash, enabled: binding.enabled as boolean };
+    return db.begin(async transaction => {
+      const tx = transaction as unknown as Sql;
+      await tx`SELECT id FROM personal_hub.companion_installs WHERE id = ${install.id} FOR UPDATE`;
+      const [binding] = await tx`SELECT id, provider, identity_hash, enabled FROM personal_hub.companion_bindings WHERE id = ${bindingId} AND install_id = ${install.id}`;
+      if (!binding) throw new RequestError('Unknown binding', 404);
+      if (binding.identity_hash === null) {
+        const [sibling] = await tx`SELECT id FROM personal_hub.companion_bindings
+          WHERE install_id = ${install.id} AND provider = ${binding.provider} AND id <> ${bindingId} AND identity_hash = ${data.identity_hash}`;
+        if (sibling) throw new RequestError('identity_taken: another binding of this install already holds that identity', 409);
+        await tx`UPDATE personal_hub.companion_bindings SET identity_hash = ${data.identity_hash}, identity_reset_at = NULL WHERE id = ${bindingId}`;
+      } else if (binding.identity_hash !== data.identity_hash) {
+        throw new RequestError('The binding identity changed; approve the new identity in the Observatory first', 409);
+      }
+      return { ok: true, binding_id: bindingId, identity_hash: data.identity_hash, enabled: binding.enabled as boolean };
+    });
   }
 
   function rejection(install: CompanionInstallRow, binding: BindingRow | undefined, record: UsageRecord): RejectionReason | null {

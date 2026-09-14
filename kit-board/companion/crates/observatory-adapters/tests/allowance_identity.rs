@@ -238,6 +238,30 @@ fn stamped_samples_bind_to_their_own_binding_whichever_account_is_signed_in() {
 }
 
 #[test]
+fn identical_stamped_readings_remain_distinct_across_accounts() {
+    let h = Harness::new();
+    let a = confirmed(BINDING_A, "claude-primary", 'a');
+    let b = confirmed(BINDING_B, "claude-second", 'b');
+    let ctx = h.context(vec![a, b]);
+    let first = sample(0, 20.0, Some(&hash('a')));
+    let mut second = first.clone();
+    second["identity_hash"] = json!(hash('b').as_str());
+    h.write_part("2026-09-11T23-1.json", &[first, second]);
+
+    let (outcome, sink) = collect(&ctx);
+    assert_eq!(outcome.records_emitted, 2);
+    assert_eq!(
+        readings(&sink),
+        vec![
+            (BINDING_A.to_owned(), "2026-09-11T23:00:00Z".to_owned()),
+            (BINDING_B.to_owned(), "2026-09-11T23:00:00Z".to_owned()),
+        ],
+        "the local replay key includes the stamp even though the emitted records do not"
+    );
+    assert!(held(&h.state()).is_empty());
+}
+
+#[test]
 fn a_binding_in_conflict_keeps_its_samples_in_quarantine_as_unpaired() {
     let h = Harness::new();
     let a = binding(BINDING_A, "claude-primary", Some(hash('a')), IdentityState::Changed, true);
@@ -502,15 +526,17 @@ fn a_replayed_digest_is_skipped_before_any_binding_decision() {
     let h = Harness::new();
     let a = confirmed(BINDING_A, "claude-primary", 'a');
     let ctx = h.context(vec![a.clone()]);
-    // Two sessions wrote the same reading; a third file carries it unstamped for an unconfirmed install.
+    // Two sessions wrote the same stamped reading. A third file carries the same
+    // meter fields without identity evidence, so it receives the legacy local key
+    // rather than suppressing a possibly different account's observation.
     h.write_part("2026-09-11T23-1.json", &[sample(0, 20.0, Some(&hash('a')))]);
     h.write_part("2026-09-11T23-2.json", &[sample(0, 20.0, Some(&hash('a')))]);
     h.write_part("2026-09-11T23-3.json", &[sample(0, 20.0, None)]);
     let state = h.state();
     let summary = ingest_statusline_inbox(&state, &ctx, &[&a]).unwrap();
-    assert_eq!((summary.files, summary.bound, summary.skipped_existing), (3, 1, 2));
+    assert_eq!((summary.files, summary.bound, summary.skipped_existing), (3, 2, 1));
     assert_eq!(summary.quarantined_total(), 0);
-    assert_eq!(summary.unstamped, 0, "the replayed unstamped copy never reached the rule");
+    assert_eq!(summary.unstamped, 1, "identity evidence participates in the replay key");
     assert_eq!(summary.newest_bound_observed_at.as_deref(), Some("2026-09-11T23:00:00Z"));
     let again = ingest_statusline_inbox(&state, &ctx, &[&a]).unwrap();
     assert_eq!((again.bound, again.skipped_existing), (0, 3));

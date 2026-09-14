@@ -213,8 +213,11 @@ impl InboxSummary {
 /// Reads the Claude Code statusline inbox as `collect.py` does, extended to the
 /// model-scoped weekly windows and to identity binding: accepts samples whose
 /// key is a recognized window, in range and inside the backfill window, keyed
-/// by the digest of the six whitelisted fields (the stamp is not part of it),
-/// stored once under the binding the stamp names or held in quarantine.
+/// by the digest of the six whitelisted fields plus the local identity stamp
+/// when present. The stamp never enters the stored payload or emitted record,
+/// but it keeps identical readings from two accounts from suppressing one
+/// another. The sample is stored under the binding the stamp names or held in
+/// quarantine.
 pub fn ingest_statusline_inbox(
     state: &State,
     ctx: &RunContext,
@@ -268,16 +271,23 @@ pub fn ingest_statusline_inbox(
                 summary.malformed += 1;
                 break;
             }
-            let mut stored = Value::Object(safe.clone());
+            let stamp = q.get("identity_hash").and_then(Value::as_str);
+            let safe = Value::Object(safe);
+            // Preserve the legacy content-only key for unstamped samples. A stamped
+            // sample needs the account evidence in its local replay key so two accounts
+            // with the same value and reset instant remain two observations.
+            let slot = match stamp {
+                Some(stamp) => digest(&json!({ "sample": &safe, "identity_hash": stamp })),
+                None => digest(&safe),
+            };
+            let mut stored = safe;
             if let Value::Object(map) = &mut stored {
                 map.insert("raw_window_id".to_owned(), Value::String(window_key.unwrap_or("").to_owned()));
             }
-            let slot = digest(&Value::Object(safe)).as_str().to_owned();
-            if state.allowance_slot_exists_anywhere(&slot)? {
+            if state.allowance_slot_exists_anywhere(slot.as_str())? {
                 summary.skipped_existing += 1;
                 continue;
             }
-            let stamp = q.get("identity_hash").and_then(Value::as_str);
             if stamp.is_none() {
                 summary.unstamped += 1;
             }
@@ -285,7 +295,7 @@ pub fn ingest_statusline_inbox(
                 Ok(binding) => {
                     state.insert_allowance_slot_if_absent(
                         binding.binding_id.as_str(),
-                        &slot,
+                        slot.as_str(),
                         &stored.to_string(),
                     )?;
                     summary.bound += 1;
@@ -300,7 +310,7 @@ pub fn ingest_statusline_inbox(
                 }
                 Err(held) => {
                     state.quarantine_sample(
-                        &slot,
+                        slot.as_str(),
                         &stored.to_string(),
                         stamp,
                         held.reason.as_str(),

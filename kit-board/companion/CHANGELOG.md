@@ -40,8 +40,9 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
   `allowance_quarantine` table as `identity_ambiguous`, `identity_unconfirmed`, or `unpaired_identity`
   rather than assigning it to the install's first Claude binding. Held rows are re-evaluated every run,
   released only to a binding that can own them, and pruned after `max(local_raw_retention_days, 7)`
-  days unless their stamp still pairs with an enabled binding. The run also skips confirming an
-  identity a sibling binding already holds, or that two enabled unconfirmed siblings could both claim.
+  days unless their stamp still pairs with an enabled binding. The local replay key includes the stamp,
+  so equal meter readings from two accounts remain distinct. The run also skips confirming an identity
+  a sibling binding already holds, or that two enabled unconfirmed siblings could both claim.
 - The statusline hook writes one part file per changed reading
   (`<inbox>/<YYYY-MM-DDTHH>-<observed microseconds>.json`) instead of overwriting an hour file, on a
   changed `(used_percent, resets_at)` or every fifteen minutes, with the kept state

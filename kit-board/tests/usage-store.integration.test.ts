@@ -74,6 +74,13 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     const first = await store.createBinding(install, { account_id: account, provider: 'claude', account_label: 'Claude test', identity_hash: sha('identity') });
     const again = await store.createBinding(install, { account_id: account, provider: 'claude', account_label: 'Claude test', identity_hash: sha('identity') });
     assert.equal(first.created, true); assert.equal(again.created, false); assert.equal(again.binding.binding_id, first.binding.binding_id);
+    const duplicateIdentityAccount = `claude-${randomUUID().slice(0, 8)}`;
+    await assert.rejects(
+      store.createBinding(install, { account_id: duplicateIdentityAccount, provider: 'claude', account_label: 'Duplicate identity', identity_hash: sha('identity') }),
+      (error: unknown) => error instanceof RequestError && error.status === 409 && /identity_taken/.test(error.message),
+      'initial binding creation cannot assign one observed identity to two accounts',
+    );
+    assert.equal(Number((await sql`SELECT count(*) FROM personal_hub.companion_bindings WHERE install_id = ${install.id} AND account_id = ${duplicateIdentityAccount}`)[0].count), 0);
     await assert.rejects(store.createBinding(install, { account_id: account, provider: 'codex', account_label: 'x', identity_hash: null }), /another provider/);
     const codex = await store.createBinding(install, { account_id: codexAccount, provider: 'codex', account_label: 'Codex test', identity_hash: null });
     const bindingId = first.binding.binding_id, codexId = codex.binding.binding_id;
@@ -554,6 +561,19 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
       'the hash the first Claude binding holds is refused with its own reason');
     assert.equal((await sql`SELECT identity_hash FROM personal_hub.companion_bindings WHERE id = ${sibling}`)[0].identity_hash, null);
     assert.equal((await store.confirmIdentity(current, sibling, { identity_hash: sha('identity-sibling') })).identity_hash, sha('identity-sibling'));
+
+    // The install-row lock makes the same rule hold across concurrent server
+    // instances: only one of two new accounts may claim a previously unseen hash.
+    const racedIdentity = sha('identity-race');
+    const racedAccounts = [`claude-${randomUUID().slice(0, 8)}`, `claude-${randomUUID().slice(0, 8)}`];
+    const raced = await Promise.allSettled(racedAccounts.map((account_id, index) => store.createBinding(current, {
+      account_id, provider: 'claude', account_label: `Claude race ${index + 1}`, identity_hash: racedIdentity,
+    })));
+    assert.equal(raced.filter(result => result.status === 'fulfilled').length, 1);
+    const racedRejection = raced.find(result => result.status === 'rejected');
+    assert.ok(racedRejection?.status === 'rejected' && racedRejection.reason instanceof RequestError &&
+      racedRejection.reason.status === 409 && /identity_taken/.test(racedRejection.reason.message));
+    assert.equal(Number((await sql`SELECT count(*) FROM personal_hub.companion_bindings WHERE install_id = ${install.id} AND identity_hash = ${racedIdentity}`)[0].count), 1);
 
     // A duplicate that predates the refusal is disclosed on every binding that shares its hash with an enabled sibling,
     // so the Observatory can say which binding to re-confirm; a distinct hash clears the flag.
