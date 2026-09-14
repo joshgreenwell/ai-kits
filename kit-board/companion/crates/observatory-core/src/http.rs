@@ -5,8 +5,9 @@
 use std::time::Duration;
 
 use observatory_contract::{
-    BindingRequest, BindingResponse, ConfigDocument, IdentityRequest, IdentityResponse, InstallOverride,
-    PairRequest, PairResponse, SettingsResponse, UsageResponse, Uuid,
+    BindingRequest, BindingResponse, CapabilitiesDocument, CapabilitiesResponse, ConfigDocument,
+    IdentityRequest, IdentityResponse, InstallOverride, PairRequest, PairResponse, SettingsResponse,
+    UsageResponse, Uuid,
 };
 use serde::de::DeserializeOwned;
 use thiserror::Error;
@@ -211,6 +212,16 @@ impl Client {
     pub fn put_settings(&self, over: &InstallOverride) -> Result<SettingsResponse, HttpError> {
         let body = serde_json::to_vec(over).map_err(|_| HttpError::Decode)?;
         self.send_json("PUT", "/api/v1/companion/settings", &body, true)
+    }
+
+    /// `POST /api/v1/companion/capabilities`: what this build can do. Best-effort for
+    /// every caller; a failure here never fails a run.
+    pub fn post_capabilities(
+        &self,
+        document: &CapabilitiesDocument,
+    ) -> Result<CapabilitiesResponse, HttpError> {
+        let body = serde_json::to_vec(document).map_err(|_| HttpError::Decode)?;
+        self.send_json("POST", "/api/v1/companion/capabilities", &body, true)
     }
 
     /// `POST /api/v1/companion/bindings/<id>/identity`.

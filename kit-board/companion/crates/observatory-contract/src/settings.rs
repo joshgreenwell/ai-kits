@@ -301,7 +301,7 @@ impl CollectionSettings {
             },
             allowance: AllowanceSettings {
                 claude_reader: ClaudeReader::Statusline,
-                codex_reader: CodexReader::AppServer,
+                codex_reader: CodexReader::Embedded,
                 cursor_reader: CursorReader::Off,
             },
             account_history: AccountHistorySettings {
@@ -425,6 +425,12 @@ mod tests {
         let mut reader_off = CollectionSettings::defaults();
         reader_off.allowance.claude_reader = ClaudeReader::Off;
         assert!(!reader_off.gate(Adapter::ClaudeAccount).enabled);
+        // The default Codex reader is the embedded one, which `codex_execution` runs; the account
+        // adapter's private-interface readers are opt-in.
+        assert!(!settings.gate(Adapter::CodexAccount).enabled);
+        assert_eq!(settings.gate(Adapter::CodexAccount).mode_path, "allowance.codex_reader.embedded");
+        let mut settings = CollectionSettings::defaults();
+        settings.allowance.codex_reader = CodexReader::AppServer;
         assert!(settings.gate(Adapter::CodexAccount).enabled);
         assert!(!settings.gate(Adapter::CursorExecution).enabled);
         assert!(!settings.gate(Adapter::CursorExecution).provider_enabled);

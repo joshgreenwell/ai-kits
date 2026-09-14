@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { CompanionCapabilities } from './companion-capabilities';
 import type { Adapter, Provider } from './usage-contract';
 
 /**
@@ -43,7 +44,7 @@ export const defaultCollectionSettings: CollectionSettings = {
   providers: { claude: true, codex: true, cursor: false, anthropic_api: false, openai_api: false },
   execution: { claude_local_logs: true, codex_local_history: true, cursor_local_state: true, include_subagents: true,
     detail_level: 'buckets_only', tool_detail: 'builtin_only', project_attribution: 'off' },
-  allowance: { claude_reader: 'statusline', codex_reader: 'app_server', cursor_reader: 'off' },
+  allowance: { claude_reader: 'statusline', codex_reader: 'embedded', cursor_reader: 'off' },
   account_history: { cursor_usage_events: false, lookback_days: 30 },
   billing: { anthropic_admin_api: false, openai_admin_api: false },
   hooks: { claude_statusline: true, cursor_project_hooks: false },
@@ -89,9 +90,15 @@ function adapterProviderOf(adapter: Adapter): Provider {
 }
 
 /** The matrix the settings page renders: one row per setting, grouped, with its control kind. */
+/**
+ * What a value needs from a companion build: an adapter running a mode, a feature flag, or nothing
+ * (`always`). Rows without a requirement are settings every build honours; browser rows carry none
+ * because the v2 browser collector has not shipped and the v1 extension is managed under Connections.
+ */
+export type Requirement = 'always' | { adapter: Adapter; mode: string } | { feature: keyof CompanionCapabilities['features']; value?: string };
 export type SettingRow =
-  | { path: string; label: string; kind: 'switch'; note?: string }
-  | { path: string; label: string; kind: 'select'; options: readonly (string | number)[]; note?: string }
+  | { path: string; label: string; kind: 'switch'; note?: string; requires?: Requirement }
+  | { path: string; label: string; kind: 'select'; options: readonly (string | number)[]; note?: string; requires?: Record<string, Requirement> }
   | { path: string; label: string; kind: 'number'; min: number; max: number; note?: string };
 export const settingsMatrix: { group: string; rows: SettingRow[] }[] = [
   { group: 'Collection', rows: [
@@ -101,48 +108,84 @@ export const settingsMatrix: { group: string; rows: SettingRow[] }[] = [
   { group: 'Providers', rows: [
     { path: 'providers.claude', label: 'Claude', kind: 'switch' },
     { path: 'providers.codex', label: 'Codex', kind: 'switch' },
-    { path: 'providers.cursor', label: 'Cursor', kind: 'switch', note: 'On only when discovered and confirmed at setup.' },
-    { path: 'providers.anthropic_api', label: 'Anthropic API (Admin key)', kind: 'switch' },
-    { path: 'providers.openai_api', label: 'OpenAI API (Admin key)', kind: 'switch' },
+    { path: 'providers.cursor', label: 'Cursor', kind: 'switch', note: 'On only when discovered and confirmed at setup.', requires: { adapter: 'cursor_execution', mode: 'cursor_local_state' } },
+    { path: 'providers.anthropic_api', label: 'Anthropic API (Admin key)', kind: 'switch', requires: { adapter: 'anthropic_api', mode: 'anthropic_admin_api' } },
+    { path: 'providers.openai_api', label: 'OpenAI API (Admin key)', kind: 'switch', requires: { adapter: 'openai_api', mode: 'openai_admin_api' } },
   ] },
   { group: 'Execution readers', rows: [
-    { path: 'execution.claude_local_logs', label: 'Claude Code transcripts', kind: 'switch' },
-    { path: 'execution.codex_local_history', label: 'Codex CLI rollouts', kind: 'switch' },
-    { path: 'execution.cursor_local_state', label: 'Cursor local state', kind: 'switch' },
-    { path: 'execution.include_subagents', label: 'Include subagent transcripts', kind: 'switch' },
-    { path: 'execution.detail_level', label: 'Detail level', kind: 'select', options: ['buckets_only', 'requests', 'requests_with_tools'] },
-    { path: 'execution.tool_detail', label: 'Tool names', kind: 'select', options: ['off', 'builtin_only', 'hashed_custom'] },
-    { path: 'execution.project_attribution', label: 'Project attribution', kind: 'select', options: ['off', 'hashed'], note: 'hashed sends a hash of each request’s working directory, never the path; `observatory projects` on the machine maps hash to folder. Local and desktop sessions only; see docs/usage-coverage.md.' },
+    { path: 'execution.claude_local_logs', label: 'Claude Code transcripts', kind: 'switch', requires: { adapter: 'claude_execution', mode: 'claude_local_logs' } },
+    { path: 'execution.codex_local_history', label: 'Codex CLI rollouts', kind: 'switch', requires: { adapter: 'codex_execution', mode: 'codex_local_history' } },
+    { path: 'execution.cursor_local_state', label: 'Cursor local state', kind: 'switch', requires: { adapter: 'cursor_execution', mode: 'cursor_local_state' } },
+    { path: 'execution.include_subagents', label: 'Include subagent transcripts', kind: 'switch', requires: { feature: 'include_subagents' } },
+    { path: 'execution.detail_level', label: 'Detail level', kind: 'select', options: ['buckets_only', 'requests', 'requests_with_tools'], requires: { buckets_only: 'always', requests: { feature: 'detail_levels', value: 'requests' }, requests_with_tools: { feature: 'detail_levels', value: 'requests_with_tools' } } },
+    { path: 'execution.tool_detail', label: 'Tool names', kind: 'select', options: ['off', 'builtin_only', 'hashed_custom'], requires: { off: 'always', builtin_only: { feature: 'tool_detail', value: 'builtin_only' }, hashed_custom: { feature: 'tool_detail', value: 'hashed_custom' } } },
+    { path: 'execution.project_attribution', label: 'Project attribution', kind: 'select', options: ['off', 'hashed'], note: 'hashed sends a hash of each request’s working directory, never the path; `observatory projects` on the machine maps hash to folder. Local and desktop sessions only; see docs/usage-coverage.md.', requires: { off: 'always', hashed: { feature: 'project_attribution', value: 'hashed' } } },
   ] },
   { group: 'Allowance readers', rows: [
-    { path: 'allowance.claude_reader', label: 'Claude reader', kind: 'select', options: ['off', 'statusline', 'oauth_usage'], note: 'oauth_usage uses your existing Claude Code sign-in (private interface); statusline stays as a fallback.' },
-    { path: 'allowance.codex_reader', label: 'Codex reader', kind: 'select', options: ['off', 'embedded', 'app_server', 'web_backend'], note: 'app_server uses the Codex CLI’s own login through its app-server.' },
-    { path: 'allowance.cursor_reader', label: 'Cursor reader', kind: 'select', options: ['off', 'usage_summary', 'dashboard_rpc'], note: 'usage_summary uses your existing Cursor sign-in (private interface).' },
+    { path: 'allowance.claude_reader', label: 'Claude reader', kind: 'select', options: ['off', 'statusline', 'oauth_usage'], note: 'oauth_usage would use your existing Claude Code sign-in (private interface); statusline stays as a fallback.', requires: { off: 'always', statusline: { adapter: 'claude_account', mode: 'statusline' }, oauth_usage: { adapter: 'claude_account', mode: 'oauth_usage' } } },
+    { path: 'allowance.codex_reader', label: 'Codex reader', kind: 'select', options: ['off', 'embedded', 'app_server', 'web_backend'], note: 'embedded reads the rate limits Codex writes into its rollouts; app_server would use the Codex CLI’s own login through its app-server.', requires: { off: 'always', embedded: { adapter: 'codex_execution', mode: 'embedded' }, app_server: { adapter: 'codex_account', mode: 'app_server' }, web_backend: { adapter: 'codex_account', mode: 'web_backend' } } },
+    { path: 'allowance.cursor_reader', label: 'Cursor reader', kind: 'select', options: ['off', 'usage_summary', 'dashboard_rpc'], note: 'usage_summary would use your existing Cursor sign-in (private interface).', requires: { off: 'always', usage_summary: { adapter: 'cursor_account', mode: 'usage_summary' }, dashboard_rpc: { adapter: 'cursor_account', mode: 'dashboard_rpc' } } },
   ] },
   { group: 'Account history', rows: [
-    { path: 'account_history.cursor_usage_events', label: 'Cursor usage events', kind: 'switch' },
+    { path: 'account_history.cursor_usage_events', label: 'Cursor usage events', kind: 'switch', requires: { feature: 'account_history' } },
     { path: 'account_history.lookback_days', label: 'Lookback (days)', kind: 'number', min: 1, max: 90 },
   ] },
   { group: 'Billing', rows: [
-    { path: 'billing.anthropic_admin_api', label: 'Anthropic Admin usage and cost reports', kind: 'switch', note: 'Needs an Admin key in the install’s secrets.json.' },
-    { path: 'billing.openai_admin_api', label: 'OpenAI Admin usage and cost reports', kind: 'switch', note: 'Needs an Admin key in the install’s secrets.json.' },
+    { path: 'billing.anthropic_admin_api', label: 'Anthropic Admin usage and cost reports', kind: 'switch', note: 'Needs an Admin key in the install’s secrets.json.', requires: { adapter: 'anthropic_api', mode: 'anthropic_admin_api' } },
+    { path: 'billing.openai_admin_api', label: 'OpenAI Admin usage and cost reports', kind: 'switch', note: 'Needs an Admin key in the install’s secrets.json.', requires: { adapter: 'openai_api', mode: 'openai_admin_api' } },
   ] },
   { group: 'Hooks', rows: [
-    { path: 'hooks.claude_statusline', label: 'Claude Code statusline hook', kind: 'switch' },
-    { path: 'hooks.cursor_project_hooks', label: 'Cursor project hooks', kind: 'switch' },
+    { path: 'hooks.claude_statusline', label: 'Claude Code statusline hook', kind: 'switch', requires: { feature: 'hooks', value: 'claude_statusline' } },
+    { path: 'hooks.cursor_project_hooks', label: 'Cursor project hooks', kind: 'switch', requires: { adapter: 'cursor_execution', mode: 'cursor_project_hooks' } },
   ] },
   { group: 'Browser collector', rows: [
-    { path: 'browser.claude_web', label: 'claude.ai', kind: 'switch', note: 'Uses the signed-in tab (private interface).' },
-    { path: 'browser.chatgpt_web', label: 'chatgpt.com', kind: 'switch', note: 'Uses the signed-in tab (private interface).' },
-    { path: 'browser.cursor_web', label: 'cursor.com', kind: 'switch', note: 'Uses the signed-in tab (private interface).' },
+    { path: 'browser.claude_web', label: 'claude.ai', kind: 'switch', note: 'Applies to the v2 browser collector, which has not shipped; the v1 quota extension is managed under Connections.' },
+    { path: 'browser.chatgpt_web', label: 'chatgpt.com', kind: 'switch', note: 'Applies to the v2 browser collector, which has not shipped.' },
+    { path: 'browser.cursor_web', label: 'cursor.com', kind: 'switch', note: 'Applies to the v2 browser collector, which has not shipped.' },
   ] },
   { group: 'Other', rows: [
-    { path: 'detailed_monthly_report', label: 'Detailed monthly report (analyzer)', kind: 'switch' },
-    { path: 'live_mode', label: 'Live mode (serve)', kind: 'switch', note: 'A later phase; no effect yet.' },
+    { path: 'detailed_monthly_report', label: 'Detailed monthly report (analyzer)', kind: 'switch', note: 'Runs only on an install whose binding names the v1 analyzer.', requires: { feature: 'detailed_monthly_report' } },
+    { path: 'live_mode', label: 'Live mode (serve)', kind: 'switch', note: 'A later phase; no companion build implements it.', requires: { feature: 'live_mode' } },
     { path: 'local_raw_retention_days', label: 'Raw observation retention (days)', kind: 'select', options: [0, 7, 14, 30] },
     { path: 'update_notice', label: 'Update notice', kind: 'select', options: ['off', 'notify'] },
   ] },
 ];
+
+/** One companion build's report as the settings page sees it: the document and whether it still describes the running build. */
+export type CapabilityReport = { machine_label: string; current: boolean; document: CompanionCapabilities | null };
+export type OptionSupport = {
+  /** `always` needs no companion; `unverified` means no current report exists; the counts say who supports the value. */
+  state: 'always' | 'unverified' | 'supported' | 'partial' | 'unsupported';
+  supported: number; reporting: number; label: string;
+};
+
+function requirementFor(row: SettingRow, value: unknown): Requirement | undefined {
+  if (row.kind === 'select') return row.requires?.[String(value)];
+  if (row.kind === 'switch') return value === true ? row.requires : undefined;
+  return undefined;
+}
+
+function reportSupports(document: CompanionCapabilities, requirement: Requirement): boolean {
+  if (requirement === 'always') return true;
+  if ('feature' in requirement) {
+    const feature = document.features[requirement.feature];
+    return Array.isArray(feature) ? (feature as readonly string[]).includes(requirement.value ?? '') : feature === true;
+  }
+  const adapter = document.adapters.find(row => row.adapter === requirement.adapter);
+  return !!adapter && adapter.implemented && adapter.modes.includes(requirement.mode);
+}
+
+/** Whether the connected companions can act on a value, from their current capability reports only. */
+export function optionSupport(row: SettingRow, value: unknown, reports: CapabilityReport[]): OptionSupport {
+  const requirement = requirementFor(row, value);
+  const current = reports.filter(report => report.current && report.document);
+  if (!requirement || requirement === 'always') return { state: 'always', supported: current.length, reporting: current.length, label: '' };
+  if (!current.length) return { state: 'unverified', supported: 0, reporting: 0, label: 'unverified: no companion has reported its capabilities' };
+  const supported = current.filter(report => reportSupports(report.document!, requirement)).length;
+  if (supported === current.length) return { state: 'supported', supported, reporting: current.length, label: `supported by ${supported} of ${current.length} reporting` };
+  if (supported === 0) return { state: 'unsupported', supported, reporting: current.length, label: 'unsupported by every reporting companion' };
+  return { state: 'partial', supported, reporting: current.length, label: `supported by ${supported} of ${current.length} reporting` };
+}
 
 type Doc = Record<string, unknown>;
 /** Reads a dotted path of depth one or two. */

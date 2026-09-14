@@ -48,3 +48,14 @@ test('reports reject invalid dates and preserve partial coverage', () => {
   assert.equal(reportSchema.parse(report).status, 'partial');
   assert.equal(reportSchema.safeParse({ ...report, period_key: '2026-02-30' }).success, false);
 });
+test('the edge proxy admits companion posts with their own credentials and nothing else without a session', async () => {
+  const { proxy } = await import('../proxy');
+  const { NextRequest } = await import('next/server');
+  const status = (method: string, path: string) => proxy(new NextRequest(`http://localhost${path}`, { method })).status;
+  assert.equal(status('POST', '/api/v1/companion/capabilities'), 200, 'the capability report carries an install key');
+  assert.equal(status('POST', '/api/v1/companion/pair'), 200);
+  assert.equal(status('PUT', '/api/v1/companion/settings'), 200);
+  assert.equal(status('PUT', '/api/v1/companion/capabilities'), 401, 'only the documented PUT is admitted');
+  assert.equal(status('GET', '/api/usage-v2'), 401, 'session routes still need the cookie');
+  assert.equal(status('GET', '/api/v1/companion/capabilities'), 401);
+});

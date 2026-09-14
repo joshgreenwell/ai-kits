@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "companion_version": "2.0.0",
+  "capabilities_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+  "build": {
+    "platform": "windows",
+    "arch": "amd64",
+    "tls_roots": "platform",
+    "state_schema_version": "8"
+  },
+  "adapters": [
+    {
+      "adapter": "claude_execution",
+      "implemented": true,
+      "modes": [
+        "claude_local_logs"
+      ],
+      "parser_version": "2.0.0+v1.1.0-detail5",
+      "denied": false
+    },
+    {
+      "adapter": "codex_execution",
+      "implemented": true,
+      "modes": [
+        "codex_local_history",
+        "embedded"
+      ],
+      "parser_version": "2.0.0+v1.1.0-detail5",
+      "denied": false
+    },
+    {
+      "adapter": "claude_account",
+      "implemented": true,
+      "modes": [
+        "statusline"
+      ],
+      "parser_version": "2.0.0+statusline1",
+      "denied": false
+    },
+    {
+      "adapter": "codex_account",
+      "implemented": false,
+      "modes": [],
+      "parser_version": "0",
+      "denied": false
+    },
+    {
+      "adapter": "cursor_execution",
+      "implemented": false,
+      "modes": [],
+      "parser_version": "0",
+      "denied": false
+    },
+    {
+      "adapter": "cursor_account",
+      "implemented": false,
+      "modes": [],
+      "parser_version": "0",
+      "denied": false
+    },
+    {
+      "adapter": "anthropic_api",
+      "implemented": false,
+      "modes": [],
+      "parser_version": "0",
+      "denied": false
+    },
+    {
+      "adapter": "openai_api",
+      "implemented": false,
+      "modes": [],
+      "parser_version": "0",
+      "denied": false
+    }
+  ],
+  "features": {
+    "detail_levels": [
+      "buckets_only",
+      "requests",
+      "requests_with_tools"
+    ],
+    "tool_detail": [
+      "off",
+      "builtin_only",
+      "hashed_custom"
+    ],
+    "project_attribution": [
+      "off",
+      "hashed"
+    ],
+    "resource_attribution": true,
+    "include_subagents": true,
+    "hooks": [
+      "claude_statusline"
+    ],
+    "schedulers": [
+      "task_scheduler"
+    ],
+    "live_mode": false,
+    "detailed_monthly_report": true,
+    "account_history": false
+  },
+  "effective": {
+    "settings_version_applied": 7,
+    "config_source": "fetched",
+    "paused": false,
+    "cadence_minutes": 60,
+    "detail_level": "requests_with_tools",
+    "tool_detail": "builtin_only",
+    "project_attribution": "hashed",
+    "include_subagents": true,
+    "resource_attribution": "on",
+    "resources_configured": 2,
+    "readers": {
+      "claude": "statusline",
+      "codex": "embedded",
+      "cursor": "off"
+    }
+  },
+  "deny": [],
+  "deny_unrecognized": 0,
+  "discovered": {
+    "claude": true,
+    "codex": true,
+    "cursor": false
+  },
+  "bindings": [],
+  "detailed_report": [],
+  "schedule": {
+    "mechanism": null,
+    "state": "not_installed",
+    "installed_interval_minutes": null,
+    "config_dir_pinned": false
+  },
+  "queue": {
+    "records_pending": 3,
+    "records_rejected": 0,
+    "outbox_envelopes": 1
+  },
+  "backfill": {
+    "since": null,
+    "complete": false,
+    "last_partial_adapter": "claude_execution"
+  }
+}

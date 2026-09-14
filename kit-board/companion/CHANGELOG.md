@@ -4,6 +4,18 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
 
 ## Unreleased
 
+- Capability report: after every online run, and on `setup` / `service install` / `service uninstall`,
+  the companion posts a strict `CapabilitiesDocument` (build, implemented adapter modes, features,
+  effective settings, recognized deny entries, binding identity states, detailed-report status, the
+  schedule read back from the OS, queue depth, backfill) to `POST /api/v1/companion/capabilities`.
+  Codes, counts, and ids only; dry runs and `--offline` skip it; an unchanged document is re-posted
+  once a day. `run`, `status`, `doctor`, and `service *` print a `schedule` verdict (installed versus
+  desired cadence, config directory pinned, the action when they differ). A panicking adapter now
+  reports a `failed` coverage row with the new `adapter_panicked` detail instead of vanishing. The
+  default Codex reader is `embedded` (the implemented one), `setup` no longer offers the stub
+  private-interface readers, and the server-side `20260914020000_companion_capabilities.sql`
+  migration must be deployed before a build that posts the report is installed (the post fails
+  soft until then).
 - Extended envelope v2 compatibly with optional reported-total accounting, pricing, agent, and
   explicit project-state blocks; independent agent lifecycle, tool invocation/result, and
   privacy-safe resource-access events; and per-adapter capability coverage. Legacy producers

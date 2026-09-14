@@ -300,4 +300,6 @@ These limits produce visible unknown or unavailable states. They do not authoriz
 
 The definitions were checked against the current exclusive bucket invariant, request schema, canonical bucket/read queries, monthly snapshot reader, allowance forecast rules, and the audited source limitations. The examples above are the expected behavior for the later schema/query/UI tasks.
 
+The companion's capability document (`lib/companion-capabilities.ts`) is a sibling contract with the same discipline: closed enums, counts, and ids only, verified against the synthetic corpus under `tests/fixtures/usage-v2/capabilities/` on both sides. It reports what a build can do and what it is running under; it never carries usage facts, and the coverage rows inside an envelope remain the record of what a run actually did.
+
 Changes to any term, precedence rule, coverage denominator, timezone, or environmental cohort should update this document and the domain language before dependent implementation changes are accepted.

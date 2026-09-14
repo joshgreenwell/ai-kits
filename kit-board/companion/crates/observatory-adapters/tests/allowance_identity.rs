@@ -742,8 +742,10 @@ fn allowance_row(outcome: &Outcome) -> Option<(CapabilityState, Option<String>)>
 #[test]
 fn the_execution_adapters_report_the_embedded_row_for_codex_only() {
     let dir = tempfile::tempdir().unwrap();
-    // The default Codex reader is the unimplemented app server: the embedded row is a fallback.
-    let ctx = execution_context(&dir, CollectionSettings::defaults());
+    // With the unimplemented app server selected, the embedded row is reported as a fallback.
+    let mut settings = CollectionSettings::defaults();
+    settings.allowance.codex_reader = CodexReader::AppServer;
+    let ctx = execution_context(&dir, settings);
     let mut sink = MemorySink::default();
     let claude = ClaudeExecution.collect(&ctx, None, &mut sink).unwrap();
     assert_eq!(allowance_row(&claude), None, "the transcript scan no longer claims the meter");
@@ -762,11 +764,9 @@ fn the_execution_adapters_report_the_embedded_row_for_codex_only() {
     );
     assert_eq!(codex.capabilities.as_ref().unwrap().len(), 8);
 
-    // The embedded reader selected: complete, but the corpus is ten days old.
+    // The default (embedded) reader: complete, but the corpus is ten days old.
     let dir = tempfile::tempdir().unwrap();
-    let mut settings = CollectionSettings::defaults();
-    settings.allowance.codex_reader = CodexReader::Embedded;
-    let ctx = execution_context(&dir, settings);
+    let ctx = execution_context(&dir, CollectionSettings::defaults());
     let codex = CodexExecution.collect(&ctx, None, &mut MemorySink::default()).unwrap();
     assert_eq!(allowance_row(&codex), Some((CapabilityState::Complete, Some("no_recent_samples".into()))));
 

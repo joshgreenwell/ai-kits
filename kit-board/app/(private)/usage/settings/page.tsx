@@ -11,9 +11,17 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useInstalls } from '@/components/companion-installs';
-import { getSetting, setSetting, settingsMatrix, type CollectionSettings, type InstallOverride, type SettingRow } from '@/lib/companion-settings';
+import { getSetting, optionSupport, setSetting, settingsMatrix, type CapabilityReport, type CollectionSettings, type InstallOverride, type SettingRow } from '@/lib/companion-settings';
 
 type Doc = Record<string, unknown>;
+
+/** What the connected companions say about a value: never disables the control, only labels it. */
+function SupportChip({ row, value, reports }: { row: SettingRow; value: unknown; reports: CapabilityReport[] }) {
+  const support = optionSupport(row, value, reports);
+  if (support.state === 'always') return null;
+  const variant = support.state === 'supported' ? 'soft' : support.state === 'unsupported' ? 'soft-warning' : 'outline';
+  return <Badge variant={variant} className="text-[10px]" title={support.label}>{support.state === 'unverified' ? 'unverified' : support.state === 'unsupported' ? 'unsupported' : `supported ${support.supported}/${support.reporting}`}</Badge>;
+}
 
 function Control({ row, value, onChange, id, disabled }: { row: SettingRow; value: unknown; onChange: (v: unknown) => void; id: string; disabled?: boolean }) {
   if (row.kind === 'switch') return <Switch id={id} aria-label={row.label} checked={value === true} disabled={disabled} onCheckedChange={v => onChange(v)} />;
@@ -49,6 +57,7 @@ export default function SettingsPage() {
     finally { setBusy(false); }
   }
   const installs = data?.installs.filter(i => !i.disabled) ?? [];
+  const reports: CapabilityReport[] = installs.map(i => ({ machine_label: i.machine_label, current: i.capabilities.current, document: i.capabilities.document }));
 
   return (
     <Workspace>
@@ -97,7 +106,10 @@ export default function SettingsPage() {
                             {row.note && <div className="text-muted-foreground mt-0.5 max-w-[36ch] text-[11px] leading-snug">{row.note}</div>}
                           </TableCell>
                           <TableCell className="align-top">
-                            <Control id={`global-${row.path}`} row={row} value={getSetting(global as unknown as Doc, row.path)} onChange={v => setGlobal(g => setSetting(g as unknown as Doc, row.path, v) as unknown as CollectionSettings)} />
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Control id={`global-${row.path}`} row={row} value={getSetting(global as unknown as Doc, row.path)} onChange={v => setGlobal(g => setSetting(g as unknown as Doc, row.path, v) as unknown as CollectionSettings)} />
+                              <SupportChip row={row} value={getSetting(global as unknown as Doc, row.path)} reports={reports} />
+                            </div>
                           </TableCell>
                           {installs.map(i => {
                             const override = overrides[i.id] ?? {};
@@ -131,8 +143,37 @@ export default function SettingsPage() {
               ))}
             </div>
             <p className="text-muted-foreground text-xs leading-relaxed">
-              An override replaces a whole group (for example all of <span className="font-mono">allowance</span>) for that install. Clearing the group returns it to the global default. The deny list in the machine’s <span className="font-mono">companion.json</span> can only remove modes and is never shown here.
+              An override replaces a whole group (for example all of <span className="font-mono">allowance</span>) for that install. Clearing the group returns it to the global default. Support chips come from each companion’s own capability report and never block a save; a value no connected build implements is stored and reported as unsupported on its next run.
             </p>
+            {installs.length > 0 && (
+              <div className="border-border overflow-auto rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="bg-card uppercase">Install</TableHead>
+                      <TableHead className="bg-card uppercase">Applied</TableHead>
+                      <TableHead className="bg-card uppercase">Effective on the machine</TableHead>
+                      <TableHead className="bg-card uppercase">Local deny list</TableHead>
+                      <TableHead className="bg-card uppercase">Schedule</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {installs.map(i => {
+                      const effective = i.capabilities.current ? i.capabilities.document?.effective ?? null : null;
+                      return (
+                        <TableRow key={i.id} className="even:bg-foreground/[0.03] border-b-0 font-mono text-[11px]">
+                          <TableCell className="align-top">{i.machine_label}<span className="text-muted-foreground block">{i.capabilities.current ? `reported by ${i.capabilities.document?.companion_version}` : i.capabilities.reason === 'never_reported' ? 'no capability report yet' : `report not current (${i.capabilities.reason})`}</span></TableCell>
+                          <TableCell className="align-top">v{i.applied_settings_version ?? '—'}{data && data.settings_version !== i.applied_settings_version ? ' (pending)' : ''}{effective && effective.settings_version_applied !== i.applied_settings_version ? ` · report says v${effective.settings_version_applied}` : ''}</TableCell>
+                          <TableCell className="align-top">{effective ? `${effective.detail_level} · tools ${effective.tool_detail} · project ${effective.project_attribution} · resources ${effective.resource_attribution} (${effective.resources_configured}) · readers ${effective.readers.claude}/${effective.readers.codex}/${effective.readers.cursor} · settings ${effective.config_source}${effective.paused ? ' · paused' : ''}` : '—'}</TableCell>
+                          <TableCell className="align-top">{effective ? (i.capabilities.document?.deny.length ? i.capabilities.document.deny.join(', ') : 'none') + (i.capabilities.document?.deny_unrecognized ? ` · ${i.capabilities.document.deny_unrecognized} unrecognized` : '') : '—'}</TableCell>
+                          <TableCell className="align-top">{i.schedule.state === 'unknown' ? '—' : `${i.schedule.state}${i.schedule.installed_interval_minutes !== null ? ` · installed ${i.schedule.installed_interval_minutes} min` : ''} · desired ${i.schedule.desired_interval_minutes} min${i.schedule.pending ? ' · pending: run `observatory service install` with this install’s --config-dir' : ''}`}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

@@ -10,7 +10,7 @@ use observatory_core::discovery::discover;
 use observatory_core::effective::effective;
 use observatory_core::inbox::read_statusline_status;
 use observatory_core::resources::resource_attribution_denied;
-use observatory_core::run::{RunOptions, prepare};
+use observatory_core::run::{ConfigSource, RunOptions, prepare, schedule_summary};
 use observatory_core::service;
 use observatory_core::state::State;
 use serde_json::{Value, json};
@@ -123,6 +123,8 @@ pub fn doctor(dir: &Path, args: DoctorArgs) -> CommandResult {
         "since": ctx.since_text,
         "paused": ctx.settings.paused,
         "cadence_minutes": ctx.settings.cadence_minutes.get(),
+        "schedule": schedule_summary(dir, &prepared.config.install_id,
+            (prepared.config_source != ConfigSource::Defaults).then(|| ctx.settings.cadence_minutes.get())),
         "latest_version": ctx.document.as_ref().and_then(|d| d.companion.latest_version.as_ref().map(|v| v.as_str().to_owned())),
         "deny": ctx.deny,
         "resources_configured": resources.len(),

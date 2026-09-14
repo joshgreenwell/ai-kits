@@ -16,6 +16,7 @@
 #![deny(unused_must_use)]
 
 pub mod api;
+pub mod capabilities;
 pub mod config;
 pub mod coverage;
 pub mod enums;
@@ -29,6 +30,11 @@ pub use api::{
     Accepted, BindingRequest, BindingResponse, IdentityRequest, IdentityResponse, PairRequest, PairResponse,
     Rejection, SettingsResponse, UsageResponse,
 };
+pub use capabilities::{
+    AdapterCapability, BackfillState, BindingCapability, BindingIdentity, BuildInfo, CapabilitiesDocument,
+    CapabilitiesResponse, ConfigSourceKind, DetailedReportCapability, Discovered, EffectiveSettings,
+    Features, QueueState, Readers, ResourceAttributionState, ScheduleCapability, ScheduleState, Scheduler,
+};
 pub use config::{BindingInfo, CompanionInfo, ConfigDocument, InstallInfo};
 pub use coverage::{AdapterCoverage, CapabilityCoverage};
 pub use enums::{
@@ -40,8 +46,8 @@ pub use enums::{
 };
 pub use envelope::{Bucket, BucketEntry, Envelope, Run, Violation};
 pub use newtypes::{
-    AccountId, Amount, Code, Counter, Lit, MAX_SAFE_INTEGER, MeterKey, Nullable, Real, Sha256Hex, Stamp,
-    Text, ToolName, Uuid, ValueError,
+    AccountId, Amount, Code, Counter, IsoDate, Lit, MAX_SAFE_INTEGER, MachineId, MeterKey, ModePath,
+    Nullable, Real, Sha256Hex, Stamp, Text, ToolName, Uuid, ValueError,
 };
 pub use records::{
     AccountUsageBucket, ActivityRequest, AgentAttribution, AgentEvent, AllowanceReading, Dimensions,

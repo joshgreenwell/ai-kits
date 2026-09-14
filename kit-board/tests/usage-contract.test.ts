@@ -106,7 +106,9 @@ test('settings merge with defaults, overrides replace whole groups, and gates fo
   assert.equal(adapterGate(defaultCollectionSettings, 'claude_account').enabled, true, 'the statusline reader runs under claude_account');
   assert.equal(adapterGate(defaultCollectionSettings, 'claude_account').mode_path, 'allowance.claude_reader.statusline');
   assert.equal(adapterGate(mergeSettings(defaultCollectionSettings, { allowance: { claude_reader: 'off', codex_reader: 'embedded', cursor_reader: 'off' } }), 'claude_account').enabled, false);
-  assert.equal(adapterGate(defaultCollectionSettings, 'codex_account').mode_path, 'allowance.codex_reader.app_server');
+  assert.equal(adapterGate(defaultCollectionSettings, 'codex_account').mode_path, 'allowance.codex_reader.embedded');
+  assert.equal(adapterGate(defaultCollectionSettings, 'codex_account').enabled, false, 'the default Codex reader is the embedded one, run by codex_execution');
+  assert.equal(adapterGate(mergeSettings(defaultCollectionSettings, { allowance: { claude_reader: 'statusline', codex_reader: 'app_server', cursor_reader: 'off' } }), 'codex_account').enabled, true);
   assert.equal(adapterGate(defaultCollectionSettings, 'cursor_execution').provider_enabled, false);
   assert.equal(adapterGate(merged, 'claude_execution').enabled, false, 'paused wins');
   const doc = setSetting({} as Record<string, unknown>, 'allowance.claude_reader', 'oauth_usage', defaultCollectionSettings as unknown as Record<string, unknown>);

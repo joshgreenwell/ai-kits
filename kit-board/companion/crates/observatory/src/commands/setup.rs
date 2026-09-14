@@ -11,15 +11,13 @@ use std::process::ExitCode;
 use std::str::FromStr;
 
 use jiff::Timestamp;
-use observatory_contract::settings::{
-    AllowanceSettings, ClaudeReader, CursorReader, HookSettings, ProviderSwitches,
-};
+use observatory_contract::settings::{HookSettings, ProviderSwitches};
 use observatory_contract::{AccountId, BindingRequest, InstallOverride, Nullable, Provider, Text};
 use observatory_core::config::{CompanionConfig, LocalBinding, LocalResource, Secrets};
 use observatory_core::discovery::{Discovered, DisplayIdentity, ObsidianVault, discover};
 use observatory_core::http::Client;
 use observatory_core::paths::{claude_settings_file, write_private};
-use observatory_core::run::{RunOptions, run as run_cycle};
+use observatory_core::run::{RunOptions, prepare, report_capabilities, run as run_cycle, schedule_summary};
 use observatory_core::service;
 use serde_json::{Value, json};
 
@@ -309,22 +307,9 @@ pub fn setup(dir: &Path, args: SetupArgs) -> CommandResult {
     }
 
     // Readers, hook, and schedule: one question each.
+    // The private-interface readers (Claude OAuth usage, Cursor usage summary) are stubs in this
+    // build, so setup never offers them; the statusline and embedded readers need no question.
     let mut over = InstallOverride::default();
-    let mut allowance = AllowanceSettings {
-        claude_reader: ClaudeReader::Statusline,
-        codex_reader: observatory_contract::settings::CodexReader::AppServer,
-        cursor_reader: CursorReader::Off,
-    };
-    let mut changed_allowance = false;
-    if bound.contains(&Provider::Claude)
-        && prompt.confirm(
-            "Read Claude's OAuth usage (uses your existing Claude Code sign-in, private interface)?",
-            false,
-        )
-    {
-        allowance.claude_reader = ClaudeReader::OauthUsage;
-        changed_allowance = true;
-    }
     if bound.contains(&Provider::Cursor) {
         over.providers = Some(ProviderSwitches {
             claude: true,
@@ -333,16 +318,7 @@ pub fn setup(dir: &Path, args: SetupArgs) -> CommandResult {
             anthropic_api: false,
             openai_api: false,
         });
-        if prompt.confirm(
-            "Read Cursor's usage summary (uses your existing Cursor sign-in, private interface)?",
-            false,
-        ) {
-            allowance.cursor_reader = CursorReader::UsageSummary;
-            changed_allowance = true;
-        }
-    }
-    if changed_allowance {
-        over.allowance = Some(allowance);
+        println!("  Cursor allowance readers are not implemented in this build; the setting stays off");
     }
     if detailed_enabled {
         over.detailed_monthly_report = Some(true);
@@ -392,6 +368,23 @@ pub fn setup(dir: &Path, args: SetupArgs) -> CommandResult {
         let cadence = super::service::cadence_minutes(dir);
         let status = service::install(dir, &config.install_id, cadence)?;
         print_json(&status);
+        // The first publish already reported this build; report again now that the
+        // schedule exists, so the Observatory does not show it as missing until the next run.
+        let options = RunOptions { dry_run: true, fetch_config: true, ..RunOptions::default() };
+        if let Ok(prepared) = prepare(dir, &options, false) {
+            let state = observatory_core::state::State::open(&prepared.ctx.state_path)?;
+            let summary = schedule_summary(dir, &config.install_id, Some(cadence));
+            let reported = report_capabilities(
+                &prepared.config,
+                &prepared.ctx,
+                &state,
+                prepared.config_source,
+                &adapters,
+                &summary,
+                true,
+            );
+            print_json(&reported);
+        }
     }
     let v1 = service::v1_schedules();
     if !v1.is_empty() {

@@ -58,8 +58,39 @@ function allowanceReading(binding: InstallSummary['bindings'][number], cadenceMi
 }
 
 function acceptedByTypeText(counts: InstallSummary['accepted_by_type']) {
-  return Object.entries(counts).map(([type, c]) =>
-    `${type} ${c.accepted} accepted${c.duplicate ? `, ${c.duplicate} duplicate` : ''}${c.rejected ? `, ${c.rejected} rejected` : ''}`).join(' · ');
+  return Object.entries(counts).map(([type, c]) => {
+    const reasons = Object.entries(c).filter(([key, n]) => key.startsWith('rejected:') && n > 0).map(([key, n]) => `${n} ${key.slice('rejected:'.length)}`);
+    return `${type} ${c.accepted} accepted${c.duplicate ? `, ${c.duplicate} duplicate` : ''}${c.rejected ? `, ${c.rejected} rejected${reasons.length ? ` (${reasons.join(', ')})` : ''}` : ''}`;
+  }).join(' · ');
+}
+
+const healthStatus: Record<string, RunStatus> = {
+  paired: 'validated', complete: 'validated', confirmed: 'validated', ok: 'validated', fresh: 'validated', observed: 'validated',
+  partial: 'incomplete', mixed: 'incomplete', unconfirmed: 'incomplete', reset: 'incomplete', changed: 'incomplete', stale: 'incomplete', unknown: 'incomplete', blocked: 'incomplete',
+  none: 'never-run', never: 'never-run', off: 'disabled', failed: 'failed',
+};
+
+/** The ladder: one labelled rung per fact the server holds, so "off" never reads as "broken". */
+function HealthLadder({ install }: { install: InstallSummary }) {
+  const { health, schedule, capabilities } = install;
+  const rungs: [string, string, string][] = [
+    ['paired', health.pairing, 'the install holds a key'],
+    ['bindings', health.binding, 'against the providers enabled for this install'],
+    ['identity', health.identity, 'from the server state and the companion’s last report'],
+    ['execution', health.execution, 'over the adapters this build implements with their mode on'],
+    ['records', health.records, `newest ledger evidence; allowance judged at the ${schedule.cadence_basis} cadence (${schedule.effective_cadence_minutes} min)`],
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {rungs.map(([name, value, title]) => (
+        <StatusBadge key={name} status={healthStatus[value] ?? 'incomplete'} title={title}>{name} {value}</StatusBadge>
+      ))}
+      {health.coverage_only && <Badge variant="outline" title="the last run uploaded coverage only">last run accepted no records</Badge>}
+      {health.overdue && <Badge variant="soft-warning" title={`no contact since ${when(health.last_contact_at)}`}>overdue · expected every {schedule.effective_cadence_minutes} min</Badge>}
+      {schedule.pending && <Badge variant="soft-warning" title={`installed ${schedule.installed_interval_minutes ?? '?'} min, desired ${schedule.desired_interval_minutes} min`}>cadence pending</Badge>}
+      {capabilities.current && capabilities.previous_digest && <Badge variant="soft-info" title={`previous build ${capabilities.previous_digest.slice(0, 12)}; changed ${when(capabilities.changed_at)}`}>build changed {when(capabilities.changed_at)}</Badge>}
+    </div>
+  );
 }
 
 async function mutate(url: string, method: string, body: unknown) {
@@ -186,6 +217,15 @@ export function CompanionInstalls() {
                       {install.companion_version ?? 'version unknown'} · {install.platform}/{install.arch} · last run {install.last_run_at ? when(install.last_run_at) : 'never'} · applied settings v{install.applied_settings_version ?? '—'}{data.settings_version !== install.applied_settings_version ? ' (pending)' : ''}
                       {run && <span className="mt-0.5 block">{run.accepted_buckets} buckets · {run.accepted_records} records accepted · {run.rejected_records} rejected</span>}
                       {run && Object.keys(install.accepted_by_type).length > 0 && <span className="mt-0.5 block">{acceptedByTypeText(install.accepted_by_type)}</span>}
+                      <span className="mt-0.5 block">
+                        {install.capabilities.current
+                          ? `capabilities reported ${when(install.capabilities.reported_at)} by ${install.capabilities.document?.companion_version} · build ${install.capabilities.digest?.slice(0, 12)} · schedule ${install.schedule.state}${install.schedule.installed_interval_minutes !== null ? ` every ${install.schedule.installed_interval_minutes} min` : ''}${install.schedule.config_dir_pinned === false ? ' · config dir not pinned' : ''} · queue ${install.capabilities.document?.queue.records_pending ?? 0} pending, ${install.capabilities.document?.queue.outbox_envelopes ?? 0} envelopes · backfill since ${install.capabilities.document?.backfill.since ?? '—'}${install.capabilities.document?.backfill.complete ? '' : ' (in progress)'}`
+                          : install.capabilities.reason === 'never_reported' ? 'no capability report yet: update the companion and run it once' : `capability report not current (${install.capabilities.reason}${install.capabilities.document ? `, from ${install.capabilities.document.companion_version} ${when(install.capabilities.reported_at)}` : ''})`}
+                      </span>
+                      {install.schedule.pending && <span className="text-warning mt-0.5 block">cadence {install.schedule.desired_interval_minutes} min pending — run `observatory service install` with the same --config-dir this install was set up with (`observatory doctor` prints it)</span>}
+                      {install.capabilities.current && (install.capabilities.document?.detailed_report ?? []).map(report => (
+                        <span key={report.binding_id} className="mt-0.5 block">detailed monthly report · {report.configured ? `configured (machine ${report.machine_id ?? '—'})` : 'not configured'}{report.last_status ? ` · last ${report.last_status}${report.last_error_code ? ` (${report.last_error_code})` : ''}` : ' · not run yet'}</span>
+                      ))}
                     </>}
                     aside={<>
                       <StatusBadge status={status} title="Last contact is any accepted upload, readings or not; each binding lists its newest reading below.">{install.disabled ? 'disabled' : run ? `last contact ${when(install.last_seen_at)}` : 'never run'}</StatusBadge>
@@ -196,6 +236,7 @@ export function CompanionInstalls() {
                     </>}
                   />
                   <div className="grid gap-2 px-4 pb-3">
+                    <HealthLadder install={install} />
                     {install.bindings.map(binding => {
                       const reading = allowanceReading(binding, install.cadence_minutes, now);
                       const capability = allowanceCapability(run, binding.provider);

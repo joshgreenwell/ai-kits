@@ -27,6 +27,7 @@ KIT = Path(__file__).resolve().parents[2]
 CORPUS = KIT / "tests" / "fixtures" / "usage-v2"
 PARITY = CORPUS / "parity"
 WIRE = CORPUS / "wire"
+CAPABILITIES = CORPUS / "capabilities"
 COLLECT = KIT / "scripts" / "telemetry" / "collect.py"
 SINCE = "2026-09-01"
 ACCOUNTS = {"claude": "claude-primary", "codex": "codex-primary"}
@@ -554,6 +555,86 @@ def generate_wire() -> None:
                                                    "schema_expressible": expressible, "envelope": envelope})
 
 
+# --- capability documents (POST /api/v1/companion/capabilities) --------------------
+
+def capabilities_document(**overrides) -> dict:
+    """A default companion build's capability document: codes, flags, counts, ids only."""
+    adapters = [
+        ("claude_execution", True, ["claude_local_logs"], "2.0.0+v1.1.0-detail5"),
+        ("codex_execution", True, ["codex_local_history", "embedded"], "2.0.0+v1.1.0-detail5"),
+        ("claude_account", True, ["statusline"], "2.0.0+statusline1"),
+        ("codex_account", False, [], "0"),
+        ("cursor_execution", False, [], "0"),
+        ("cursor_account", False, [], "0"),
+        ("anthropic_api", False, [], "0"),
+        ("openai_api", False, [], "0"),
+    ]
+    document = {
+        "schema_version": 1,
+        "companion_version": "2.0.0",
+        "capabilities_digest": "1" * 64,
+        "build": {"platform": "windows", "arch": "amd64", "tls_roots": "platform", "state_schema_version": "8"},
+        "adapters": [{"adapter": a, "implemented": i, "modes": m, "parser_version": p, "denied": False}
+                     for a, i, m, p in adapters],
+        "features": {"detail_levels": ["buckets_only", "requests", "requests_with_tools"],
+                     "tool_detail": ["off", "builtin_only", "hashed_custom"], "project_attribution": ["off", "hashed"],
+                     "resource_attribution": True, "include_subagents": True, "hooks": ["claude_statusline"],
+                     "schedulers": ["task_scheduler"], "live_mode": False, "detailed_monthly_report": True,
+                     "account_history": False},
+        "effective": {"settings_version_applied": 7, "config_source": "fetched", "paused": False, "cadence_minutes": 60,
+                      "detail_level": "requests_with_tools", "tool_detail": "builtin_only", "project_attribution": "hashed",
+                      "include_subagents": True, "resource_attribution": "on", "resources_configured": 2,
+                      "readers": {"claude": "statusline", "codex": "embedded", "cursor": "off"}},
+        "deny": ["allowance.claude_reader.oauth_usage", "providers.cursor"],
+        "deny_unrecognized": 1,
+        "discovered": {"claude": True, "codex": True, "cursor": False},
+        "bindings": [{"binding_id": B_CLAUDE, "identity": "confirmed", "conflict": False, "roots_present": 1},
+                     {"binding_id": B_CODEX, "identity": "unconfirmed", "conflict": False, "roots_present": 2}],
+        "detailed_report": [{"binding_id": B_CODEX, "configured": True, "machine_id": "synthetic-machine",
+                             "last_status": "published", "last_error_code": None}],
+        "schedule": {"mechanism": "task_scheduler", "state": "installed", "installed_interval_minutes": 60,
+                     "config_dir_pinned": True},
+        "queue": {"records_pending": 3, "records_rejected": 0, "outbox_envelopes": 1},
+        "backfill": {"since": "2026-09-01", "complete": True, "last_partial_adapter": None},
+    }
+    document.update(overrides)
+    return document
+
+
+def valid_capabilities() -> dict[str, dict]:
+    unscheduled = capabilities_document(schedule={"mechanism": None, "state": "not_installed",
+                                                  "installed_interval_minutes": None, "config_dir_pinned": False},
+                                        deny=[], deny_unrecognized=0, bindings=[], detailed_report=[],
+                                        backfill={"since": None, "complete": False, "last_partial_adapter": "claude_execution"})
+    return {"default-build": capabilities_document(), "unscheduled-fresh-install": unscheduled}
+
+
+def invalid_capabilities() -> dict[str, tuple[str, dict]]:
+    """name -> (reason, document)."""
+    with_path = capabilities_document()
+    with_path["build"]["config_dir"] = "/Users/private/.config/personal-hub/companion"
+    raw_deny = capabilities_document(deny=["/Users/private/vault"])
+    unknown_adapter = capabilities_document()
+    unknown_adapter["adapters"][0]["adapter"] = "obsidian_mcp"
+    bad_version = capabilities_document(schema_version=2)
+    return {
+        "private-path-field": ("a path-bearing field is rejected by the strict schema", with_path),
+        "free-text-deny-entry": ("deny entries must be recognized mode paths, never free text", raw_deny),
+        "unknown-adapter": ("adapter ids are the closed contract list", unknown_adapter),
+        "wrong-schema-version": ("only schema_version 1 exists", bad_version),
+    }
+
+
+def generate_capabilities() -> None:
+    for sub in ("valid", "invalid"):
+        if (CAPABILITIES / sub).exists():
+            shutil.rmtree(CAPABILITIES / sub)
+    for name, document in valid_capabilities().items():
+        dump(CAPABILITIES / "valid" / f"{name}.json", document)
+    for name, (reason, document) in invalid_capabilities().items():
+        dump(CAPABILITIES / "invalid" / f"{name}.json", {"_fixture": DECLARATION, "reason": reason, "document": document})
+
+
 def manifest() -> dict:
     files = sorted(str(p.relative_to(CORPUS)).replace(os.sep, "/") for p in CORPUS.rglob("*")
                    if p.is_file() and p.name not in ("MANIFEST.json", "README.md", ".gitattributes"))
@@ -565,6 +646,7 @@ def manifest() -> dict:
 def generate() -> None:
     generate_parity()
     generate_wire()
+    generate_capabilities()
     dump(CORPUS / "MANIFEST.json", manifest())
 
 
@@ -637,6 +719,14 @@ def check() -> int:
         path = WIRE / "invalid" / f"{name}.json"
         if not path.exists() or json.loads(path.read_bytes()).get("envelope") != envelope:
             problems.append(f"wire/invalid/{name}.json is stale")
+    for name, document in valid_capabilities().items():
+        path = CAPABILITIES / "valid" / f"{name}.json"
+        if not path.exists() or json.loads(path.read_bytes()) != document:
+            problems.append(f"capabilities/valid/{name}.json is stale")
+    for name, (reason, document) in invalid_capabilities().items():
+        path = CAPABILITIES / "invalid" / f"{name}.json"
+        if not path.exists() or json.loads(path.read_bytes()).get("document") != document:
+            problems.append(f"capabilities/invalid/{name}.json is stale")
     for problem in problems:
         print(problem, file=sys.stderr)
     return 1 if problems else 0

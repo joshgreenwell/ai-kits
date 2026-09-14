@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use jiff::Timestamp;
@@ -13,9 +14,13 @@ use jiff::tz::TimeZone;
 use observatory_contract::IdentityRequest;
 use observatory_contract::settings::{DetailLevel, ProjectAttribution, ToolDetail};
 use observatory_contract::{
-    AdapterCoverage, AgentClass, Arch, BucketEntry, CapabilityCoverage, CollectionSettings, ConfigDocument,
-    Counter, CoverageState, CursorState, DetailCode, Envelope, Nullable, Platform, Provider, Reader, Record,
-    Run, Sha256Hex, Stamp, Text, ToolClass, Uuid,
+    AdapterCapability, AdapterCoverage, AgentClass, Arch, BackfillState, BindingCapability, BindingIdentity,
+    BucketEntry, BuildInfo, CapabilitiesDocument, CapabilityCoverage, Code, CollectionSettings,
+    ConfigDocument, ConfigSourceKind, Counter, CoverageState, CursorState, DetailCode,
+    DetailedReportCapability, Discovered as DiscoveredCapability, EffectiveSettings, Envelope, Features,
+    IsoDate, Lit, MachineId, ModePath, Nullable, Platform, Provider, QueueState, Reader, Readers, Record,
+    ResourceAttributionState, Run, ScheduleCapability, ScheduleState, Scheduler, Sha256Hex, Stamp, Text,
+    ToolClass, Uuid,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -32,6 +37,7 @@ use crate::outbox;
 use crate::paths;
 use crate::pyjson::{digest, epoch_text};
 use crate::resources::{ResourceConfiguration, resource_attribution_denied};
+use crate::service;
 use crate::state::{
     AdapterStateRow, CachedConfig, RecordRow, RunRow, SUPERSEDED_CONFIGURATION, State, StateError,
 };
@@ -84,6 +90,8 @@ pub struct Prepared {
     pub config_source: ConfigSource,
     pub config_error: Option<String>,
     pub lock: Option<lock::RunLock>,
+    /// True when the run was told not to contact the Observatory (`--offline`).
+    pub offline: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -127,6 +135,12 @@ pub struct RunSummary {
     pub total_duration_ms: u64,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub detailed_reports: Vec<crate::detailed::DetailedOutcome>,
+    /// Whether this build's capability document reached the Observatory this run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<CapabilitiesOutcome>,
+    /// The installed schedule read back beside the desired cadence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<ScheduleSummary>,
 }
 
 fn default_since(now: Timestamp) -> String {
@@ -445,7 +459,15 @@ pub fn prepare(config_dir: &Path, options: &RunOptions, take_lock: bool) -> Resu
         tracing::warn!(code = "resource_invalid", "{warning}");
     }
     let ctx = ctx.with_resources(resources);
-    Ok(Prepared { config, config_dir: config_dir.to_path_buf(), ctx, config_source, config_error, lock })
+    Ok(Prepared {
+        offline: !options.fetch_config,
+        config,
+        config_dir: config_dir.to_path_buf(),
+        ctx,
+        config_source,
+        config_error,
+        lock,
+    })
 }
 
 struct Collected {
@@ -938,7 +960,7 @@ fn rebuild_outbox_preserving_coverage(
 /// Runs one collection cycle with the given adapters.
 pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunSummary, RunError> {
     let started = Instant::now();
-    let Prepared { config, config_dir, ctx, config_source, config_error, lock } = prepared;
+    let Prepared { config, config_dir, ctx, config_source, config_error, lock, offline } = prepared;
     let run_id = Uuid::v4();
     let started_at = Stamp::from_timestamp(ctx.now);
     if lock.is_none() {
@@ -961,6 +983,8 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
             publication: None,
             total_duration_ms: 0,
             detailed_reports: Vec::new(),
+            capabilities: None,
+            schedule: None,
         });
     }
     let state = State::open(&ctx.state_path)?;
@@ -1087,6 +1111,11 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
             (None, Preflight::Blocked { state: blocked, detail }) => {
                 (*blocked, Some(*detail), None, Duration::ZERO, 0, 0)
             }
+            // A runnable adapter with no collected item means its thread panicked; the run
+            // reports that as a failure rather than echoing the settings-level state.
+            (None, Preflight::Ready) if effective.runs => {
+                (CoverageState::Failed, Some(DetailCode::AdapterPanicked), None, Duration::ZERO, 0, 0)
+            }
             (None, Preflight::Ready) => (effective.state, effective.detail, None, Duration::ZERO, 0, 0),
         };
         let parser_version = adapter.parser_version();
@@ -1198,6 +1227,21 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
             });
         }
     }
+    // What this build can do, read back and posted best-effort after the upload so a
+    // slow or refused post never delays or fails collection.
+    let desired = (config_source != ConfigSource::Defaults).then(|| ctx.settings.cadence_minutes.get());
+    let schedule = schedule_summary(&config_dir, &config.install_id, desired);
+    let capabilities = if ctx.dry_run || offline {
+        let document = capabilities_document(&config, &ctx, &state, config_source, adapters, &schedule);
+        Some(CapabilitiesOutcome {
+            posted: false,
+            skipped: Some(if ctx.dry_run { "dry_run" } else { "offline" }),
+            error: None,
+            digest: capabilities_change_digest(&document),
+        })
+    } else {
+        Some(report_capabilities(&config, &ctx, &state, config_source, adapters, &schedule, false))
+    };
     let summary = RunSummary {
         ok: publication.as_ref().is_none_or(|p| p.error.is_none()),
         run_id: run_id.to_string(),
@@ -1217,6 +1261,8 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
         publication,
         total_duration_ms: started.elapsed().as_millis() as u64,
         detailed_reports,
+        capabilities,
+        schedule: Some(schedule),
     };
     if let Ok(text) = serde_json::to_string(&summary) {
         state.save_run(&RunRow {
@@ -1231,6 +1277,391 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
     }
     drop(lock);
     Ok(summary)
+}
+
+// --- what this build can do ----------------------------------------------------
+
+/// The installed schedule beside the desired cadence, for the run summary,
+/// `doctor`, `status`, and the capability document.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ScheduleSummary {
+    pub mechanism: Option<&'static str>,
+    /// `not_installed`, `installed`, `interval_mismatch`, or `unreadable`.
+    pub state: &'static str,
+    pub installed_interval_minutes: Option<u64>,
+    /// `None` when no fetched or cached settings document exists.
+    pub desired_interval_minutes: Option<u64>,
+    pub pending: bool,
+    pub config_dir_pinned: bool,
+    /// The exact local command that applies the desired cadence, when one is needed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+}
+
+/// Reads the schedule back and compares it with the desired cadence. The run never
+/// rewrites its own schedule: a job replacing the scheduler entry that started it
+/// would kill itself, so a mismatch is reported with the command to run instead.
+pub fn schedule_summary(config_dir: &Path, install_id: &Uuid, desired: Option<u64>) -> ScheduleSummary {
+    let installed = service::installed_schedule(config_dir, install_id);
+    let mismatch = matches!((installed.interval_minutes, desired), (Some(have), Some(want)) if have != want);
+    let state =
+        if installed.state == "installed" && mismatch { "interval_mismatch" } else { installed.state };
+    let pending = state == "interval_mismatch";
+    let action = (pending || state == "not_installed")
+        .then(|| format!("observatory --config-dir \"{}\" service install", config_dir.to_string_lossy()));
+    ScheduleSummary {
+        mechanism: installed.mechanism,
+        state,
+        installed_interval_minutes: installed.interval_minutes,
+        desired_interval_minutes: desired,
+        pending,
+        config_dir_pinned: installed.config_dir_pinned,
+        action,
+    }
+}
+
+/// Whether the capability document was posted this run, and why not.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CapabilitiesOutcome {
+    pub posted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<&'static str>,
+    /// A closed code (`http_401`, `timeout`, `transport`, `client`); never a message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub digest: String,
+}
+
+const CAPABILITIES_DIGEST_KEY: &str = "capabilities_last_digest";
+const CAPABILITIES_POSTED_KEY: &str = "capabilities_last_posted_at";
+const CAPABILITIES_HEARTBEAT_SECONDS: f64 = 86_400.0;
+
+/// Every adapter in the contract, for deny recognition and the adapter rows.
+const ALL_ADAPTERS: [AdapterId; 11] = [
+    AdapterId::ClaudeExecution,
+    AdapterId::CodexExecution,
+    AdapterId::ClaudeAccount,
+    AdapterId::CodexAccount,
+    AdapterId::CursorExecution,
+    AdapterId::CursorAccount,
+    AdapterId::AnthropicApi,
+    AdapterId::OpenaiApi,
+    AdapterId::ClaudeBrowser,
+    AdapterId::CodexBrowser,
+    AdapterId::CursorBrowser,
+];
+
+fn codes(values: &[&str]) -> Vec<Code> {
+    values.iter().filter_map(|value| Code::from_str(value).ok()).collect()
+}
+
+fn code(value: &str) -> Code {
+    Code::from_str(value).unwrap_or_else(|_| Code::from_str("unknown").unwrap_or_else(|_| unreachable!()))
+}
+
+/// The mode codes this build actually runs for an adapter; a stub advertises none.
+fn build_modes(adapter: AdapterId, implemented: bool) -> Vec<Code> {
+    if !implemented {
+        return Vec::new();
+    }
+    codes(match adapter {
+        AdapterId::ClaudeExecution => &["claude_local_logs"],
+        AdapterId::CodexExecution => &["codex_local_history", "embedded"],
+        AdapterId::ClaudeAccount => &["statusline"],
+        _ => &[],
+    })
+}
+
+/// Every mode path a deny entry can name, whatever the server currently selects: an
+/// entry for a mode that is not selected today still removes it if it is selected
+/// later, so it is recognized and reported rather than counted as noise.
+const KNOWN_MODE_PATHS: [&str; 17] = [
+    "execution.claude_local_logs",
+    "execution.codex_local_history",
+    "execution.cursor_local_state",
+    "execution.project_attribution.hashed",
+    "execution.resource_attribution",
+    "allowance.claude_reader.statusline",
+    "allowance.claude_reader.oauth_usage",
+    "allowance.codex_reader.embedded",
+    "allowance.codex_reader.app_server",
+    "allowance.codex_reader.web_backend",
+    "allowance.cursor_reader.usage_summary",
+    "allowance.cursor_reader.dashboard_rpc",
+    "billing.anthropic_admin_api",
+    "billing.openai_admin_api",
+    "browser.claude_web",
+    "browser.chatgpt_web",
+    "browser.cursor_web",
+];
+
+/// A deny entry the companion itself acts on: an adapter id, a provider switch, or a
+/// mode path or dotted prefix of one. Anything else is counted, never uploaded.
+fn recognized_deny(entry: &str) -> bool {
+    ALL_ADAPTERS
+        .iter()
+        .any(|adapter| entry == adapter.as_str() || entry == format!("providers.{}", adapter.provider()))
+        || KNOWN_MODE_PATHS
+            .iter()
+            .any(|path| *path == entry || path.strip_prefix(entry).is_some_and(|rest| rest.starts_with('.')))
+}
+
+fn detailed_outcomes_from_last_run(state: &State) -> BTreeMap<String, (Option<Code>, Option<Code>)> {
+    let mut outcomes = BTreeMap::new();
+    let Ok(Some(row)) = state.last_run() else { return outcomes };
+    let Ok(summary) = serde_json::from_str::<serde_json::Value>(&row.summary) else { return outcomes };
+    for report in summary["detailed_reports"].as_array().into_iter().flatten() {
+        let Some(binding) = report["binding_id"].as_str() else { continue };
+        let status = report["result"]["status"].as_str().and_then(|value| Code::from_str(value).ok());
+        let error = report["result"]["error"].as_str().and_then(|value| Code::from_str(value).ok());
+        outcomes.insert(binding.to_owned(), (status, error));
+    }
+    outcomes
+}
+
+/// Builds the document from what the run already decided. It names ids, codes,
+/// flags, and counts only: no root, path, host, hash of a path, or credential.
+pub fn capabilities_document(
+    config: &CompanionConfig,
+    ctx: &RunContext,
+    state: &State,
+    config_source: ConfigSource,
+    adapters: &[Box<dyn Adapter>],
+    schedule: &ScheduleSummary,
+) -> CapabilitiesDocument {
+    let settings = &ctx.settings;
+    let adapter_rows: Vec<AdapterCapability> = adapters
+        .iter()
+        .map(|adapter| {
+            let id = adapter.id();
+            let implemented = adapter.parser_version() != "0";
+            let decided = effective(id, settings, &ctx.deny, &ctx.bindings);
+            AdapterCapability {
+                adapter: id,
+                implemented,
+                modes: build_modes(id, implemented),
+                parser_version: Text::truncated(adapter.parser_version())
+                    .unwrap_or_else(|_| Text::try_from("0".to_owned()).unwrap_or_else(|_| unreachable!())),
+                denied: decided.state == CoverageState::DeniedLocally,
+            }
+        })
+        .collect();
+    let features = Features {
+        detail_levels: codes(&["buckets_only", "requests", "requests_with_tools"]),
+        tool_detail: codes(&["off", "builtin_only", "hashed_custom"]),
+        project_attribution: codes(&["off", "hashed"]),
+        resource_attribution: true,
+        include_subagents: true,
+        hooks: codes(&["claude_statusline"]),
+        schedulers: match schedule.mechanism {
+            Some("launchd") => vec![Scheduler::Launchd],
+            Some("task_scheduler") => vec![Scheduler::TaskScheduler],
+            Some("systemd") => vec![Scheduler::Systemd],
+            _ => Vec::new(),
+        },
+        live_mode: false,
+        detailed_monthly_report: true,
+        account_history: false,
+    };
+    let fingerprint = digest(&serde_json::json!([adapter_rows, features]));
+    let resource_attribution = if settings.execution.detail_level != DetailLevel::RequestsWithTools {
+        ResourceAttributionState::DetailLevel
+    } else if ctx.resources.is_empty() {
+        ResourceAttributionState::NoResources
+    } else if resource_attribution_denied(&ctx.deny) {
+        ResourceAttributionState::DeniedLocally
+    } else {
+        ResourceAttributionState::On
+    };
+    let mut deny = Vec::new();
+    let mut deny_unrecognized = 0u64;
+    for entry in &config.deny {
+        match ModePath::from_str(entry) {
+            Ok(path) if recognized_deny(entry) && deny.len() < 32 => deny.push(path),
+            _ => deny_unrecognized += 1,
+        }
+    }
+    let found = discovery::discover();
+    let detailed = detailed_outcomes_from_last_run(state);
+    let (records_total, records_pending, records_rejected) = state.record_counts().unwrap_or((0, 0, 0));
+    let _ = records_total;
+    let adapter_states = state.all_adapter_states().unwrap_or_default();
+    let partial: Vec<&AdapterStateRow> =
+        adapter_states.iter().filter(|row| row.effective == "on" && row.cursor.is_some()).collect();
+    let counter = |value: u64| Counter::saturating(value);
+    CapabilitiesDocument {
+        schema_version: Lit,
+        companion_version: Text::truncated(VERSION)
+            .unwrap_or_else(|_| Text::try_from("0".to_owned()).unwrap_or_else(|_| unreachable!())),
+        capabilities_digest: fingerprint,
+        build: BuildInfo {
+            platform: Platform::current(),
+            arch: Arch::current(),
+            tls_roots: code(crate::http::TLS_ROOTS_LABEL),
+            state_schema_version: code(crate::state::SCHEMA_VERSION),
+        },
+        adapters: adapter_rows,
+        features,
+        effective: EffectiveSettings {
+            settings_version_applied: counter(ctx.settings_version),
+            config_source: match config_source {
+                ConfigSource::Fetched | ConfigSource::NotModified => ConfigSourceKind::Fetched,
+                ConfigSource::Cached => ConfigSourceKind::Cached,
+                ConfigSource::Defaults => ConfigSourceKind::Defaults,
+            },
+            paused: settings.paused,
+            cadence_minutes: counter(settings.cadence_minutes.get()),
+            detail_level: code(settings.execution.detail_level.as_str()),
+            tool_detail: code(settings.execution.tool_detail.as_str()),
+            project_attribution: code(settings.execution.project_attribution.as_str()),
+            include_subagents: settings.execution.include_subagents,
+            resource_attribution,
+            resources_configured: counter(ctx.resources.resources.len() as u64),
+            readers: Readers {
+                claude: code(settings.allowance.claude_reader.as_str()),
+                codex: code(settings.allowance.codex_reader.as_str()),
+                cursor: code(settings.allowance.cursor_reader.as_str()),
+            },
+        },
+        deny,
+        deny_unrecognized: counter(deny_unrecognized),
+        discovered: DiscoveredCapability {
+            claude: found.claude.present,
+            codex: found.codex.present,
+            cursor: found.cursor.present,
+        },
+        bindings: ctx
+            .bindings
+            .iter()
+            .map(|binding| BindingCapability {
+                binding_id: binding.binding_id.clone(),
+                identity: match binding.identity {
+                    IdentityState::Confirmed => BindingIdentity::Confirmed,
+                    IdentityState::Unconfirmed => BindingIdentity::Unconfirmed,
+                    IdentityState::Changed => BindingIdentity::Changed,
+                },
+                conflict: binding.identity_conflict,
+                roots_present: counter(binding.roots.iter().filter(|root| root.is_dir()).count() as u64),
+            })
+            .collect(),
+        detailed_report: config
+            .bindings
+            .iter()
+            .filter_map(|local| {
+                let report = local.detailed_report.as_ref()?;
+                let (last_status, last_error_code) =
+                    detailed.get(&local.binding_id.to_string()).cloned().unwrap_or((None, None));
+                Some(DetailedReportCapability {
+                    binding_id: local.binding_id.clone(),
+                    configured: true,
+                    machine_id: Nullable(MachineId::from_str(&report.machine_id).ok()),
+                    last_status: Nullable(last_status),
+                    last_error_code: Nullable(last_error_code),
+                })
+            })
+            .collect(),
+        schedule: ScheduleCapability {
+            mechanism: Nullable(match schedule.mechanism {
+                Some("launchd") => Some(Scheduler::Launchd),
+                Some("task_scheduler") => Some(Scheduler::TaskScheduler),
+                Some("systemd") => Some(Scheduler::Systemd),
+                _ => None,
+            }),
+            state: match schedule.state {
+                "installed" => ScheduleState::Installed,
+                "interval_mismatch" => ScheduleState::IntervalMismatch,
+                "unreadable" => ScheduleState::Unreadable,
+                _ => ScheduleState::NotInstalled,
+            },
+            installed_interval_minutes: Nullable(schedule.installed_interval_minutes.map(counter)),
+            config_dir_pinned: schedule.config_dir_pinned,
+        },
+        queue: QueueState {
+            records_pending: counter(records_pending),
+            records_rejected: counter(records_rejected),
+            outbox_envelopes: counter(state.outbox_len().unwrap_or(0)),
+        },
+        backfill: BackfillState {
+            since: Nullable(
+                state.meta("since").ok().flatten().and_then(|value| IsoDate::from_str(&value).ok()),
+            ),
+            complete: partial.is_empty(),
+            last_partial_adapter: Nullable(
+                partial.first().and_then(|row| AdapterId::from_str(&row.adapter).ok()),
+            ),
+        },
+    }
+}
+
+/// The digest that decides whether the document changed: the queue counters move
+/// on every run and are left out.
+fn capabilities_change_digest(document: &CapabilitiesDocument) -> String {
+    let mut value = serde_json::to_value(document).unwrap_or(serde_json::Value::Null);
+    if let Some(map) = value.as_object_mut() {
+        map.remove("queue");
+    }
+    digest(&value).as_str().to_owned()
+}
+
+/// Posts the document when it changed since the last acknowledged post or the daily
+/// heartbeat is due; `force` posts regardless. Best-effort: an error is a code in
+/// the outcome, never a failed run, and a 401 from this endpoint is not a revoked key.
+#[allow(clippy::too_many_arguments)]
+pub fn report_capabilities(
+    config: &CompanionConfig,
+    ctx: &RunContext,
+    state: &State,
+    config_source: ConfigSource,
+    adapters: &[Box<dyn Adapter>],
+    schedule: &ScheduleSummary,
+    force: bool,
+) -> CapabilitiesOutcome {
+    let document = capabilities_document(config, ctx, state, config_source, adapters, schedule);
+    let digest_text = capabilities_change_digest(&document);
+    let outcome = |posted: bool, skipped: Option<&'static str>, error: Option<String>| CapabilitiesOutcome {
+        posted,
+        skipped,
+        error,
+        digest: digest_text.clone(),
+    };
+    if let Err(reason) = document.validate() {
+        let _ = reason;
+        return outcome(false, Some("document_invalid"), None);
+    }
+    if !force {
+        let unchanged =
+            state.meta(CAPABILITIES_DIGEST_KEY).ok().flatten().as_deref() == Some(digest_text.as_str());
+        let last_posted = state
+            .meta(CAPABILITIES_POSTED_KEY)
+            .ok()
+            .flatten()
+            .and_then(|text| text.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        if unchanged && ctx.now_seconds - last_posted < CAPABILITIES_HEARTBEAT_SECONDS {
+            return outcome(false, Some("unchanged"), None);
+        }
+    }
+    let client = match Client::new(&config.url, Some(config.key.clone())) {
+        Ok(client) => client,
+        Err(_) => return outcome(false, None, Some("client".to_owned())),
+    };
+    match client.post_capabilities(&document) {
+        Ok(_) => {
+            let _ = state.set_meta(CAPABILITIES_DIGEST_KEY, &digest_text);
+            let _ = state.set_meta(CAPABILITIES_POSTED_KEY, &ctx.now_seconds.to_string());
+            outcome(true, None, None)
+        }
+        Err(error) => {
+            let code = match error {
+                HttpError::Status(status) => format!("http_{status}"),
+                HttpError::Timeout => "timeout".to_owned(),
+                HttpError::Transport => "transport".to_owned(),
+                _ => "client".to_owned(),
+            };
+            tracing::warn!(code = "capabilities_not_posted", error = %code, "capability document not accepted");
+            outcome(false, None, Some(code))
+        }
+    }
 }
 
 /// `prepare` then `execute`.
@@ -1970,5 +2401,127 @@ mod tests {
         assert!(retained.records.is_empty());
         assert!(retained.buckets.is_empty());
         assert!(queued.iter().any(|envelope| envelope.run.run_id == new_run.run_id));
+    }
+    fn scratch_config(dir: &Path) -> CompanionConfig {
+        let root = dir.join("PRIVATE-ROOT-SENTINEL");
+        std::fs::create_dir_all(&root).unwrap();
+        let config = CompanionConfig {
+            schema_version: Lit,
+            url: "https://example.test".into(),
+            install_id: Uuid::v4(),
+            key: crate::config::Secret::new("k".repeat(43)),
+            machine_label: "scratch".into(),
+            since: Some("2026-09-01".into()),
+            bindings: vec![crate::config::LocalBinding {
+                binding_id: Uuid::v4(),
+                account_id: observatory_contract::AccountId::from_str("claude-scratch").unwrap(),
+                provider: Provider::Claude,
+                roots: Some(vec![root]),
+                codex_home: None,
+                cursor_state_db: None,
+                detailed_report: None,
+            }],
+            deny: vec![
+                "allowance.claude_reader.oauth_usage".into(),
+                "/Users/private/vault".into(),
+                "providers.cursor".into(),
+            ],
+            resources: vec![],
+            claude_statusline_inbox: None,
+        };
+        config.save(dir).unwrap();
+        config
+    }
+
+    /// An adapter whose collect thread panics, standing in for the transcript scanner.
+    struct Panicking;
+
+    impl Adapter for Panicking {
+        fn id(&self) -> AdapterId {
+            AdapterId::ClaudeExecution
+        }
+        fn parser_version(&self) -> &'static str {
+            "test"
+        }
+        fn preflight(&self, _ctx: &RunContext) -> Preflight {
+            Preflight::Ready
+        }
+        fn collect(
+            &self,
+            _ctx: &RunContext,
+            _cursor: Option<Cursor>,
+            _sink: &mut dyn crate::adapter::Sink,
+        ) -> Result<Outcome, crate::adapter::AdapterError> {
+            panic!("synthetic adapter panic")
+        }
+    }
+
+    #[test]
+    fn the_capability_document_names_codes_and_ids_only_and_skips_an_unchanged_post() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = scratch_config(dir.path());
+        let options = RunOptions { dry_run: true, fetch_config: false, ..RunOptions::default() };
+        let prepared = prepare(dir.path(), &options, false).unwrap();
+        assert!(prepared.offline);
+        let state = State::open(&prepared.ctx.state_path).unwrap();
+        let schedule = schedule_summary(dir.path(), &config.install_id, None);
+        let adapters: Vec<Box<dyn Adapter>> = vec![Box::new(Panicking)];
+        let document = capabilities_document(
+            &prepared.config,
+            &prepared.ctx,
+            &state,
+            prepared.config_source,
+            &adapters,
+            &schedule,
+        );
+        document.validate().unwrap();
+        let text = serde_json::to_string(&document).unwrap();
+        let escaped_dir = dir.path().to_string_lossy().replace('\\', "\\\\");
+        assert!(!text.contains("PRIVATE-ROOT-SENTINEL"), "{text}");
+        assert!(!text.contains(&escaped_dir) && !text.contains("/Users/private"), "{text}");
+        assert_eq!(document.deny.len(), 2, "only recognized deny entries travel");
+        assert_eq!(document.deny_unrecognized.get(), 1);
+        assert_eq!(document.bindings.len(), 1);
+        assert_eq!(document.bindings[0].roots_present.get(), 1);
+        assert_eq!(document.effective.config_source, ConfigSourceKind::Defaults);
+        assert_eq!(
+            document.backfill.since.clone().into_inner().map(|date| date.as_str().to_owned()),
+            Some("2026-09-01".to_owned())
+        );
+        assert!(document.adapters[0].implemented, "a parser version other than 0 is implemented");
+        assert_eq!(document.schedule.state, ScheduleState::NotInstalled);
+        // Unchanged since an acknowledged post within the day: skipped without contacting anyone.
+        let change = capabilities_change_digest(&document);
+        state.set_meta(CAPABILITIES_DIGEST_KEY, &change).unwrap();
+        state.set_meta(CAPABILITIES_POSTED_KEY, &prepared.ctx.now_seconds.to_string()).unwrap();
+        let outcome = report_capabilities(
+            &prepared.config,
+            &prepared.ctx,
+            &state,
+            prepared.config_source,
+            &adapters,
+            &schedule,
+            false,
+        );
+        assert_eq!((outcome.posted, outcome.skipped), (false, Some("unchanged")));
+        // Queue counters move every run and never change the digest.
+        let mut moved = document.clone();
+        moved.queue.records_pending = Counter::saturating(99);
+        assert_eq!(capabilities_change_digest(&moved), change);
+    }
+
+    #[test]
+    fn a_panicking_adapter_reports_a_failed_coverage_row_and_a_dry_run_skips_the_post() {
+        let dir = tempfile::tempdir().unwrap();
+        scratch_config(dir.path());
+        let options = RunOptions { dry_run: true, fetch_config: false, ..RunOptions::default() };
+        let prepared = prepare(dir.path(), &options, true).unwrap();
+        let adapters: Vec<Box<dyn Adapter>> = vec![Box::new(Panicking)];
+        let summary = execute(prepared, &adapters).unwrap();
+        let row = summary.adapters.iter().find(|row| row.adapter == AdapterId::ClaudeExecution).unwrap();
+        assert_eq!((row.state, row.detail), (CoverageState::Failed, Some(DetailCode::AdapterPanicked)));
+        let capabilities = summary.capabilities.as_ref().unwrap();
+        assert_eq!((capabilities.posted, capabilities.skipped), (false, Some("dry_run")));
+        assert_eq!(summary.schedule.as_ref().unwrap().desired_interval_minutes, None);
     }
 }

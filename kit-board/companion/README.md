@@ -48,15 +48,15 @@ shows "update available" when an install's reported version is behind
 | `observatory connect --url <observatory> --code XXXX-XXXX [--label <machine>] [--since YYYY-MM-DD]` | Exchanges a one-time pairing code for an install id and key and writes `companion.json` (`0600`). `--since` sets the backfill start (default: the first day of the current UTC month); the first run pins it in state, so choose it before that run. The URL must be `https`, or `http` to `localhost`/`127.0.0.1`, with no userinfo; redirects are errors. |
 | `observatory setup [--yes] [--bind claude=claude-primary]... [--secrets]` | Discovers Claude Code, Codex, and Cursor stores; shows each signed-in identity; proposes bindings; offers each Obsidian vault from the application's own registry as a knowledge source (key `obsidian.<vault id>`, folder name as the local label; default no, skipped under `--yes`); asks once each about the private-interface readers, the Claude statusline hook (written into `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set, else `~/.claude/settings.json`; an existing statusline command is preserved as a passthrough), and the schedule; writes bindings and this install's settings override; runs a dry run, a first publish, and `service install`; offers to remove a v1 schedule. |
 | `observatory run [--dry-run] [--offline]` | One collection cycle (below). |
-| `observatory service install\|uninstall\|status` | LaunchAgent `com.personal-observatory.companion.<install-id>`, Task Scheduler task `Personal Observatory Companion <install-id>`, or systemd user timer `personal-observatory-companion.timer`, at the effective cadence. Uninstall removes only what it installed. |
+| `observatory service install\|uninstall\|status` | LaunchAgent `com.personal-observatory.companion.<install-id>`, Task Scheduler task `Personal Observatory Companion <install-id>`, or systemd user timer `personal-observatory-companion.timer`, at the effective cadence. Uninstall removes only what it installed. Every subcommand reads the installed job back (`schedule`: state, interval, whether it pins this config directory, `pending` against the desired cadence, and the action when it does not match) and install/uninstall post the capability report so the site sees the change at once. |
 | `observatory statusline` | Claude Code statusline command: reads the statusline JSON on stdin, stamps each allowance sample with the signed-in account's identity hash, writes a part file to the inbox only when a reading changed or the fifteen-minute heartbeat is due, prints the same one-line summary `statusline.py` printed, always exits 0 (`Claude` on any failure). No network, no SQLite. |
 | `observatory hook claude\|cursor` | Tool hook receivers: append a bounded snapshot (event name, tool name, hashed session id) to the local inbox and exit 0. |
-| `observatory status` | Last run summary, outbox depth, last receipt, schedule state, per-adapter state. |
+| `observatory status` | Last run summary, outbox depth, last receipt, the schedule verdict (installed versus desired cadence), per-adapter state. |
 | `observatory projects` | Every working directory this install has seen, per binding, with its `project_hash` and first and last sighting. Local only: this listing is how a hash gets a label on the Observatory. |
 | `observatory resources` | Every knowledge source in `companion.json` with its key, label, source, roots (and how many exist), connectors, validation problem, and, once a run has created the state, the `cfg:` token its rows carry; the local deny state; per binding, access counts by key, kind, and evidence basis and inspection counts by class. Local only: roots, labels, and connector ids never leave the machine. |
 | `observatory resources add --key <key> --root <dir>... [--connector <id>]... [--label <text>] [--source <text>]` | Adds a source, or replaces the one with the same key, after validation (key `^[a-z0-9_.:-]{1,64}$`; roots absolute or `~/`-anchored; connectors `mcp:<namespace>` or `url:<prefix>`; at least one root or connector). The next run replays retained transcripts under the new configuration. |
 | `observatory resources remove --key <key>` | Removes a source. Future runs stop uploading rows for that key; rows the Observatory already holds are append-only and stay. |
-| `observatory doctor [--offline]` | Effective mode and reason per adapter, prerequisite and credential checks as coverage states, discovery booleans (including Obsidian's registry and vault count), `resources_configured`, `resources_invalid`, `resource_attribution_effective` with its reason (`detail_level`, `denied_locally`, `no_resources`, `ok`), a `claude_statusline` block (below), v1 schedules found. `--offline` reads the cached config document instead of fetching it, like `run --offline`. Never a token or a path outside the configuration directory. |
+| `observatory doctor [--offline]` | Effective mode and reason per adapter, prerequisite and credential checks as coverage states, discovery booleans (including Obsidian's registry and vault count), `resources_configured`, `resources_invalid`, `resource_attribution_effective` with its reason (`detail_level`, `denied_locally`, `no_resources`, `ok`), a `claude_statusline` block (below), v1 schedules found. `--offline` reads the cached config document instead of fetching it, like `run --offline`. Also the `schedule` verdict. Never a token or a path outside the configuration directory. |
 | `observatory settings show` | The cached effective settings document and its `settings_version`. |
 | `observatory version` | The semantic version, also reported in every envelope. |
 | `observatory serve` | Placeholder; live mode is a later phase. |
@@ -413,6 +413,32 @@ owner can veto any of them.
 - **The detailed monthly report stays a Python adapter** run as a subprocess; porting the
   analyzers is out of scope, and the adapter already owns retries, artifacts, and the
   publisher credential.
+
+## The capability report
+
+After every online run — and forced on `setup`, `service install`, and `service uninstall` — the
+companion posts `CapabilitiesDocument` (`observatory_contract::capabilities`, the zod authority is
+`lib/companion-capabilities.ts`) to `POST /api/v1/companion/capabilities` with the install key. It
+says what this build can do and what it is running under: build version, target and scheduler kind;
+each of the eight adapters with `implemented`, the modes it implements (`claude_local_logs`,
+`codex_local_history`, `embedded`, `statusline`, …), its parser version, and whether the local deny
+list removes it; feature lists (detail levels, tool detail, project attribution, hooks, schedulers,
+`live_mode`, `detailed_monthly_report`, `account_history`); the effective settings (applied settings
+version, config source `server` / `cache` / `defaults`, paused, detail level, tool detail, project
+and resource attribution, reader per provider, `resources_configured`); the recognized local deny
+entries as dotted mode paths plus a count of unrecognized ones; discovery booleans; per-binding
+identity state; the detailed report's configuration and last outcome per binding; the schedule read
+back from the OS (`installed` / `not_installed` / `unreadable`, interval, config directory pinned);
+queue depth; and backfill progress. Every field is a closed enum, a counter, or an id — the strict
+Rust type and the zod schema both reject a path, token, label, or free-text entry, and the synthetic
+corpus under `tests/fixtures/usage-v2/capabilities/` is checked on both sides.
+
+The post is best effort: a dry run or `--offline` skips it, a failure is reported in the run summary
+(`capabilities.error`, a code such as `http_401`, `timeout`, or `transport`) and never blocks the
+upload, and an unchanged digest (queue depth excluded) is re-posted only once a day as a heartbeat.
+`observatory run` prints the outcome under `capabilities` and the schedule verdict under `schedule`;
+the site turns them into support chips on Usage → Settings, the health ladder on Connections, and the
+`cadence pending` action.
 
 ## What is uploaded
 

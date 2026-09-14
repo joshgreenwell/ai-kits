@@ -36,6 +36,12 @@ pub enum ValueError {
     Counter,
     #[error("expected a code of 1 to 64 characters from [a-z0-9_.:-]")]
     Code,
+    #[error("expected a deny entry of one to three lowercase dotted segments")]
+    ModePath,
+    #[error("expected an analyzer machine id of 1 to 80 characters from [A-Za-z0-9_.:-]")]
+    MachineId,
+    #[error("expected a calendar date as YYYY-MM-DD")]
+    IsoDate,
     #[error("expected a meter key of 1 to 100 characters from [a-zA-Z0-9._:-]")]
     MeterKey,
     #[error("expected a tool name of 1 to 80 characters from [a-zA-Z0-9_.-] or h:<16 hex>")]
@@ -534,6 +540,42 @@ pattern_string!(
     MeterKey,
     MeterKey,
     |text| (1..=100).contains(&text.len()) && text.bytes().all(meter_byte)
+);
+
+pattern_string!(
+    /// A recognized deny-list entry: an adapter id, `providers.<p>`, or a mode path
+    /// (`^[a-z_]+(\.[a-z_]+){0,2}$`, at most 64 characters).
+    ModePath,
+    ModePath,
+    |text| {
+        let segments: Vec<&str> = text.split('.').collect();
+        (1..=64).contains(&text.len())
+            && (1..=3).contains(&segments.len())
+            && segments
+                .iter()
+                .all(|segment| !segment.is_empty() && segment.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'))
+    }
+);
+
+pattern_string!(
+    /// The v1 analyzer's machine id, the subject key its monthly report publishes under:
+    /// `^[A-Za-z0-9_.:-]{1,80}$`.
+    MachineId,
+    MachineId,
+    |text| (1..=80).contains(&text.len()) && text.bytes().all(meter_byte)
+);
+
+pattern_string!(
+    /// A calendar date `YYYY-MM-DD` (the backfill start).
+    IsoDate,
+    IsoDate,
+    |text| {
+        let bytes = text.as_bytes();
+        bytes.len() == 10
+            && bytes[4] == b'-'
+            && bytes[7] == b'-'
+            && bytes.iter().enumerate().all(|(i, b)| matches!(i, 4 | 7) || b.is_ascii_digit())
+    }
 );
 
 pattern_string!(

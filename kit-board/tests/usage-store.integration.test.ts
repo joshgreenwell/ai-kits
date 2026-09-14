@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { readingFreshness } from '../lib/allowance-freshness';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -466,9 +469,9 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.deepEqual([bodyTwo.accepted.records, bodyTwo.duplicates], [1, 1]);
     const [mergedRun] = await sql`SELECT accepted_by_type, accepted_records, rejected_records FROM personal_hub.companion_runs WHERE run_id = ${sharedRun.run_id}`;
     assert.deepEqual(mergedRun.accepted_by_type, {
-      'allowance.reading': { accepted: 1, duplicate: 1, rejected: 1 },
+      'allowance.reading': { accepted: 1, duplicate: 1, rejected: 1, 'rejected:binding_not_owned': 1 },
       'activity.request': { accepted: 1, duplicate: 0, rejected: 0 },
-      invalid: { accepted: 0, duplicate: 0, rejected: 1 },
+      invalid: { accepted: 0, duplicate: 0, rejected: 1, 'rejected:invalid': 1 },
     }, 'two bodies of one run sum per type');
     assert.deepEqual([Number(mergedRun.accepted_records), Number(mergedRun.rejected_records)], [2, 2]);
 
@@ -611,6 +614,45 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.ok(Date.parse(afterEmpty.last_seen_at!) > Date.parse('2026-09-02T06:30:00Z'), 'an empty post advances last contact');
     assert.deepEqual([afterEmpty.last_observation, afterEmpty.last_received], [withReading.last_observation, withReading.last_received], 'but never the reading');
     assert.equal((await telemetry.browserConnections()).cadence_minutes, 60, 'the extension reads hourly');
+
+    // What the build can do: the capability report, its validity, the schedule verdict, and the health ladder.
+    await store.updateInstall({ id: install.id, action: 'override', settings: {} }); // back to the global 60-minute cadence
+    const capabilityFixture = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'usage-v2', 'capabilities', 'valid', 'default-build.json'), 'utf8')) as Record<string, unknown>;
+    const capabilities = (overrides: Record<string, unknown>) => ({ ...capabilityFixture, companion_version: '2.0.0',
+      bindings: [{ binding_id: bindingId, identity: 'confirmed', conflict: false, roots_present: 1 }, { binding_id: codexId, identity: 'changed', conflict: false, roots_present: 1 }],
+      detailed_report: [], ...overrides });
+    const unreported = (await store.listInstalls()).installs.find(i => i.id === install.id)!;
+    assert.deepEqual([unreported.capabilities.current, unreported.capabilities.reason, unreported.schedule.state, unreported.schedule.cadence_basis, unreported.health.execution],
+      [false, 'never_reported', 'unknown', 'desired', 'unknown'], 'the shared run carried no coverage rows, so execution is unknown rather than inferred');
+    const firstReport = await store.reportCapabilities(current, capabilities({}));
+    assert.equal(firstReport.ok, true);
+    const reported = (await store.listInstalls()).installs.find(i => i.id === install.id)!;
+    assert.deepEqual([reported.capabilities.current, reported.capabilities.reason, reported.capabilities.previous_digest, reported.capabilities.digest], [true, null, null, '1'.repeat(64)]);
+    assert.deepEqual([reported.schedule.state, reported.schedule.installed_interval_minutes, reported.schedule.pending, reported.schedule.cadence_basis, reported.schedule.effective_cadence_minutes],
+      ['installed', 60, false, 'installed', 60]);
+    assert.deepEqual([reported.health.pairing, reported.health.binding, reported.health.identity, reported.health.coverage_only],
+      ['paired', 'complete', 'mixed', false], 'a changed identity reported by the companion mixes with the confirmed one');
+    const newestAllowance = reported.bindings.map(b => b.last_observation.allowance).filter(Boolean).sort((a, b) => Date.parse(b!.observed_at) - Date.parse(a!.observed_at))[0]!;
+    const expectedRecords = readingFreshness({ observedAt: newestAllowance.observed_at, resetsAt: newestAllowance.resets_at, now: Date.now(), cadenceMinutes: 60 }).stale ? 'stale' : 'fresh';
+    assert.equal(reported.health.records, expectedRecords, 'the newest allowance reading is judged at the installed cadence');
+    assert.equal(typeof reported.health.last_contact_at, 'string');
+    await assert.rejects(store.reportCapabilities(current, capabilities({ build: { ...(capabilityFixture.build as object), config_dir: '/Users/private' } })), 'a path-bearing field is refused');
+    // A different build reporting the same version keeps the previous digest and when it flipped.
+    await store.reportCapabilities(current, capabilities({ capabilities_digest: '2'.repeat(64) }));
+    const flipped = (await store.listInstalls()).installs.find(i => i.id === install.id)!;
+    assert.deepEqual([flipped.capabilities.digest, flipped.capabilities.previous_digest, typeof flipped.capabilities.changed_at], ['2'.repeat(64), '1'.repeat(64), 'string']);
+    // The desired cadence changes: pending is decided server-side against the installed interval.
+    await store.updateInstall({ id: install.id, action: 'override', settings: { cadence_minutes: 15 } });
+    const pending = (await store.listInstalls()).installs.find(i => i.id === install.id)!;
+    assert.deepEqual([pending.schedule.state, pending.schedule.pending, pending.schedule.desired_interval_minutes, pending.schedule.installed_interval_minutes], ['interval_mismatch', true, 15, 60]);
+    await store.updateInstall({ id: install.id, action: 'override', settings: {} });
+    // A report from another version no longer describes the running build.
+    await store.reportCapabilities(current, capabilities({ companion_version: '9.9.9' }));
+    const mismatched = (await store.listInstalls()).installs.find(i => i.id === install.id)!;
+    assert.deepEqual([mismatched.capabilities.current, mismatched.capabilities.reason, mismatched.schedule.state], [false, 'version_mismatch', 'unknown']);
+    assert.equal(mismatched.health.execution, 'unknown', 'no coverage rows on the last run: nothing to infer from');
+    // Rejections by reason ride the per-type totals (asserted on the merged run above); the latest run here has none.
+    assert.equal(typeof mismatched.accepted_by_type, 'object');
 
     // The release check keeps the previous value on failure and stores a semver on success.
     const failing = await store.syncCompanionRelease((async () => { throw new TypeError('offline'); }) as unknown as typeof fetch);

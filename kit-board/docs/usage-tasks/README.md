@@ -65,7 +65,7 @@ Every implementation task inherits these requirements:
 | [USG-008: Identify access to multiple vaults and configured knowledge sources](usg-008-collect-knowledge-source-access.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-006](usg-006-collect-tool-invocations.md), [USG-007](usg-007-map-project-identities.md) | Done |
 | [USG-009: Fix account attribution and freshness for existing allowance collection](usg-009-fix-allowance-identity-and-freshness.md) | P0 | [USG-001](usg-001-metric-and-source-contract.md) | Done |
 | [USG-010: Build and verify the v2 replacement for the active browser quota bridge](usg-010-replace-browser-quota-bridge.md) | P1 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-009](usg-009-fix-allowance-identity-and-freshness.md) | Planned |
-| [USG-014: Make collection settings, cadence, and health reflect actual capabilities](usg-014-truthful-settings-and-collection-health.md) | P1 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-009](usg-009-fix-allowance-identity-and-freshness.md) | Planned |
+| [USG-014: Make collection settings, cadence, and health reflect actual capabilities](usg-014-truthful-settings-and-collection-health.md) | P1 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-009](usg-009-fix-allowance-identity-and-freshness.md) | Done |
 
 ## 3. Read models
 

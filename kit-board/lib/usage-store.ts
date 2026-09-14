@@ -3,6 +3,7 @@ import type postgres from 'postgres';
 import { RequestError, stableJson } from './contracts';
 import { readCache } from './read-cache';
 import { collectionSettingsSchema, installOverrideSchema, mergeSettings, type CollectionSettings, type InstallOverride } from './companion-settings';
+import { companionCapabilitiesSchema, type CompanionCapabilities } from './companion-capabilities';
 import { readingFreshness } from './allowance-freshness';
 import { projectRegistryMutationSchema } from './project-registry';
 import { knowledgeSourceMutationSchema } from './knowledge-source-registry';
@@ -31,8 +32,11 @@ type BindingRow = {
   identity_hash: string | null; identity_reset_at: string | null;
 };
 
-/** Accepted, duplicate, and rejected counts per record type; `invalid` collects records that failed to parse. */
-export type AcceptedByType = Record<string, { accepted: number; duplicate: number; rejected: number }>;
+/**
+ * Accepted, duplicate, and rejected counts per record type; `invalid` collects records that failed to
+ * parse, and `rejected:<reason>` keys split the rejections by their closed reason.
+ */
+export type AcceptedByType = Record<string, { accepted: number; duplicate: number; rejected: number } & Record<string, number>>;
 export type BindingSummary = { id: string; install_id: string; account_id: string; account_label: string; provider: string; identity_hash: string | null;
   identity_reset_at: string | null; enabled: boolean; source_id: string; last_seen_at: string | null; coverage: unknown;
   identity_state: 'confirmed' | 'unconfirmed' | 'reset'; v1_active: { id: string; machine_label: string; last_seen_at: string | null }[];
@@ -42,10 +46,35 @@ export type BindingSummary = { id: string; install_id: string; account_id: strin
   // Another enabled binding of the same install and provider holds this binding's non-null hash, so the
   // companion cannot tell their readings apart (`confirmIdentity` refuses new duplicates; older rows may still hold one).
   duplicate_identity: boolean };
+/** The last capability document and whether it still describes the running build. */
+export type CapabilitiesSummary = {
+  document: CompanionCapabilities | null; digest: string | null; previous_digest: string | null;
+  reported_at: string | null; changed_at: string | null;
+  /** Current only when the document names the version the last envelope carried and was reported within one cadence of that envelope. */
+  current: boolean; reason: 'never_reported' | 'version_mismatch' | 'stale' | null;
+};
+/** The installed schedule as last reported, judged against the desired cadence at read time. */
+export type ScheduleSummary = {
+  mechanism: string | null; state: 'not_installed' | 'installed' | 'interval_mismatch' | 'unreadable' | 'unknown';
+  installed_interval_minutes: number | null; desired_interval_minutes: number; pending: boolean; config_dir_pinned: boolean | null;
+  /** Which cadence freshness verdicts use: the installed interval when a current report carries one, else the desired one. */
+  cadence_basis: 'installed' | 'desired'; effective_cadence_minutes: number;
+};
+/** One rung per fact the server actually holds; "off" and "blocked" stay distinct from "failed". */
+export type HealthSummary = {
+  pairing: 'paired';
+  binding: 'none' | 'partial' | 'complete';
+  identity: 'none' | 'confirmed' | 'unconfirmed' | 'reset' | 'changed' | 'mixed';
+  /** `unknown` when the last run carried no adapter coverage rows at all. */
+  execution: 'never' | 'unknown' | 'ok' | 'partial' | 'failed' | 'off' | 'blocked';
+  records: 'none' | 'fresh' | 'stale' | 'observed';
+  coverage_only: boolean; overdue: boolean; last_contact_at: string | null;
+};
 export type InstallSummary = { id: string; machine_label: string; kind: 'companion' | 'browser'; platform: string; arch: string; settings: InstallOverride;
   paused: boolean; disabled: boolean; companion_version: string | null; created_at: string; last_seen_at: string | null; last_config_fetch_at: string | null;
   bindings: BindingSummary[]; applied_settings_version: number | null; update_available: boolean;
   cadence_minutes: CollectionSettings['cadence_minutes']; last_run_at: string | null; accepted_by_type: AcceptedByType;
+  capabilities: CapabilitiesSummary; schedule: ScheduleSummary; health: HealthSummary;
   latest_run: { run_id: string; started_at: string; finished_at: string; companion_version: string; settings_version: number; coverage: AdapterCoverage[];
     accepted_buckets: number; accepted_records: number; rejected_records: number; accepted_by_type: AcceptedByType; received_at: string } | null };
 export type InstallsSummary = { installs: InstallSummary[]; settings: CollectionSettings; settings_version: number; latest_companion_version: string | null; settings_updated_at: string };
@@ -70,6 +99,61 @@ export type KnowledgeSourceSummary = {
 };
 
 /** Injectable database provider keeps the store testable against a disposable cluster. */
+/** A capability report is current only while it names the running build and is no older than one cadence before the last envelope. */
+function capabilitiesSummary(stored: Omit<CapabilitiesSummary, 'current' | 'reason'>, companionVersion: string | null, lastReceivedAt: string | undefined, cadenceMinutes: number): CapabilitiesSummary {
+  if (!stored.document || !stored.reported_at) return { ...stored, current: false, reason: 'never_reported' };
+  if (companionVersion && stored.document.companion_version !== companionVersion) return { ...stored, current: false, reason: 'version_mismatch' };
+  if (lastReceivedAt && Date.parse(stored.reported_at) < Date.parse(lastReceivedAt) - cadenceMinutes * 60_000) return { ...stored, current: false, reason: 'stale' };
+  return { ...stored, current: true, reason: null };
+}
+
+/** Pending is decided here against the desired cadence, never trusted from the companion's own flag at report time. */
+function scheduleSummary(capabilities: CapabilitiesSummary, desired: number): ScheduleSummary {
+  const reported = capabilities.current ? capabilities.document?.schedule ?? null : null;
+  const installed = reported?.installed_interval_minutes ?? null;
+  const pending = reported !== null && (reported.state === 'interval_mismatch' || (installed !== null && installed !== desired));
+  const basis: ScheduleSummary['cadence_basis'] = installed !== null ? 'installed' : 'desired';
+  return { mechanism: reported?.mechanism ?? null, state: reported ? (pending ? 'interval_mismatch' : reported.state) : 'unknown',
+    installed_interval_minutes: installed, desired_interval_minutes: desired, pending, config_dir_pinned: reported?.config_dir_pinned ?? null,
+    cadence_basis: basis, effective_cadence_minutes: installed ?? desired };
+}
+
+const executionBlocked = new Set(['prerequisite_missing', 'credential_unavailable', 'identity_changed', 'rate_limited']);
+function healthSummary({ bindings, run, capabilities, schedule, effective, lastSeenAt, now }: {
+  bindings: BindingSummary[]; run: InstallSummary['latest_run']; capabilities: CapabilitiesSummary; schedule: ScheduleSummary;
+  effective: CollectionSettings; lastSeenAt: string | null; now: number;
+}): HealthSummary {
+  const enabledProviders = (['claude', 'codex', 'cursor'] as const).filter(provider => effective.providers[provider]);
+  const bound = enabledProviders.filter(provider => bindings.some(b => b.provider === provider && b.enabled));
+  const binding: HealthSummary['binding'] = bound.length === 0 ? 'none' : bound.length === enabledProviders.length ? 'complete' : 'partial';
+  const reported = capabilities.current ? new Map(capabilities.document?.bindings.map(b => [b.binding_id, b]) ?? []) : new Map();
+  const identities = bindings.filter(b => b.enabled).map(b => reported.get(b.id)?.identity === 'changed' ? 'changed' : b.identity_state);
+  const identity: HealthSummary['identity'] = identities.length === 0 ? 'none' : new Set(identities).size === 1 ? identities[0] as HealthSummary['identity'] : 'mixed';
+  // Execution is judged only over adapters this build implements whose mode is on; stubs and switched-off adapters never count.
+  const implemented = new Set(capabilities.current ? capabilities.document?.adapters.filter(a => a.implemented).map(a => a.adapter) ?? [] : []);
+  const counted = (run?.coverage ?? []).filter(entry =>
+    (capabilities.current ? implemented.has(entry.adapter) : entry.parser_version !== '0')
+    && entry.state !== 'disabled_by_setting' && entry.state !== 'denied_locally'
+    && !(entry.state === 'prerequisite_missing' && (entry.detail_code === 'no_binding' || entry.detail_code === 'not_implemented')));
+  const execution: HealthSummary['execution'] = !run ? 'never'
+    : (run.coverage ?? []).length === 0 ? 'unknown'
+    : counted.length === 0 ? ((run.coverage ?? []).some(entry => executionBlocked.has(entry.state)) ? 'blocked' : 'off')
+    : counted.some(entry => entry.state === 'failed') ? 'failed'
+    : counted.some(entry => entry.state !== 'ok') ? 'partial' : 'ok';
+  const newestAllowance = bindings.map(b => b.last_observation.allowance).filter(Boolean).sort((a, b) => Date.parse(b!.observed_at) - Date.parse(a!.observed_at))[0] ?? null;
+  const newestRequest = bindings.map(b => b.last_observation.requests).filter(Boolean).sort((a, b) => Date.parse(b!) - Date.parse(a!))[0] ?? null;
+  const records: HealthSummary['records'] = newestAllowance
+    ? (readingFreshness({ observedAt: newestAllowance.observed_at, resetsAt: newestAllowance.resets_at, now, cadenceMinutes: schedule.effective_cadence_minutes }).stale ? 'stale' : 'fresh')
+    : newestRequest ? 'observed' : 'none';
+  const coverageOnly = !!run && Number(run.accepted_buckets) === 0
+    && Object.values(run.accepted_by_type ?? {}).every(counts => Number(counts.accepted ?? 0) === 0);
+  const contacts = [lastSeenAt, capabilities.reported_at].filter((value): value is string => !!value).map(Date.parse);
+  const lastContact = contacts.length ? new Date(Math.max(...contacts)).toISOString() : null;
+  const overdue = lastContact !== null
+    && readingFreshness({ observedAt: lastContact, resetsAt: null, now, cadenceMinutes: schedule.effective_cadence_minutes }).stale;
+  return { pairing: 'paired', binding, identity, execution, records, coverage_only: coverageOnly, overdue, last_contact_at: lastContact };
+}
+
 export function createUsageStore(getDatabase?: () => Sql) {
   // Routes load the server-only connector only when a database operation runs.
   const sql = async () => getDatabase?.() ?? (await import('./db')).database();
@@ -269,11 +353,12 @@ export function createUsageStore(getDatabase?: () => Sql) {
       const rejected: { record_id: string; reason: RejectionReason }[] = [...invalid];
       // Per-type receipts, so "accepted uploads" is visible per reading kind. Buckets are v1 rows and stay in accepted_buckets.
       const byType: AcceptedByType = {};
-      const count = (type: string, outcome: 'accepted' | 'duplicate' | 'rejected', n: number) => {
+      const count = (type: string, outcome: string, n: number) => {
         if (!n) return;
-        (byType[type] ??= { accepted: 0, duplicate: 0, rejected: 0 })[outcome] += n;
+        const entry = (byType[type] ??= { accepted: 0, duplicate: 0, rejected: 0 });
+        entry[outcome] = (entry[outcome] ?? 0) + n;
       };
-      count('invalid', 'rejected', invalid.length);
+      count('invalid', 'rejected', invalid.length); count('invalid', 'rejected:invalid', invalid.length);
       const requests: Row[] = [], usage: Row[] = [], readings: Row[] = [], money: Row[] = [];
       const agentEvents: Row[] = [], toolEvents: Row[] = [], resourceAccesses: Row[] = [];
       const projectIdentities = new Map<string, Row>();
@@ -328,7 +413,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
       for (const record of envelope.records) {
         const binding = bindings.get(record.binding_id);
         const reason = rejection(install, binding, record);
-        if (reason) { rejected.push({ record_id: record.record_id, reason }); count(record.record_type, 'rejected', 1); continue; }
+        if (reason) { rejected.push({ record_id: record.record_id, reason }); count(record.record_type, 'rejected', 1); count(record.record_type, `rejected:${reason}`, 1); continue; }
         const base = { id: randomUUID(), account_id: binding!.account_id, binding_id: record.binding_id, provider: binding!.provider,
           adapter: record.adapter, observed_at: record.observed_at, basis: record.basis, content_hash: hash(contentSubject(record)) };
         switch (record.record_type) {
@@ -471,6 +556,21 @@ export function createUsageStore(getDatabase?: () => Sql) {
       }
       return { ok: true, schema_version: 2, run_id: envelope.run.run_id, accepted: { buckets: acceptedBuckets, records: acceptedRecords }, duplicates, rejected };
     });
+  }
+
+  /** Stores what a companion build can do; a changed digest keeps the previous one and when it flipped. */
+  async function reportCapabilities(install: CompanionInstallRow, input: unknown) {
+    const document = companionCapabilitiesSchema.parse(input);
+    const db = await sql();
+    const [row] = await db`UPDATE personal_hub.companion_installs SET
+        capabilities = ${db.json(document as postgres.JSONValue)},
+        capabilities_previous_digest = CASE WHEN capabilities_digest IS DISTINCT FROM ${document.capabilities_digest} THEN capabilities_digest ELSE capabilities_previous_digest END,
+        capabilities_changed_at = CASE WHEN capabilities_digest IS DISTINCT FROM ${document.capabilities_digest} THEN now() ELSE capabilities_changed_at END,
+        capabilities_digest = ${document.capabilities_digest},
+        capabilities_reported_at = now()
+      WHERE id = ${install.id} RETURNING capabilities_reported_at`;
+    dashboardCache.invalidate();
+    return { ok: true, capabilities_digest: document.capabilities_digest, reported_at: row.capabilities_reported_at };
   }
 
   async function collectionSettings() {
@@ -779,7 +879,8 @@ export function createUsageStore(getDatabase?: () => Sql) {
     const db = await sql();
     const global = await globalSettings(db);
     const [installs, bindings, runs, activeV1] = await Promise.all([
-      db`SELECT id, machine_label, kind, platform, arch, settings, paused, disabled, companion_version, created_at, last_seen_at, last_config_fetch_at
+      db`SELECT id, machine_label, kind, platform, arch, settings, paused, disabled, companion_version, created_at, last_seen_at, last_config_fetch_at,
+          capabilities, capabilities_digest, capabilities_previous_digest, capabilities_reported_at, capabilities_changed_at
         FROM personal_hub.companion_installs ORDER BY created_at, id`,
       db`SELECT b.id, b.install_id, b.account_id, b.provider, b.identity_hash, b.identity_reset_at, b.enabled, b.source_id, s.last_seen_at, s.coverage, a.label AS account_label,
           allowance.observed_at AS allowance_observed_at, allowance.resets_at AS allowance_resets_at, allowance.reader AS allowance_reader,
@@ -800,8 +901,14 @@ export function createUsageStore(getDatabase?: () => Sql) {
       db`SELECT id, account_id, machine_label, last_seen_at FROM personal_hub.telemetry_sources
         WHERE mode = 'local' AND NOT disabled AND last_seen_at > now() - interval '2 hours'`,
     ]);
-    const result = installs.map(install => {
+    const now = Date.now();
+    const result = installs.map(({ capabilities: rawCapabilities, capabilities_digest, capabilities_previous_digest, capabilities_reported_at, capabilities_changed_at, ...install }) => {
       const run = runs.find(r => r.install_id === install.id);
+      const effective = mergeSettings(global.stored, install.settings as InstallOverride);
+      const capabilities = capabilitiesSummary({ document: rawCapabilities as CompanionCapabilities | null, digest: capabilities_digest as string | null,
+        previous_digest: capabilities_previous_digest as string | null, reported_at: capabilities_reported_at as string | null,
+        changed_at: capabilities_changed_at as string | null }, install.companion_version as string | null, run?.received_at as string | undefined, effective.cadence_minutes);
+      const schedule = scheduleSummary(capabilities, effective.cadence_minutes);
       const own = bindings.filter(b => b.install_id === install.id).map(({ allowance_observed_at, allowance_resets_at, allowance_reader, allowance_received_at, requests_observed_at, ...b }) => ({ ...b,
         identity_state: b.identity_hash ? 'confirmed' : b.identity_reset_at ? 'reset' : 'unconfirmed',
         v1_active: activeV1.filter(v => v.account_id === b.account_id).map(v => ({ id: v.id, machine_label: v.machine_label, last_seen_at: v.last_seen_at })),
@@ -809,10 +916,12 @@ export function createUsageStore(getDatabase?: () => Sql) {
           allowance: allowance_observed_at ? { observed_at: allowance_observed_at, resets_at: allowance_resets_at ?? null, reader: allowance_reader } : null,
           requests: requests_observed_at ?? null },
         last_received: { allowance: allowance_received_at ?? null } }));
+      const health = healthSummary({ bindings: own as unknown as BindingSummary[], run: (run ?? null) as unknown as InstallSummary['latest_run'], capabilities, schedule, effective, lastSeenAt: install.last_seen_at as string | null, now });
       return { ...install, bindings: own, latest_run: run ?? null,
         applied_settings_version: run ? Number(run.settings_version) : null,
-        cadence_minutes: mergeSettings(global.stored, install.settings as InstallOverride).cadence_minutes,
+        cadence_minutes: effective.cadence_minutes,
         last_run_at: run?.finished_at ?? null, accepted_by_type: run?.accepted_by_type ?? {},
+        capabilities, schedule, health,
         update_available: install.kind === 'companion' && behind(install.companion_version as string | null, global.latest_companion_version) };
     });
     return clone({ installs: result, settings: mergeSettings(global.stored), settings_version: global.settings_version,
@@ -978,7 +1087,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
   }
 
   return { issuePairingCode, pairInstall, companionInstall, companionConfig, createBinding, updateInstallSettings, confirmIdentity, ingestUsage,
-    collectionSettings, updateCollectionSettings, listProjects, updateProjects, listKnowledgeSources, updateKnowledgeSources, listInstalls, updateInstall,
+    collectionSettings, updateCollectionSettings, reportCapabilities, listProjects, updateProjects, listKnowledgeSources, updateKnowledgeSources, listInstalls, updateInstall,
     usageDashboard, reconcile, syncCompanionRelease };
 }
 

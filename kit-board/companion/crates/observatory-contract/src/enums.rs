@@ -449,6 +449,8 @@ string_enum! {
         UnavailableRoots = "unavailable_roots",
         /// The run stopped before every file was read.
         PartialRead = "partial_read",
+        /// The adapter's thread panicked; nothing it collected this run was kept.
+        AdapterPanicked = "adapter_panicked",
     }
 }
 

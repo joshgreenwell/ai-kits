@@ -5,7 +5,8 @@ export function proxy(request: NextRequest) {
   const cookie = process.env.NODE_ENV === 'production' ? '__Host-personal-hub' : 'personal-hub';
   const isRead = request.method === 'GET' || request.method === 'HEAD';
   const isPublic = path === '/login' || path.startsWith('/api/auth/');
-  // These handlers authenticate their own scoped producer or cron credentials.
+  // These handlers authenticate their own scoped producer or cron credentials. Companion POSTs
+  // (pair, bindings, identity, capabilities) and the usage upload carry an install key.
   const companion = path.startsWith('/api/v1/companion/') || path === '/api/v1/usage';
   const ingestion = (request.method === 'POST' && (path === '/api/reports' || path.startsWith('/api/v1/reports/') || path === '/api/v1/telemetry' || path === '/api/reset-feeds' || companion)) ||
     (request.method === 'PUT' && path === '/api/v1/companion/settings') ||
