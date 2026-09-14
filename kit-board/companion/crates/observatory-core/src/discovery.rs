@@ -45,11 +45,32 @@ pub struct CursorDiscovery {
     pub present: bool,
 }
 
+/// One vault Obsidian lists in its registry. The path stays on this machine:
+/// setup offers it as a knowledge-source root and the folder name as a local label.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObsidianVault {
+    /// Obsidian's own vault id (16 hex characters), the default key suffix.
+    pub id: String,
+    pub path: PathBuf,
+    /// The vault folder's name; the only part of the path shown at setup.
+    pub name: String,
+    /// Whether Obsidian had the vault open when it last wrote the registry.
+    pub open: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ObsidianDiscovery {
+    /// Whether the registry file exists (its location is never printed).
+    pub present: bool,
+    pub vaults: Vec<ObsidianVault>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Discovered {
     pub claude: ClaudeDiscovery,
     pub codex: CodexDiscovery,
     pub cursor: CursorDiscovery,
+    pub obsidian: ObsidianDiscovery,
 }
 
 /// `sha256(stableJson([provider, account]))`.
@@ -89,6 +110,29 @@ pub fn codex_identity(home: &Path) -> Option<DisplayIdentity> {
 fn short(id: &str) -> String {
     let count = id.chars().count();
     if count <= 8 { id.to_owned() } else { format!("…{}", id.chars().skip(count - 6).collect::<String>()) }
+}
+
+/// The vaults in Obsidian's registry (`vaults.<id>.path`), sorted by id. Entries
+/// without a path are skipped; `ts` and everything else in the file is dropped.
+pub fn obsidian_vaults_in(registry: &Path) -> Vec<ObsidianVault> {
+    let Some(value) = read_json(registry) else { return Vec::new() };
+    let Some(vaults) = value.get("vaults").and_then(Value::as_object) else { return Vec::new() };
+    let mut out: Vec<ObsidianVault> = vaults
+        .iter()
+        .filter_map(|(id, entry)| {
+            let path = PathBuf::from(entry.get("path")?.as_str()?);
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            let open = entry.get("open").and_then(Value::as_bool).unwrap_or(false);
+            Some(ObsidianVault { id: id.clone(), path, name, open })
+        })
+        .collect();
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
+}
+
+/// The vaults in this machine's Obsidian registry, if Obsidian is installed.
+pub fn obsidian_vaults() -> Vec<ObsidianVault> {
+    paths::obsidian_config_file().map(|path| obsidian_vaults_in(&path)).unwrap_or_default()
 }
 
 /// Searches `PATH` for an executable by name.
@@ -132,7 +176,12 @@ pub fn discover() -> Discovered {
     let tracking_db = paths::cursor_tracking_db().filter(|path| path.is_file());
     let cursor =
         CursorDiscovery { present: state_db.is_some() || tracking_db.is_some(), state_db, tracking_db };
-    Discovered { claude, codex, cursor }
+    let registry = paths::obsidian_config_file().filter(|path| path.is_file());
+    let obsidian = ObsidianDiscovery {
+        present: registry.is_some(),
+        vaults: registry.as_deref().map(obsidian_vaults_in).unwrap_or_default(),
+    };
+    Discovered { claude, codex, cursor, obsidian }
 }
 
 #[cfg(test)]
@@ -159,5 +208,43 @@ mod tests {
         assert_eq!(identity.label, "account …567890");
         assert!(!format!("{identity:?}").contains("SECRET"));
         assert!(codex_identity(&dir.path().join("missing")).is_none());
+    }
+
+    #[test]
+    fn obsidian_vaults_come_from_the_registry_paths_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = dir.path().join("obsidian.json");
+        fs::write(
+            &registry,
+            r#"{"vaults":{
+                "f00dbeefcafe0002":{"path":"/synthetic/vault-beta","ts":1700000000000},
+                "f00dbeefcafe0001":{"path":"/synthetic/notes/vault-alpha","ts":1700000000000,"open":true},
+                "f00dbeefcafe0003":{"ts":1700000000000}
+            },"updateCheckTs":1700000000000}"#,
+        )
+        .unwrap();
+        let vaults = obsidian_vaults_in(&registry);
+        assert_eq!(
+            vaults,
+            vec![
+                ObsidianVault {
+                    id: "f00dbeefcafe0001".into(),
+                    path: PathBuf::from("/synthetic/notes/vault-alpha"),
+                    name: "vault-alpha".into(),
+                    open: true,
+                },
+                ObsidianVault {
+                    id: "f00dbeefcafe0002".into(),
+                    path: PathBuf::from("/synthetic/vault-beta"),
+                    name: "vault-beta".into(),
+                    open: false,
+                },
+            ]
+        );
+        assert!(obsidian_vaults_in(&dir.path().join("missing.json")).is_empty());
+        fs::write(&registry, b"{not json").unwrap();
+        assert!(obsidian_vaults_in(&registry).is_empty());
+        fs::write(&registry, br#"{"vaults":[]}"#).unwrap();
+        assert!(obsidian_vaults_in(&registry).is_empty());
     }
 }

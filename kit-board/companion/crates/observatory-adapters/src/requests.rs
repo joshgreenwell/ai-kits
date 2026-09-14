@@ -17,6 +17,7 @@ use observatory_core::state::EventRow;
 use observatory_core::state::{ToolCoverageRow, ToolEventRow};
 
 use crate::agents::{attribution as agent_attribution, is_known_child_fields};
+use crate::resources::ResourceEvidenceSummary;
 use crate::tools::request_summary as tool_request_summary;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -102,6 +103,9 @@ fn capability(
 
 /// Capability coverage for local execution histories. Pricing remains partial
 /// because neither transcript format records every catalog dimension.
+/// `unmatched` and `no_evidence` inspections are expected outcomes for the
+/// resource dimension, never gaps; only forms the classifier cannot read make
+/// it partial.
 pub fn execution_capabilities(
     detail_level: DetailLevel,
     project_attribution: ProjectAttributionSetting,
@@ -109,6 +113,7 @@ pub fn execution_capabilities(
     scan_partial: bool,
     summary: EvidenceSummary,
     tools: ToolEvidenceSummary,
+    resources: ResourceEvidenceSummary,
 ) -> Vec<CapabilityCoverage> {
     if detail_level == DetailLevel::BucketsOnly {
         return [
@@ -118,6 +123,7 @@ pub fn execution_capabilities(
             CapabilityDimension::Project,
             CapabilityDimension::Agent,
             CapabilityDimension::Tool,
+            CapabilityDimension::Resource,
         ]
         .into_iter()
         .map(|dimension| {
@@ -179,6 +185,23 @@ pub fn execution_capabilities(
     } else {
         (CapabilityState::Complete, None)
     };
+    let (resource_state, resource_detail) = if detail_level != DetailLevel::RequestsWithTools {
+        (CapabilityState::DisabledBySetting, Some("detail_level"))
+    } else if resources.denied {
+        (CapabilityState::DisabledBySetting, Some("denied_locally"))
+    } else if !resources.configured {
+        (CapabilityState::DisabledBySetting, Some("no_resources_configured"))
+    } else if resources.inspections.unsupported > 0 {
+        (CapabilityState::Partial, Some("unsupported_forms"))
+    } else if resources.inspections.unresolved > 0 {
+        (CapabilityState::Partial, Some("unresolved_paths"))
+    } else if resources.inspections.ambiguous > 0 {
+        (CapabilityState::Partial, Some("ambiguous_connectors"))
+    } else if scan_partial {
+        (CapabilityState::Partial, Some("scan_partial"))
+    } else {
+        (CapabilityState::Complete, None)
+    };
     vec![
         capability(CapabilityDimension::Requests, request_state, request_detail),
         capability(CapabilityDimension::TokenComposition, token_state, token_detail),
@@ -190,6 +213,7 @@ pub fn execution_capabilities(
         capability(CapabilityDimension::Project, project_state, project_detail),
         capability(CapabilityDimension::Agent, agent_state, agent_detail),
         capability(CapabilityDimension::Tool, tool_state, tool_detail),
+        capability(CapabilityDimension::Resource, resource_state, resource_detail),
     ]
 }
 

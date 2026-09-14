@@ -8,6 +8,19 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
   explicit project-state blocks; independent agent lifecycle, tool invocation/result, and
   privacy-safe resource-access events; and per-adapter capability coverage. Legacy producers
   continue to serialize the original shape until their collection stories are implemented.
+- Knowledge sources: `companion.json` gains `resources` (`key`, `label`, `roots`, `connectors`,
+  `source`), `setup` proposes each Obsidian vault from the application's registry as
+  `obsidian.<vault id>` (never under `--yes`), and `observatory resources [add|remove]` lists and
+  edits them on the machine. Supported Claude and Codex tool calls are classified against the roots
+  and `mcp:`/`url:` connectors while their arguments are in memory; state schema 7 keeps one
+  (invocation, source) row and one inspection class per invocation, never a path. Rows upload at
+  `requests_with_tools` as `resource.access` with the key, an opaque random `cfg:` configuration
+  token, access kind, evidence basis, outcome, and invocation join; the local deny entry
+  `execution.resource_attribution` keeps them on the machine; a configuration change replays
+  retained transcripts and marks stale queued rows `superseded_configuration`. `doctor` reports
+  `resources_configured`, `resources_invalid`, `obsidian_config_found`,
+  `resource_attribution_effective`, and `resource_attribution_reason`; the execution parser version
+  moves to `+v1.1.0-detail5`, so retained transcripts replay once.
 
 ### 2.0.0 (phase 1: core)
 

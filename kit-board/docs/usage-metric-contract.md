@@ -61,7 +61,7 @@ A failed request with no model-usage evidence is not a model call. A failed or c
 | Unassigned-project tokens | Activity with stable project/path identity but no registry mapping. | Tokens. This is evidence-present but mapping-missing, separate from Unknown and No project. |
 | No-project tokens | Activity for which a source explicitly states that no project applies. | Tokens. Separate from unknown. |
 | Unknown-project tokens | Activity without sufficient project evidence. | Tokens. Included in the overall total and attribution denominator. |
-| Knowledge accesses | Tool invocations whose recorded resource identity or supported argument resolves against the versioned knowledge-source configuration active at the event time. | Per-source invocation count. Working context may resolve a relative path but is not access by itself. One invocation can access several sources, so per-source counts may overlap. |
+| Knowledge accesses | Tool invocations whose recorded connector identity or supported path argument resolves against the knowledge-source configuration most recently applied by the collecting install, named by the row's `configuration_version`. | Per-source invocation count. Working context (the line's `cwd` or a call's `workdir`) only resolves a relative argument and is not access by itself. One invocation can access several sources, so per-source counts may overlap. Rows an install classified under an earlier configuration are shown separately, never folded into the current count. |
 | Knowledge-access sessions | Distinct conversations containing at least one supported access to the source. | Distinct count. |
 | Knowledge-access agents | Distinct known agent identities containing at least one supported access. | Distinct count. Unknown callers remain visible. |
 
@@ -221,7 +221,7 @@ Each section reports coverage for the selected canonical headline population, no
 | Agent attribution | Canonical eligible tokens assigned to main or distinct child identity | Canonical tokens in sources that could provide agent evidence |
 | Tool detection | Eligible source-period events scanned by a parser that completely supports tool evidence | All events in tool-capable source coverage, including tool-only/orphan events |
 | Tool caller/outcome | Reported invocations with supported caller/outcome respectively | Reported tool invocations |
-| Knowledge attribution | Reported invocations inspected against the active source configuration | Tool invocations eligible for resource detection |
+| Knowledge attribution | Reported invocations inspected against the source configuration the install most recently applied | Tool invocations eligible for resource detection. The wire carries only the `resource` capability state and detail code, so this inspected/eligible split is machine-local (`observatory resources`); the server discloses current versus earlier-configuration rows and unassigned identities instead |
 | Price coverage | Tokens priced by the selected catalog | Tokens eligible for API-equivalent pricing |
 | Environmental coverage | Eligible model calls successfully classified and estimated | All selected canonical model calls; also show ineligible observed tokens/source periods separately |
 
@@ -270,7 +270,7 @@ The [filesystem backlog](usage-tasks/README.md) contains full dependencies and a
 ## 9. Known unsupported or unresolved source facts
 
 - Production request detail and project attribution were off at the September 13 audit. Existing rich breakdowns cannot be assumed continuous.
-- Current tool extraction and independent agent identity are not implemented.
+- Local tool extraction (USG-006) and independent agent identity (USG-005) are built for supported Claude and Codex local histories only.
 - The inspected sources do not distinguish user-requested delegation from model-chosen delegation.
 - Cloud sessions and browser chats can move account allowances without exposing exact tokens, projects, tools, or agents to current local collectors.
 - Cursor and the provider account/Admin readers are stubs until their follow-up tasks produce verified source implementations.
@@ -278,11 +278,11 @@ The [filesystem backlog](usage-tasks/README.md) contains full dependencies and a
 - The request wire/storage contract now retains independent reported totals, unclassified remainders, and explicit complete/partial/inconsistent/unknown composition. Existing producers omit that optional block until USG-004 updates their normalization.
 - Current Codex normalization clamps a negative fresh-input remainder; all-zero usage events are dropped; local request outcomes are hardcoded completed; absent model/surface facts can become string defaults. These are USG-004 collection gaps, not evidence of success or zero.
 - Provider aggregate read identity does not yet preserve `provider_event_id`/query-profile semantics, and monthly selection can regress a closed month from complete to a later partial revision. USG-011 and USG-012 own those corrections and the report-subject crosswalk.
-- Envelope v2 and its append-only storage can represent independent agent lifecycle, tool invocation/result, project state, pricing dimensions, and configured resource-access evidence. Current collectors do not emit those optional blocks or event records; USG-004 through USG-008 own collection.
-- Existing coverage notes that attribute every call from a vault working directory conflict with this contract. USG-008 requires explicit resource/path/connector evidence; cwd alone never proves access.
+- Envelope v2 and its append-only storage represent independent agent lifecycle, tool invocation/result, project state, pricing dimensions, and configured resource-access evidence. The Claude and Codex local collectors emit those blocks and records under USG-004 through USG-008; the stub adapters still omit them, and production remains at `buckets_only`.
+- USG-008 collects `resource.access` rows only from explicit path arguments, patch headers, shell tokens, and MCP/URL connector identities matched against sources configured on the collecting machine; each row carries the source key, an opaque configuration token, access kind, evidence basis, outcome, and invocation join, never a path. cwd alone never proves access: the enforced rule uses the line's `cwd` or a call's `workdir` only to resolve a relative argument, and a call with no path or connector evidence is bookkept as `no_evidence` even when it ran inside a vault.
 - Effort, service tier, speed, and context-window fields are retained when a producer supplies them; current request collectors leave the extension absent.
 - Allowance input accepts several basis values while current persistence reports all saved readings as provider-reported. USG-009 must preserve basis or narrow the accepted wire contract.
-- Indirect resource use through opaque scripts, symlinks outside configured roots, or ambiguous generic connector tools can remain unknown.
+- Symlinks and junctions are not resolved: a path is matched as written, so a vault file reached through a link outside the root stays unmatched. Opaque scripts and a connector configured on several sources produce no access row; the collector bookkeeps those invocations as unsupported or ambiguous and marks the `resource` capability partial rather than guessing.
 - Actual datacenter, hardware, energy source, grid region, and cooling/watershed are unknown; environmental outputs remain scenario estimates.
 
 These limits produce visible unknown or unavailable states. They do not authorize fixed allowance-to-token conversion, proportional attribution, or zero-filled detail.

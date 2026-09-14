@@ -78,6 +78,8 @@ fn claude_builtin(name: &str) -> bool {
             | "LS"
             | "MultiEdit"
             | "NotebookEdit"
+            | "NotebookRead"
+            | "PowerShell"
             | "Read"
             | "Skill"
             | "SlashCommand"
@@ -358,6 +360,8 @@ mod tests {
     #[test]
     fn provider_forms_map_without_exposing_custom_names() {
         assert_eq!(claude_identity(Some("Read")).class, "builtin");
+        assert_eq!(claude_identity(Some("PowerShell")).class, "builtin");
+        assert_eq!(claude_identity(Some("NotebookRead")).class, "builtin");
         let mcp = claude_identity(Some("mcp__vault__search_notes"));
         assert_eq!(
             (mcp.class.as_str(), mcp.namespace.as_deref(), mcp.name.as_deref()),

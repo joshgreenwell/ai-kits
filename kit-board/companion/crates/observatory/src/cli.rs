@@ -39,6 +39,9 @@ pub enum Command {
     Status,
     /// Working directories this install has seen and their project hashes (local only).
     Projects,
+    /// Named knowledge sources (vaults) this install classifies tool calls against, with
+    /// their local roots (local only); `add` and `remove` edit companion.json.
+    Resources(ResourcesArgs),
     /// Effective mode and reason per adapter; prerequisite and credential checks.
     Doctor,
     /// The cached effective settings document.
@@ -119,6 +122,47 @@ pub struct HookArgs {
 pub enum HookProvider {
     Claude,
     Cursor,
+}
+
+#[derive(Args, Debug)]
+pub struct ResourcesArgs {
+    /// Without a subcommand, lists the configured sources.
+    #[command(subcommand)]
+    pub action: Option<ResourcesAction>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ResourcesAction {
+    /// Add a knowledge source, or replace the one with the same key.
+    Add(ResourceAddArgs),
+    /// Remove a knowledge source by key.
+    Remove(ResourceRemoveArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ResourceAddArgs {
+    /// The privacy-safe key the Observatory labels: ^[a-z0-9_.:-]{1,64}$, e.g. obsidian.notes.
+    #[arg(long)]
+    pub key: String,
+    /// An absolute directory whose files count as this source (repeatable).
+    #[arg(long = "root", value_name = "DIR")]
+    pub root: Vec<PathBuf>,
+    /// A connector id, mcp:<namespace> or url:<prefix>, matched instead of a path (repeatable).
+    #[arg(long = "connector", value_name = "ID")]
+    pub connector: Vec<String>,
+    /// A display label kept on this machine; the Observatory keeps its own labels.
+    #[arg(long)]
+    pub label: Option<String>,
+    /// Where the definition came from, e.g. obsidian:<vault id>; informational.
+    #[arg(long)]
+    pub source: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct ResourceRemoveArgs {
+    /// The key of the source to remove.
+    #[arg(long)]
+    pub key: String,
 }
 
 #[derive(Args, Debug)]

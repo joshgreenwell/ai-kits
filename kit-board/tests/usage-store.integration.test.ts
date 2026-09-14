@@ -149,6 +149,10 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
         { dimension: 'tool', state: 'complete', detail_code: null },
         { dimension: 'resource', state: 'partial', detail_code: 'indirect_access_unknown' },
       ] }] });
+    // A run under an earlier resource configuration arrives first; the next configuration supersedes it.
+    const staleAccess = { ...resourceAccess(bindingId, 'vault-a-stale'), invocation_key: sha('tool:stale-read'),
+      configuration_version: 'resources.v0', observed_at: '2026-09-02T03:10:00.000Z' };
+    assert.equal((await store.ingestUsage(current, envelope({ records: [staleAccess] }))).accepted.records, 1);
     const invalidRecordId = randomUUID();
     const detailFirst = await store.ingestUsage(current, details, [{ record_id: invalidRecordId, reason: 'invalid' }]);
     assert.deepEqual(detailFirst.accepted, { buckets: 0, records: 17 }); assert.equal(detailFirst.duplicates, 0);
@@ -177,9 +181,13 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
       project: { key: projectKey, basis: 'working_directory' }, project_hash: projectKey };
     const secondSameFolder = { ...request(secondBinding, 'claude_execution', 'second-same-folder'), semantic_key: sha('second-same-folder'),
       project: { key: sameFolderKey, basis: 'working_directory' }, project_hash: sameFolderKey };
-    const secondEnvelope = envelope({ records: [secondShared, secondSameFolder] });
-    assert.equal((await store.ingestUsage(secondInstall, secondEnvelope)).accepted.records, 2);
-    assert.equal((await store.ingestUsage(secondInstall, secondEnvelope)).duplicates, 2, 'duplicate replay leaves identities idempotent');
+    // The second machine configured the same resource key under its own configuration token.
+    const secondInvocation = { ...toolEvent(secondBinding, 'second-read', 'second-read'), session_hash: sha('sess-second'),
+      caller_agent_key: sha('agent:second'), tool: { name: 'Grep', namespace: null, class: 'builtin' } };
+    const secondAccess = { ...resourceAccess(secondBinding, 'second-vault'), invocation_key: sha('tool:second-read'), configuration_version: 'cfg:second' };
+    const secondEnvelope = envelope({ records: [secondShared, secondSameFolder, secondInvocation, secondAccess] });
+    assert.equal((await store.ingestUsage(secondInstall, secondEnvelope)).accepted.records, 4);
+    assert.equal((await store.ingestUsage(secondInstall, secondEnvelope)).duplicates, 4, 'duplicate replay leaves identities idempotent');
 
     const registryBefore = await store.listProjects();
     const identity = (key: string, installId: string | null, basis = 'working_directory') => registryBefore.identities.find(item =>
@@ -256,12 +264,104 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
         (SELECT count(*)::int FROM personal_hub.tool_events WHERE account_id = ${account}) AS tools,
         (SELECT count(DISTINCT semantic_key)::int FROM personal_hub.tool_events WHERE account_id = ${account} AND event_kind = 'invocation') AS invocations,
         (SELECT count(*)::int FROM personal_hub.resource_accesses WHERE account_id = ${account}) AS resources`;
-    assert.equal(Number(eventCounts.agents), 1); assert.equal(Number(eventCounts.tools), 5, 'one invocation revision plus results and an orphan are retained');
-    assert.equal(Number(eventCounts.invocations), 1, 'invocation revisions and results do not inflate the call count');
-    assert.equal(Number(eventCounts.resources), 2, 'resource counts may overlap for one invocation');
+    assert.equal(Number(eventCounts.agents), 1); assert.equal(Number(eventCounts.tools), 6, 'one invocation revision plus results, an orphan, and the second machine call are retained');
+    assert.equal(Number(eventCounts.invocations), 2, 'invocation revisions and results do not inflate the call count');
+    assert.equal(Number(eventCounts.resources), 4, 'resource rows overlap for one invocation and keep earlier-configuration evidence');
     const hashes = await sql`SELECT DISTINCT dimensions_hash FROM personal_hub.account_usage_buckets
       WHERE account_id = ${account} AND provider_event_id = 'synthetic-provider-event'`;
     assert.equal(hashes.length, 1, 'an all-null pricing extension preserves the legacy provider dimension identity');
+
+    // Knowledge-source identities are scoped per install, counted under the current configuration, and mapped by append-only revisions.
+    const knowledgeBefore = await store.listKnowledgeSources();
+    const ownIdentities = (registry: typeof knowledgeBefore) => registry.identities.filter(item => [install.id, secondInstall.id].includes(item.install_id));
+    const resourceIdentity = (key: string, installId: string) => knowledgeBefore.identities.find(item => item.resource_key === key && item.install_id === installId)!;
+    const firstPrimary = resourceIdentity('obsidian.primary', install.id);
+    const secondPrimary = resourceIdentity('obsidian.primary', secondInstall.id);
+    const firstReference = resourceIdentity('obsidian.reference', install.id);
+    assert.equal(ownIdentities(knowledgeBefore).length, 3, 'duplicate replays never add identities');
+    assert.ok(firstPrimary && secondPrimary && firstPrimary.id !== secondPrimary.id, 'one configured key on two machines remains two scoped identities');
+    assert.deepEqual([firstPrimary.machine_label, secondPrimary.machine_label], ['test-mac', 'second-mac']);
+    assert.deepEqual([firstPrimary.configuration_version, secondPrimary.configuration_version], ['resources.v1', 'cfg:second'],
+      'an identity names the configuration the install most recently applied');
+    assert.deepEqual([firstPrimary.first_seen, firstPrimary.last_seen], ['2026-09-02T03:10:00.000Z', '2026-09-02T03:20:00.000Z'],
+      'sighting bounds span every configuration');
+    assert.deepEqual([firstPrimary.accesses, firstPrimary.distinct_invocations, firstPrimary.earlier_configuration_accesses], [1, 1, 1],
+      'earlier-configuration rows are disclosed, never counted as current');
+    assert.deepEqual([firstReference.accesses, secondPrimary.accesses, secondPrimary.earlier_configuration_accesses], [1, 1, 0]);
+    assert.equal(knowledgeBefore.identities.some(item => 'path' in item || 'roots' in item || 'connectors' in item), false,
+      'the registry never returns local roots or connectors');
+    assert.equal(knowledgeBefore.per_source.some(entry => entry.source_id === null && entry.identity_ids.includes(firstPrimary.id)), true,
+      'an unassigned identity is its own bucket');
+
+    const vault = await store.updateKnowledgeSources({ action: 'create', label: 'Primary vault' });
+    await store.updateKnowledgeSources({ action: 'map', source_id: vault.source_id, identity_ids: [firstPrimary.id, secondPrimary.id] });
+    await store.updateKnowledgeSources({ action: 'rename', source_id: vault.source_id, label: 'Primary vault renamed' });
+    await assert.rejects(store.updateKnowledgeSources({ action: 'rename', source_id: randomUUID(), label: 'Missing' }), /Unknown knowledge source/);
+    await assert.rejects(store.updateKnowledgeSources({ action: 'map', source_id: vault.source_id, identity_ids: [randomUUID()] }), /Unknown knowledge source identity/);
+    await assert.rejects(store.updateKnowledgeSources({ action: 'create', label: 'Vault', roots: ['/private/vault'] }), 'a mutation can never name a root');
+
+    const resolvedAccess = async (semanticKey: string) => (await sql`SELECT source_state, source_id, source_label, identity_id, current_configuration, resource_key
+      FROM personal_hub.resource_access_source_resolution WHERE account_id = ${account} AND semantic_key = ${semanticKey}`)[0];
+    const vaultA = await resolvedAccess(sha('resource:vault-a'));
+    assert.deepEqual([vaultA.source_state, vaultA.source_id, vaultA.source_label, vaultA.identity_id, vaultA.current_configuration],
+      ['source', vault.source_id, 'Primary vault renamed', firstPrimary.id, true]);
+    assert.equal((await resolvedAccess(sha('resource:second-vault'))).source_id, vault.source_id, 'two machines share one logical knowledge source');
+    const staleResolved = await resolvedAccess(sha('resource:vault-a-stale'));
+    assert.deepEqual([staleResolved.source_state, staleResolved.source_id, staleResolved.current_configuration], ['source', vault.source_id, false],
+      'rows classified under an earlier configuration stay resolvable but are flagged');
+    assert.equal((await resolvedAccess(sha('resource:vault-b'))).source_state, 'unassigned');
+    const [rawAccess] = await sql`SELECT resource_key, configuration_version FROM personal_hub.resource_accesses WHERE account_id = ${account} AND semantic_key = ${sha('resource:vault-a-stale')}`;
+    assert.deepEqual([rawAccess.resource_key, rawAccess.configuration_version], ['obsidian.primary', 'resources.v0'], 'supersession never rewrites raw accesses');
+    // The ordinary reconfiguration path: the companion replays and re-emits the same access under
+    // a new token. Same semantic key and observed_at, so only receipt order makes it canonical.
+    const replayedAccess = { ...resourceAccess(bindingId, 'vault-a'), record_id: randomUUID(), configuration_version: 'cfg:next' };
+    assert.equal((await store.ingestUsage(current, envelope({ records: [replayedAccess] }))).accepted.records, 1, 'a re-classified access is a revision');
+    const [vaultARevisions] = await sql`SELECT count(*)::int AS rows FROM personal_hub.resource_accesses WHERE account_id = ${account} AND semantic_key = ${sha('resource:vault-a')}`;
+    assert.equal(Number(vaultARevisions.rows), 2, 'both revisions stay in the ledger');
+    const replayedResolved = await resolvedAccess(sha('resource:vault-a'));
+    const [replayedIdentity] = await sql`SELECT configuration_version FROM personal_hub.usage_knowledge_source_identities WHERE id = ${firstPrimary.id}`;
+    assert.deepEqual([replayedIdentity.configuration_version, replayedResolved.current_configuration, replayedResolved.source_id],
+      ['cfg:next', true, vault.source_id], 'the newest receipt names the current configuration and stays canonical');
+    const [replayedCanonical] = await sql`SELECT configuration_version FROM personal_hub.resource_access_source_resolution WHERE account_id = ${account} AND semantic_key = ${sha('resource:vault-a')}`;
+    assert.equal(replayedCanonical.configuration_version, 'cfg:next');
+
+    const knowledgeMapped = await store.listKnowledgeSources();
+    const primaryVault = knowledgeMapped.per_source.find(entry => entry.source_id === vault.source_id)!;
+    assert.deepEqual([primaryVault.label, primaryVault.identity_ids.slice().sort(), primaryVault.accesses, primaryVault.distinct_invocations,
+      primaryVault.distinct_sessions, primaryVault.distinct_agents],
+      ['Primary vault renamed', [firstPrimary.id, secondPrimary.id].sort(), 2, 2, 2, 2], 'a source sums current rows across machines');
+    assert.deepEqual(primaryVault.by_access_kind, { read: 2, search: 0, write: 0, unknown: 0 });
+    assert.deepEqual(primaryVault.by_evidence_basis, { explicit_argument: 2, connector: 0, indirect_shell: 0, unknown: 0 });
+    assert.deepEqual(primaryVault.by_outcome, { succeeded: 2, failed: 0, denied: 0, cancelled: 0, unknown: 0 });
+    assert.deepEqual(primaryVault.top_tools, [{ tool_name: 'Grep', tool_class: 'builtin', invocations: 1 }, { tool_name: 'Read', tool_class: 'builtin', invocations: 1 }]);
+    assert.deepEqual([primaryVault.first_observed, primaryVault.last_observed], ['2026-09-02T03:20:00.000Z', '2026-09-02T03:20:00.000Z']);
+    const referenceBucket = knowledgeMapped.per_source.find(entry => entry.identity_ids.includes(firstReference.id))!;
+    assert.deepEqual([referenceBucket.source_id, referenceBucket.label, referenceBucket.resource_key, referenceBucket.machine_label, referenceBucket.accesses, referenceBucket.distinct_sessions],
+      [null, null, 'obsidian.reference', 'test-mac', 1, 1]);
+    assert.equal(knowledgeMapped.per_source.some(entry => 'path' in entry || 'roots' in entry), false);
+    const ownAccesses = await sql`SELECT count(*)::int AS rows, count(DISTINCT invocation_key)::int AS invocations
+      FROM personal_hub.resource_access_source_resolution WHERE account_id = ${account} AND current_configuration`;
+    assert.deepEqual([Number(ownAccesses[0].rows), Number(ownAccesses[0].invocations)], [3, 2], 'one invocation touching two sources is two rows and one call');
+    assert.ok(knowledgeMapped.coverage.evidence.overlapping_invocations >= 1, 'overlap is disclosed as a count of calls with several rows');
+    assert.ok(knowledgeMapped.coverage.evidence.earlier_configuration_accesses >= 1);
+    assert.ok(knowledgeMapped.coverage.evidence.access_rows >= knowledgeMapped.coverage.evidence.canonical_accesses);
+    assert.equal(knowledgeMapped.coverage.evidence.canonical_accesses,
+      knowledgeMapped.coverage.evidence.current_configuration_accesses + knowledgeMapped.coverage.evidence.earlier_configuration_accesses + knowledgeMapped.coverage.resolved.unknown,
+      'canonical accesses split into current, earlier, and unknown without remainder');
+    assert.deepEqual(knowledgeMapped.coverage.detection.filter(entry => entry.install_id === install.id).map(entry => [entry.adapter, entry.state, entry.detail_code]),
+      [['claude_execution', 'partial', 'indirect_access_unknown']], 'detection coverage is the state and code the install last reported');
+    assert.equal(knowledgeMapped.coverage.detection.some(entry => entry.install_id === secondInstall.id), false, 'no resource capability reported means no detection claim');
+
+    await store.updateKnowledgeSources({ action: 'unmap', identity_ids: [secondPrimary.id] });
+    assert.equal((await resolvedAccess(sha('resource:second-vault'))).source_state, 'unassigned');
+    assert.equal((await resolvedAccess(sha('resource:vault-a'))).source_id, vault.source_id, 'unmapping one machine leaves the other mapped');
+    const sourceHistory = await sql`SELECT source_id FROM personal_hub.usage_knowledge_source_mapping_revisions
+      WHERE identity_id = ${secondPrimary.id} ORDER BY revision_order`;
+    assert.deepEqual(sourceHistory.map(row => row.source_id), [vault.source_id, null], 'mapping history is append-only');
+    const knowledgeAfter = await store.listKnowledgeSources();
+    assert.equal(knowledgeAfter.per_source.find(entry => entry.source_id === vault.source_id)!.accesses, 1);
+    assert.deepEqual(ownIdentities(knowledgeAfter).map(item => [item.resource_key, item.install_id, item.source_id]).sort(),
+      [['obsidian.primary', install.id, vault.source_id], ['obsidian.primary', secondInstall.id, null], ['obsidian.reference', install.id, null]].sort());
 
     // Rejection rules are per record and never fail the envelope.
     const foreign = request(randomUUID());
@@ -329,9 +429,11 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     const mine = list.installs.find(i => i.id === install.id)!;
     assert.equal(mine.bindings.length, 2); assert.equal(mine.applied_settings_version, 1); assert.ok(mine.latest_run);
     assert.equal(mine.bindings.find(b => b.id === bindingId)?.identity_state, 'confirmed');
+    // Eleven canonical requests reached this account through enabled bindings: msg, detail, zero, worktree, same-folder,
+    // native, legacy, one project-revision pair, the two second-machine requests, and msg-2; nothing rejected counts.
     const reconciled = await store.reconcile(account, '2026-09-01T00:00:00Z', '2026-09-03T00:00:00Z');
-    assert.equal(reconciled.covered_requests.requests, 4);
-    assert.equal(reconciled.unattributed.total, -305, 'reported account usage stays independent from covered request revisions');
+    assert.equal(reconciled.covered_requests.requests, 11, 'revisions of one request are one covered request');
+    assert.equal(reconciled.unattributed.total, 150 - (155 + 0 + 9 * 150), 'reported account usage stays independent from covered request revisions');
 
     // The release check keeps the previous value on failure and stores a semver on success.
     const failing = await store.syncCompanionRelease((async () => { throw new TypeError('offline'); }) as unknown as typeof fetch);
@@ -352,18 +454,27 @@ maybe('the application role can append to every ledger but never update or delet
       await assert.rejects(app.unsafe(`UPDATE personal_hub.${table} SET content_hash = content_hash WHERE false`), /permission denied/, `${table} update`);
       await assert.rejects(app.unsafe(`DELETE FROM personal_hub.${table} WHERE false`), /permission denied/, `${table} delete`);
     }
-    await assert.rejects(app`UPDATE personal_hub.usage_project_mapping_revisions SET project_id = project_id WHERE false`, /permission denied/);
-    await assert.rejects(app`DELETE FROM personal_hub.usage_project_mapping_revisions WHERE false`, /permission denied/);
+    for (const [table, column] of [['usage_project_mapping_revisions', 'project_id = project_id'], ['usage_knowledge_source_mapping_revisions', 'source_id = source_id']]) {
+      await assert.rejects(app.unsafe(`UPDATE personal_hub.${table} SET ${column} WHERE false`), /permission denied/, `${table} update`);
+      await assert.rejects(app.unsafe(`DELETE FROM personal_hub.${table} WHERE false`), /permission denied/, `${table} delete`);
+    }
     for (const [table, column] of [['collection_settings', 'settings_version = settings_version'], ['companion_installs', 'paused = paused'], ['companion_bindings', 'enabled = enabled'], ['companion_pairing_codes', 'used_at = used_at']]) {
       await app.unsafe(`UPDATE personal_hub.${table} SET ${column} WHERE false`);
       await assert.rejects(app.unsafe(`DELETE FROM personal_hub.${table} WHERE false`), /permission denied/, `${table} delete`);
     }
-    for (const [table, column] of [['usage_projects', 'label = label'], ['usage_project_identities', 'last_seen = last_seen']]) {
+    for (const [table, column] of [['usage_projects', 'label = label'], ['usage_project_identities', 'last_seen = last_seen'],
+      ['usage_knowledge_sources', 'label = label, updated_at = updated_at'],
+      ['usage_knowledge_source_identities', 'configuration_version = configuration_version, first_seen = first_seen, last_seen = last_seen']]) {
       await app.unsafe(`UPDATE personal_hub.${table} SET ${column} WHERE false`);
       await assert.rejects(app.unsafe(`DELETE FROM personal_hub.${table} WHERE false`), /permission denied/, `${table} delete`);
     }
     await assert.rejects(app`UPDATE personal_hub.usage_project_identities SET evidence_key = evidence_key WHERE false`, /permission denied/,
       'the app can update sighting bounds but cannot rewrite identity evidence');
+    for (const column of ['resource_key = resource_key', 'install_id = install_id', 'id = id']) {
+      await assert.rejects(app.unsafe(`UPDATE personal_hub.usage_knowledge_source_identities SET ${column} WHERE false`), /permission denied/,
+        'the app can update sightings and the configuration version but cannot rewrite a knowledge-source identity');
+    }
+    await assert.rejects(app`UPDATE personal_hub.usage_knowledge_sources SET created_at = created_at WHERE false`, /permission denied/);
     const writableProject = randomUUID(), writableIdentity = randomUUID();
     await app`INSERT INTO personal_hub.usage_projects (id, label) VALUES (${writableProject}, 'Application role project')`;
     await app`INSERT INTO personal_hub.usage_project_identities
@@ -373,8 +484,20 @@ maybe('the application role can append to every ledger but never update or delet
     const [appendedMapping] = await app`INSERT INTO personal_hub.usage_project_mapping_revisions (id, identity_id, project_id)
       VALUES (${randomUUID()}, ${writableIdentity}, ${writableProject}) RETURNING revision_order`;
     assert.ok(Number(appendedMapping.revision_order) > 0, 'the application role can allocate database mapping order');
+    const writableSource = randomUUID(), writableResource = randomUUID();
+    await app`INSERT INTO personal_hub.usage_knowledge_sources (id, label) VALUES (${writableSource}, 'Application role source')`;
+    await app`INSERT INTO personal_hub.usage_knowledge_source_identities
+      (id, install_id, resource_key, configuration_version, first_seen, last_seen)
+      VALUES (${writableResource}, '00000000-0000-4000-8000-000000000302', ${`app.${writableResource.slice(0, 8)}`}, 'cfg:0123456789abcdef',
+        '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
+    await app`UPDATE personal_hub.usage_knowledge_source_identities SET configuration_version = 'cfg:fedcba9876543210', last_seen = '2026-09-01T00:01:00Z'
+      WHERE id = ${writableResource}`;
+    const [appendedSourceMapping] = await app`INSERT INTO personal_hub.usage_knowledge_source_mapping_revisions (id, identity_id, source_id)
+      VALUES (${randomUUID()}, ${writableResource}, ${writableSource}) RETURNING revision_order`;
+    assert.ok(Number(appendedSourceMapping.revision_order) > 0, 'the application role can allocate knowledge-source mapping order');
     await app`SELECT count(*) FROM personal_hub.allowance_percent_view`;
     await app`SELECT count(*) FROM personal_hub.activity_request_project_resolution`;
+    await app`SELECT count(*) FROM personal_hub.resource_access_source_resolution`;
     await app`SELECT count(*) FROM personal_hub.token_bucket_revisions`;
   } finally { await app.end({ timeout: 1 }); }
 });

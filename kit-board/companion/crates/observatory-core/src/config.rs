@@ -1,13 +1,16 @@
 //! The local configuration files: `companion.json` (install id and key,
-//! Observatory URL, per-binding root overrides, deny list) and the opt-in
-//! `secrets.json` (Admin API keys). Both are `0600`; neither is ever uploaded.
+//! Observatory URL, per-binding root overrides, knowledge-source roots, deny
+//! list) and the opt-in `secrets.json` (Admin API keys). Both are `0600`;
+//! neither is ever uploaded.
 
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use observatory_contract::{AccountId, Lit, Provider, Uuid};
+use std::str::FromStr;
+
+use observatory_contract::{AccountId, Code, Lit, Provider, Uuid};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -74,6 +77,77 @@ pub struct LocalBinding {
     pub detailed_report: Option<DetailedReportConfig>,
 }
 
+/// One named knowledge source (an Obsidian vault or another local corpus)
+/// this machine classifies tool invocations against. Roots and connector ids
+/// never leave the machine; only `key` and a configuration digest are uploaded.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalResource {
+    /// The privacy-safe identity the Observatory labels: `^[a-z0-9_.:-]{1,64}$`.
+    pub key: String,
+    /// A local display label; never uploaded (the server keeps its own labels).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Directories whose files count as this source. A path resolves to the
+    /// source when it equals a root or sits beneath one.
+    #[serde(default)]
+    pub roots: Vec<PathBuf>,
+    /// Connector identifiers: `mcp:<namespace>` matches MCP tools served under
+    /// that namespace; `url:<prefix>` matches fetched URLs by prefix.
+    #[serde(default)]
+    pub connectors: Vec<String>,
+    /// Where the definition came from, e.g. `obsidian:<vault id>`; informational.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+impl LocalResource {
+    /// Checks the parts the wire contract and the classifier depend on.
+    pub fn validate(&self) -> Result<(), String> {
+        if Code::from_str(&self.key).is_err() {
+            return Err(format!("resource key {:?} must match ^[a-z0-9_.:-]{{1,64}}$", self.key));
+        }
+        if self.roots.is_empty() && self.connectors.is_empty() {
+            return Err(format!("resource {:?} needs at least one root or connector", self.key));
+        }
+        if let Some(index) = self.roots.iter().position(|root| !anchored_root(root)) {
+            return Err(format!(
+                "resource {:?} root {} must be an absolute path or start with ~/",
+                self.key,
+                index + 1
+            ));
+        }
+        if let Some(bad) = self.connectors.iter().find(|connector| !valid_connector(connector)) {
+            return Err(format!(
+                "resource {:?} connector {bad:?} must be mcp:<namespace> or url:<prefix>",
+                self.key
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Absolute, or `~/`-relative so a home-anchored vault survives a rename of the
+/// user directory; a bare relative root would depend on the run's working directory.
+fn anchored_root(root: &Path) -> bool {
+    let text = root.to_string_lossy();
+    let separator = |ch: char| ch == '/' || ch == '\\';
+    let drive = text.len() >= 2
+        && text.as_bytes()[0].is_ascii_alphabetic()
+        && text.as_bytes()[1] == b':'
+        && text[2..].starts_with(separator);
+    let home = text == "~" || (text.starts_with('~') && text[1..].starts_with(separator));
+    text.starts_with(separator) || drive || home
+}
+
+fn valid_connector(connector: &str) -> bool {
+    match connector.split_once(':') {
+        Some(("mcp", namespace)) => !namespace.is_empty() && !namespace.contains(char::is_whitespace),
+        Some(("url", prefix)) => prefix.starts_with("http://") || prefix.starts_with("https://"),
+        _ => false,
+    }
+}
+
 /// `companion.json`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -89,10 +163,14 @@ pub struct CompanionConfig {
     pub since: Option<String>,
     #[serde(default)]
     pub bindings: Vec<LocalBinding>,
-    /// Local deny list of adapter modes, e.g. `allowance.claude_reader.oauth_usage`.
-    /// It can only remove.
+    /// Local deny list of adapter modes, e.g. `allowance.claude_reader.oauth_usage`,
+    /// or `execution.resource_attribution` to keep knowledge-source evidence on
+    /// this machine. It can only remove.
     #[serde(default)]
     pub deny: Vec<String>,
+    /// Named knowledge sources with their local roots. Absent means none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<LocalResource>,
     /// Where the Claude Code statusline hook writes allowance samples.
     /// Defaults to `<config dir>/inbox/claude-statusline`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -136,6 +214,25 @@ impl CompanionConfig {
             Some(existing) => *existing = binding,
             None => self.bindings.push(binding),
         }
+    }
+
+    pub fn resource(&self, key: &str) -> Option<&LocalResource> {
+        self.resources.iter().find(|resource| resource.key == key)
+    }
+
+    /// Adds or replaces a knowledge source by key.
+    pub fn upsert_resource(&mut self, resource: LocalResource) {
+        match self.resources.iter_mut().find(|existing| existing.key == resource.key) {
+            Some(existing) => *existing = resource,
+            None => self.resources.push(resource),
+        }
+    }
+
+    /// Removes a knowledge source; false when the key was not configured.
+    pub fn remove_resource(&mut self, key: &str) -> bool {
+        let before = self.resources.len();
+        self.resources.retain(|resource| resource.key != key);
+        self.resources.len() != before
     }
 
     pub fn statusline_inbox(&self, dir: &Path) -> PathBuf {
@@ -214,6 +311,13 @@ mod tests {
                 detailed_report: None,
             }],
             deny: vec!["allowance.claude_reader.oauth_usage".into()],
+            resources: vec![LocalResource {
+                key: "obsidian.primary".into(),
+                label: Some("Primary vault".into()),
+                roots: vec![PathBuf::from("/tmp/vault")],
+                connectors: vec!["mcp:vault".into()],
+                source: Some("obsidian:0123456789abcdef".into()),
+            }],
             claude_statusline_inbox: None,
         };
         config.save(dir.path()).unwrap();
@@ -221,5 +325,42 @@ mod tests {
         assert_eq!(back, config);
         assert!(!format!("{back:?}").contains("kkkk"));
         assert!(matches!(CompanionConfig::load(&dir.path().join("missing")), Err(ConfigError::NotConnected)));
+    }
+
+    #[test]
+    fn resources_are_optional_validated_and_replaceable() {
+        let text = r#"{"schema_version":1,"url":"https://example.test","install_id":"00000000-0000-4000-8000-000000000001",
+            "key":"k","machine_label":"mac"}"#;
+        let mut config: CompanionConfig = serde_json::from_str(text).unwrap();
+        assert!(config.resources.is_empty());
+        assert!(!serde_json::to_string(&config).unwrap().contains("resources"));
+        let valid = LocalResource {
+            key: "obsidian.primary".into(),
+            label: None,
+            roots: vec![PathBuf::from("/tmp/vault")],
+            connectors: vec![],
+            source: None,
+        };
+        assert!(valid.validate().is_ok());
+        assert!(LocalResource { key: "Bad Key".into(), ..valid.clone() }.validate().is_err());
+        assert!(LocalResource { roots: vec![], ..valid.clone() }.validate().is_err());
+        assert!(LocalResource { roots: vec![PathBuf::from("vault")], ..valid.clone() }.validate().is_err());
+        assert!(LocalResource { roots: vec![PathBuf::from("~/vault")], ..valid.clone() }.validate().is_ok());
+        assert!(LocalResource { connectors: vec!["obsidian".into()], ..valid.clone() }.validate().is_err());
+        assert!(
+            LocalResource { connectors: vec!["url:ftp://x".into()], ..valid.clone() }.validate().is_err()
+        );
+        assert!(
+            LocalResource { roots: vec![], connectors: vec!["mcp:vault".into()], ..valid.clone() }
+                .validate()
+                .is_ok()
+        );
+        config.upsert_resource(valid.clone());
+        config.upsert_resource(LocalResource { label: Some("Renamed".into()), ..valid.clone() });
+        assert_eq!(config.resources.len(), 1);
+        assert_eq!(config.resource("obsidian.primary").unwrap().label.as_deref(), Some("Renamed"));
+        assert!(config.remove_resource("obsidian.primary"));
+        assert!(!config.remove_resource("obsidian.primary"));
+        assert!(serde_json::from_str::<LocalResource>(r#"{"key":"x","roots":[],"path":"/x"}"#).is_err());
     }
 }

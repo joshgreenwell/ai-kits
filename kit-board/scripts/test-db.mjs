@@ -15,6 +15,7 @@ const root = process.cwd();
 const port = String(55440 + Math.floor(Math.random() * 100));
 const databaseName = 'personal_hub_test';
 const usageDetailMigration = '20260913230451_extend_usage_detail_contract.sql';
+const knowledgeSourceMigration = '20260914003000_knowledge_source_registry.sql';
 
 async function seedUsageDetailUpgradeFixture(db) {
   // Synthetic row accepted by the original bucket schema. Its reasoning count is
@@ -61,6 +62,37 @@ async function seedUsageDetailUpgradeFixture(db) {
         'claude_code', 'cli', 'local', repeat('b', 64), 'provider', 'synthetic-model',
         '2026-09-01T01:02:00Z', 1, 0, 0, 1, NULL, 'exact', repeat('c', 64),
         'completed', '1.0.0', repeat('d', 64));
+  `);
+}
+
+async function seedKnowledgeSourceUpgradeFixture(db) {
+  // Two retained resource accesses for one key on the synthetic install, accepted
+  // before the registry existed. The row received last carries the newer
+  // configuration but the older observation, so the backfill must take the
+  // version by receipt order and the sighting bounds by observation.
+  await db.unsafe(`
+    INSERT INTO personal_hub.resource_accesses
+      (id, account_id, binding_id, provider, adapter, channel, record_id,
+       semantic_key, invocation_key, resource_key, configuration_version,
+       access_kind, evidence_basis, outcome, basis, observed_at, parser_version,
+       received_at, content_hash)
+      VALUES ('00000000-0000-4000-8000-000000000340', 'migration-upgrade-legacy',
+        '00000000-0000-4000-8000-000000000303', 'claude', 'claude_execution',
+        'local_file', '00000000-0000-4000-8000-000000000341', repeat('e', 64),
+        repeat('1', 64), 'legacy.vault', 'legacy.v1', 'read', 'explicit_argument',
+        'succeeded', 'exact', '2026-09-01T01:02:00Z', '1.0.0', '2026-09-01T01:05:00Z',
+        repeat('3', 64));
+    INSERT INTO personal_hub.resource_accesses
+      (id, account_id, binding_id, provider, adapter, channel, record_id,
+       semantic_key, invocation_key, resource_key, configuration_version,
+       access_kind, evidence_basis, outcome, basis, observed_at, parser_version,
+       received_at, content_hash)
+      VALUES ('00000000-0000-4000-8000-000000000342', 'migration-upgrade-legacy',
+        '00000000-0000-4000-8000-000000000303', 'claude', 'claude_execution',
+        'local_file', '00000000-0000-4000-8000-000000000343', repeat('f', 64),
+        repeat('2', 64), 'legacy.vault', 'legacy.v0', 'search', 'indirect_shell',
+        'unknown', 'exact', '2026-09-01T01:04:00Z', '1.0.0', '2026-09-01T01:03:00Z',
+        repeat('4', 64));
   `);
 }
 
@@ -129,6 +161,7 @@ try {
   const migrations = (await readdir(join(root, 'supabase/migrations'))).filter(file => file.endsWith('.sql')).sort();
   for (const migration of migrations) {
     if (migration === usageDetailMigration) await seedUsageDetailUpgradeFixture(db);
+    if (migration === knowledgeSourceMigration) await seedKnowledgeSourceUpgradeFixture(db);
     await db.file(join(root, 'supabase/migrations', migration));
   }
   await db.end({ timeout: 1 });

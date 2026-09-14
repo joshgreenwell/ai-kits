@@ -2,7 +2,7 @@
 
 Created: 2026-09-13
 
-**34 filesystem tasks: 26 core delivery tasks, seven follow-ups, and one optional task awaiting a decision.** USG-001, USG-003, USG-004, USG-005, USG-006, and USG-007 are complete, and USG-002 is in progress; the remaining tasks are unstarted unless their files say otherwise. Creating and maintaining this backlog does not itself run collection, change settings, schedule work, or authorize a deployment.
+**34 filesystem tasks: 26 core delivery tasks, seven follow-ups, and one optional task awaiting a decision.** USG-001, USG-003, USG-004, USG-005, USG-006, USG-007, and USG-008 are complete, and USG-002 is in progress; the remaining tasks are unstarted unless their files say otherwise. Creating and maintaining this backlog does not itself run collection, change settings, schedule work, or authorize a deployment.
 
 Planning and tracking for this work live in these files. Do not use Jira. The USG identifiers are local backlog IDs, not Linear issue IDs. If the user later chooses Linear, carry these scopes and acceptance criteria across and record the mapping rather than creating duplicate sources of truth.
 
@@ -62,7 +62,7 @@ Every implementation task inherits these requirements:
 | [USG-005: Collect distinct subagents, parent relationships, roles, and token attribution](usg-005-collect-agent-lineage.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-004](usg-004-collect-request-and-pricing-evidence.md) | Done |
 | [USG-006: Collect tool invocations, callers, and outcomes without duplicate counting](usg-006-collect-tool-invocations.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-004](usg-004-collect-request-and-pricing-evidence.md) | Done |
 | [USG-007: Collect and map project identities across machines and worktrees](usg-007-map-project-identities.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-004](usg-004-collect-request-and-pricing-evidence.md) | Done |
-| [USG-008: Identify access to multiple vaults and configured knowledge sources](usg-008-collect-knowledge-source-access.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-006](usg-006-collect-tool-invocations.md), [USG-007](usg-007-map-project-identities.md) | Planned |
+| [USG-008: Identify access to multiple vaults and configured knowledge sources](usg-008-collect-knowledge-source-access.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-006](usg-006-collect-tool-invocations.md), [USG-007](usg-007-map-project-identities.md) | Done |
 | [USG-009: Fix account attribution and freshness for existing allowance collection](usg-009-fix-allowance-identity-and-freshness.md) | P0 | [USG-001](usg-001-metric-and-source-contract.md) | Planned |
 | [USG-010: Build and verify the v2 replacement for the active browser quota bridge](usg-010-replace-browser-quota-bridge.md) | P1 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-009](usg-009-fix-allowance-identity-and-freshness.md) | Planned |
 | [USG-014: Make collection settings, cadence, and health reflect actual capabilities](usg-014-truthful-settings-and-collection-health.md) | P1 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-009](usg-009-fix-allowance-identity-and-freshness.md) | Planned |
@@ -163,4 +163,4 @@ The placeholder live `serve` mode is not needed for scheduled collection and rem
 
 ## Execution record
 
-USG-001 was completed in the filesystem with the shared metric/source contract and domain glossary. USG-003 completed the compatible envelope-v2 detail contract, cross-language fixtures, append-only storage migration, and server ingestion boundary; its collectors and production activation remain in their dependent stories. USG-002 has verified unattended Windows publication and remains open for the inaccessible-host inventory and production-wide reconciliation. No external issue tracker is used.
+USG-001 was completed in the filesystem with the shared metric/source contract and domain glossary. USG-003 completed the compatible envelope-v2 detail contract, cross-language fixtures, append-only storage migration, and server ingestion boundary; its collectors and production activation remain in their dependent stories. USG-002 has verified unattended Windows publication and remains open for the inaccessible-host inventory and production-wide reconciliation. USG-008 added locally configured knowledge sources, privacy-safe access classification for supported Claude and Codex tool calls, and the server registry and naming/mapping route; its UI, and any production activation, remain in dependent stories. No external issue tracker is used.

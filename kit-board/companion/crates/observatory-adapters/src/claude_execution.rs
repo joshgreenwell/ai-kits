@@ -16,6 +16,7 @@ use crate::requests::{
     EvidenceSummary, ToolEvidenceSummary, execution_capabilities, request_from_event,
     request_matches_agent_setting,
 };
+use crate::resources::{ResourceEvidenceSummary, emit_records as emit_resource_records};
 use crate::tools::{
     matches_agent_setting as tool_matches_agent_setting, record_from_event as tool_record_from_event,
 };
@@ -59,6 +60,7 @@ impl Adapter for ClaudeExecution {
         let mut inbox_bound = false;
         let mut evidence = EvidenceSummary::default();
         let mut tool_evidence = ToolEvidenceSummary::default();
+        let mut resource_evidence = ResourceEvidenceSummary::for_run(ctx);
         let mut history_has_parse_gaps = false;
         for binding in ctx.bindings_for(Provider::Claude).filter(|binding| binding.runnable()) {
             let metrics = scan(&state, ctx, binding, Provider::Claude, "claude_code", include_subagents)?;
@@ -93,6 +95,7 @@ impl Adapter for ClaudeExecution {
             if ctx.settings.execution.detail_level != DetailLevel::BucketsOnly {
                 let tool_events = state.tool_events(binding.binding_id.as_str())?;
                 tool_evidence.observe(&tool_events, state.tool_coverage(binding.binding_id.as_str())?);
+                resource_evidence.observe(state.resource_inspection_counts(binding.binding_id.as_str())?);
                 for event in state.request_events(binding.binding_id.as_str())? {
                     if !request_matches_agent_setting(&event, include_subagents) {
                         continue;
@@ -143,6 +146,17 @@ impl Adapter for ClaudeExecution {
                             outcome.records_emitted += 1;
                         }
                     }
+                    if ctx.effective_resource_attribution() {
+                        outcome.records_emitted += emit_resource_records(
+                            &state,
+                            binding,
+                            AdapterId::ClaudeExecution,
+                            self.parser_version(),
+                            include_subagents,
+                            &tool_events,
+                            sink,
+                        )?;
+                    }
                 }
             }
         }
@@ -159,6 +173,7 @@ impl Adapter for ClaudeExecution {
             scan_partial,
             evidence,
             tool_evidence,
+            resource_evidence,
         ));
         Ok(outcome)
     }

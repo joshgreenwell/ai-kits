@@ -49,6 +49,37 @@ maybe('usage detail migration preserves legacy bucket evidence and enforces new 
       'the project registry backfills a scoped identity from retained hash-only evidence without rewriting it',
     );
     assert.ok(legacyProject.identity_id);
+    const legacyAccesses = await sql`
+      SELECT r.id, r.resource_key AS raw_key, r.configuration_version AS raw_version, r.access_kind, r.evidence_basis, r.outcome,
+        resolved.identity_id, resolved.source_state, resolved.current_configuration, resolved.install_id,
+        i.configuration_version AS identity_version, i.first_seen, i.last_seen
+      FROM personal_hub.resource_accesses r
+      JOIN personal_hub.resource_access_source_resolution resolved ON resolved.access_id = r.id
+      JOIN personal_hub.usage_knowledge_source_identities i ON i.id = resolved.identity_id
+      WHERE r.id IN ('00000000-0000-4000-8000-000000000340', '00000000-0000-4000-8000-000000000342')
+      ORDER BY r.id
+    `;
+    assert.equal(legacyAccesses.length, 2, 'every retained access resolves through one backfilled identity');
+    const [newerReceipt, olderReceipt] = legacyAccesses;
+    assert.equal(newerReceipt.identity_id, olderReceipt.identity_id, 'one key on one install is one identity');
+    assert.equal(newerReceipt.install_id, '00000000-0000-4000-8000-000000000302', 'identity scope comes from the binding install');
+    assert.deepEqual(
+      [newerReceipt.raw_key, newerReceipt.raw_version, newerReceipt.access_kind, newerReceipt.evidence_basis, newerReceipt.outcome,
+        olderReceipt.raw_key, olderReceipt.raw_version, olderReceipt.access_kind, olderReceipt.evidence_basis, olderReceipt.outcome],
+      ['legacy.vault', 'legacy.v1', 'read', 'explicit_argument', 'succeeded',
+        'legacy.vault', 'legacy.v0', 'search', 'indirect_shell', 'unknown'],
+      'the knowledge-source registry backfills a scoped identity without rewriting raw accesses',
+    );
+    assert.deepEqual(
+      [newerReceipt.identity_version, newerReceipt.first_seen.toISOString(), newerReceipt.last_seen.toISOString()],
+      ['legacy.v1', '2026-09-01T01:02:00.000Z', '2026-09-01T01:04:00.000Z'],
+      'the version comes from the row received last while sighting bounds follow observation time',
+    );
+    assert.deepEqual(
+      [newerReceipt.source_state, newerReceipt.current_configuration, olderReceipt.source_state, olderReceipt.current_configuration],
+      ['unassigned', true, 'unassigned', false],
+      'only rows classified under the latest configuration count as current',
+    );
     await assert.rejects(
       sql`ALTER TABLE personal_hub.account_usage_buckets
         VALIDATE CONSTRAINT account_usage_buckets_reasoning_subset_check`,

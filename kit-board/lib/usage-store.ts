@@ -4,6 +4,7 @@ import { RequestError, stableJson } from './contracts';
 import { readCache } from './read-cache';
 import { collectionSettingsSchema, installOverrideSchema, mergeSettings, type CollectionSettings, type InstallOverride } from './companion-settings';
 import { projectRegistryMutationSchema } from './project-registry';
+import { knowledgeSourceMutationSchema } from './knowledge-source-registry';
 import {
   adapterProvider, bindingRequestSchema, contentSubject, identityRequestSchema, isBrowserAdapter, issuePairingCodeSchema,
   normalizePairingCode, pairRequestSchema, PAIRING_ALPHABET, type AdapterCoverage, type InvalidUsageRecord, type RejectionReason, type UsageEnvelope, type UsageRecord,
@@ -41,6 +42,22 @@ export type InstallsSummary = { installs: InstallSummary[]; settings: Collection
 
 const CHANNEL_RANK = "CASE channel WHEN 'provider_api' THEN 0 WHEN 'app_server' THEN 1 WHEN 'local_file' THEN 2 WHEN 'local_db' THEN 2 ELSE 3 END";
 const IDENTITY_RANK = "CASE session_identity WHEN 'provider' THEN 0 WHEN 'derived' THEN 1 ELSE 2 END";
+// Closed resource.access enums, so every tally states its full denominator even at zero.
+const ACCESS_KINDS = ['read', 'search', 'write', 'unknown'] as const;
+const EVIDENCE_BASES = ['explicit_argument', 'connector', 'indirect_shell', 'unknown'] as const;
+const EVENT_OUTCOMES = ['succeeded', 'failed', 'denied', 'cancelled', 'unknown'] as const;
+const tally = <K extends string>(keys: readonly K[], row: Row | undefined, prefix: string) =>
+  Object.fromEntries(keys.map(key => [key, Number(row?.[`${prefix}${key}`] ?? 0)])) as Record<K, number>;
+
+export type KnowledgeSourceSummary = {
+  source_id: string | null; identity_ids: string[]; label: string | null; resource_key: string | null;
+  install_id: string | null; machine_label: string | null;
+  accesses: number; distinct_invocations: number; distinct_sessions: number; distinct_agents: number;
+  by_access_kind: Record<typeof ACCESS_KINDS[number], number>; by_evidence_basis: Record<typeof EVIDENCE_BASES[number], number>;
+  by_outcome: Record<typeof EVENT_OUTCOMES[number], number>;
+  top_tools: { tool_name: string | null; tool_class: string; invocations: number }[];
+  first_observed: string | null; last_observed: string | null;
+};
 
 /** Injectable database provider keeps the store testable against a disposable cluster. */
 export function createUsageStore(getDatabase?: () => Sql) {
@@ -249,6 +266,27 @@ export function createUsageStore(getDatabase?: () => Sql) {
           first_seen: firstSeen, last_seen: firstSeen,
         });
       };
+      // A resource identity is the configured key as seen by this install. The companion keeps
+      // each envelope single-version per key, so the version on the newest sighting is current.
+      const resourceIdentities = new Map<string, Row>();
+      const observeResourceIdentity = (record: Extract<UsageRecord, { record_type: 'resource.access' }>) => {
+        const scope = `${install.id}:${record.resource_key}`;
+        const existing = resourceIdentities.get(scope);
+        if (existing) {
+          const before = Date.parse(existing.first_seen as string), after = Date.parse(existing.last_seen as string);
+          const observed = Date.parse(record.observed_at);
+          if (observed < before) existing.first_seen = record.observed_at;
+          if (observed >= after) {
+            existing.last_seen = record.observed_at;
+            existing.configuration_version = record.configuration_version ?? existing.configuration_version;
+          }
+          return;
+        }
+        resourceIdentities.set(scope, {
+          id: randomUUID(), install_id: install.id, resource_key: record.resource_key,
+          configuration_version: record.configuration_version, first_seen: record.observed_at, last_seen: record.observed_at,
+        });
+      };
       for (const record of envelope.records) {
         const binding = bindings.get(record.binding_id);
         const reason = rejection(install, binding, record);
@@ -317,6 +355,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
               parser_version: record.parser_version });
             break;
           case 'resource.access':
+            observeResourceIdentity(record);
             resourceAccesses.push({ ...base, channel: record.channel, record_id: record.record_id, semantic_key: record.semantic_key,
               invocation_key: record.invocation_key, resource_key: record.resource_key,
               configuration_version: record.configuration_version, access_kind: record.access_kind,
@@ -338,6 +377,15 @@ export function createUsageStore(getDatabase?: () => Sql) {
           ON CONFLICT (account_id, provider, evidence_key) WHERE basis = 'native' DO UPDATE SET
             first_seen = least(usage_project_identities.first_seen, EXCLUDED.first_seen),
             last_seen = greatest(usage_project_identities.last_seen, EXCLUDED.last_seen)`;
+      }
+      if (resourceIdentities.size) {
+        // The latest upload names the configuration the install currently classifies under, even
+        // when it replays older transcripts, so a non-null version always replaces the stored one.
+        await tx`INSERT INTO personal_hub.usage_knowledge_source_identities ${tx([...resourceIdentities.values()])}
+          ON CONFLICT (install_id, resource_key) DO UPDATE SET
+            first_seen = least(usage_knowledge_source_identities.first_seen, EXCLUDED.first_seen),
+            last_seen = greatest(usage_knowledge_source_identities.last_seen, EXCLUDED.last_seen),
+            configuration_version = coalesce(EXCLUDED.configuration_version, usage_knowledge_source_identities.configuration_version)`;
       }
       const insert = async (table: string, rows: Row[]) => {
         if (!rows.length) return;
@@ -456,6 +504,198 @@ export function createUsageStore(getDatabase?: () => Sql) {
       }
       return { ok: true, action: data.action, identities: data.identity_ids.length,
         project_id: data.action === 'map' ? data.project_id : null };
+    });
+    dashboardCache.invalidate();
+    return result;
+  }
+
+  /** Privacy-safe knowledge-source registry: install-scoped resource keys, labels, and counts that disclose overlap. */
+  async function listKnowledgeSources() {
+    const db = await sql();
+    const sources = await db`SELECT id, label, created_at, updated_at
+      FROM personal_hub.usage_knowledge_sources ORDER BY lower(label), created_at, id`;
+    const identities = await db`WITH sightings AS (
+        SELECT identity_id,
+          count(*) FILTER (WHERE current_configuration)::int AS accesses,
+          count(DISTINCT invocation_key) FILTER (WHERE current_configuration)::int AS distinct_invocations,
+          count(*) FILTER (WHERE NOT current_configuration)::int AS earlier_configuration_accesses
+        FROM personal_hub.resource_access_source_resolution WHERE identity_id IS NOT NULL GROUP BY identity_id
+      )
+      SELECT i.id, i.install_id, ci.machine_label, i.resource_key, i.configuration_version, i.first_seen, i.last_seen,
+        current_mapping.source_id, source.label AS source_label,
+        coalesce(sightings.accesses, 0)::int AS accesses,
+        coalesce(sightings.distinct_invocations, 0)::int AS distinct_invocations,
+        coalesce(sightings.earlier_configuration_accesses, 0)::int AS earlier_configuration_accesses
+      FROM personal_hub.usage_knowledge_source_identities i
+      LEFT JOIN personal_hub.companion_installs ci ON ci.id = i.install_id
+      LEFT JOIN LATERAL (
+        SELECT revision.source_id FROM personal_hub.usage_knowledge_source_mapping_revisions revision
+        WHERE revision.identity_id = i.id
+        ORDER BY revision.revision_order DESC LIMIT 1
+      ) current_mapping ON true
+      LEFT JOIN personal_hub.usage_knowledge_sources source ON source.id = current_mapping.source_id
+      LEFT JOIN sightings ON sightings.identity_id = i.id
+      ORDER BY i.last_seen DESC, i.id`;
+    // One bucket per mapped source and one per unassigned identity, over current-configuration rows only.
+    // Sessions, agents, and tools come from the canonical invocation row joined by invocation_key; an
+    // access without a retained invocation contributes nothing to those counts.
+    const summaries = await db`WITH accesses AS (
+        SELECT a.account_id, a.invocation_key, a.access_kind, a.evidence_basis, a.outcome, a.observed_at, a.source_id,
+          CASE WHEN a.source_id IS NULL THEN a.identity_id END AS identity_id
+        FROM personal_hub.resource_access_source_resolution a
+        WHERE a.identity_id IS NOT NULL AND a.current_configuration
+      ), invocations AS (
+        SELECT DISTINCT ON (t.account_id, t.invocation_key)
+          t.account_id, t.invocation_key, t.session_hash, t.caller_agent_key, t.tool_name, t.tool_class
+        FROM personal_hub.tool_events t WHERE t.event_kind = 'invocation'
+        ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
+      ), joined AS (
+        SELECT a.*, t.session_hash, t.caller_agent_key, t.tool_name, t.tool_class
+        FROM accesses a LEFT JOIN invocations t ON t.account_id = a.account_id AND t.invocation_key = a.invocation_key
+      ), tools AS (
+        SELECT source_id, identity_id, tool_name, tool_class, count(DISTINCT invocation_key)::int AS invocations,
+          row_number() OVER (PARTITION BY source_id, identity_id ORDER BY count(DISTINCT invocation_key) DESC, tool_class, tool_name) AS rank
+        FROM joined WHERE tool_class IS NOT NULL GROUP BY source_id, identity_id, tool_name, tool_class
+      )
+      SELECT j.source_id, j.identity_id,
+        count(*)::int AS accesses,
+        count(DISTINCT j.invocation_key)::int AS distinct_invocations,
+        count(DISTINCT j.session_hash)::int AS distinct_sessions,
+        count(DISTINCT j.caller_agent_key)::int AS distinct_agents,
+        count(*) FILTER (WHERE j.access_kind = 'read')::int AS kind_read,
+        count(*) FILTER (WHERE j.access_kind = 'search')::int AS kind_search,
+        count(*) FILTER (WHERE j.access_kind = 'write')::int AS kind_write,
+        count(*) FILTER (WHERE j.access_kind = 'unknown')::int AS kind_unknown,
+        count(*) FILTER (WHERE j.evidence_basis = 'explicit_argument')::int AS basis_explicit_argument,
+        count(*) FILTER (WHERE j.evidence_basis = 'connector')::int AS basis_connector,
+        count(*) FILTER (WHERE j.evidence_basis = 'indirect_shell')::int AS basis_indirect_shell,
+        count(*) FILTER (WHERE j.evidence_basis = 'unknown')::int AS basis_unknown,
+        count(*) FILTER (WHERE j.outcome = 'succeeded')::int AS outcome_succeeded,
+        count(*) FILTER (WHERE j.outcome = 'failed')::int AS outcome_failed,
+        count(*) FILTER (WHERE j.outcome = 'denied')::int AS outcome_denied,
+        count(*) FILTER (WHERE j.outcome = 'cancelled')::int AS outcome_cancelled,
+        count(*) FILTER (WHERE j.outcome = 'unknown')::int AS outcome_unknown,
+        min(j.observed_at) AS first_observed, max(j.observed_at) AS last_observed,
+        (SELECT coalesce(jsonb_agg(jsonb_build_object('tool_name', t.tool_name, 'tool_class', t.tool_class, 'invocations', t.invocations) ORDER BY t.rank), '[]'::jsonb)
+          FROM tools t WHERE t.source_id IS NOT DISTINCT FROM j.source_id AND t.identity_id IS NOT DISTINCT FROM j.identity_id AND t.rank <= 5) AS top_tools
+      FROM joined j GROUP BY j.source_id, j.identity_id`;
+    const [observations = {}] = await db`SELECT count(*)::int AS access_rows FROM personal_hub.resource_accesses`;
+    const [evidence = {}] = await db`SELECT
+        count(*)::int AS canonical_accesses,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration)::int AS current_configuration_accesses,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND NOT current_configuration)::int AS earlier_configuration_accesses,
+        count(DISTINCT invocation_key) FILTER (WHERE identity_id IS NOT NULL AND current_configuration)::int AS distinct_invocations,
+        (SELECT count(*)::int FROM (
+          SELECT 1 FROM personal_hub.resource_access_source_resolution
+          WHERE identity_id IS NOT NULL AND current_configuration GROUP BY account_id, invocation_key HAVING count(*) > 1) overlap) AS overlapping_invocations,
+        count(*) FILTER (WHERE source_state = 'source')::int AS resolved_source,
+        count(*) FILTER (WHERE source_state = 'unassigned')::int AS resolved_unassigned,
+        count(*) FILTER (WHERE source_state = 'unknown')::int AS resolved_unknown,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND access_kind = 'read')::int AS kind_read,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND access_kind = 'search')::int AS kind_search,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND access_kind = 'write')::int AS kind_write,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND access_kind = 'unknown')::int AS kind_unknown,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND evidence_basis = 'explicit_argument')::int AS basis_explicit_argument,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND evidence_basis = 'connector')::int AS basis_connector,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND evidence_basis = 'indirect_shell')::int AS basis_indirect_shell,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND evidence_basis = 'unknown')::int AS basis_unknown,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND outcome = 'succeeded')::int AS outcome_succeeded,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND outcome = 'failed')::int AS outcome_failed,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND outcome = 'denied')::int AS outcome_denied,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND outcome = 'cancelled')::int AS outcome_cancelled,
+        count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration AND outcome = 'unknown')::int AS outcome_unknown
+      FROM personal_hub.resource_access_source_resolution`;
+    // Detection coverage is what each install last reported for the resource dimension of an adapter:
+    // state and detail code only, so the inspected/eligible ratio stays on the machine.
+    const detection = await db`SELECT DISTINCT ON (run.install_id, entry->>'adapter')
+        run.install_id, ci.machine_label, entry->>'adapter' AS adapter,
+        capability->>'state' AS state, capability->>'detail_code' AS detail_code, run.finished_at
+      FROM personal_hub.companion_runs run
+      JOIN personal_hub.companion_installs ci ON ci.id = run.install_id
+      CROSS JOIN LATERAL jsonb_array_elements(run.coverage) AS entry
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(entry->'capabilities') = 'array' THEN entry->'capabilities' ELSE '[]'::jsonb END) AS capability
+      WHERE capability->>'dimension' = 'resource'
+      ORDER BY run.install_id, entry->>'adapter', run.finished_at DESC, run.received_at DESC`;
+    const sourceById = new Map(sources.map(source => [source.id as string, source]));
+    const identityById = new Map(identities.map(identity => [identity.id as string, identity]));
+    const bucketKey = (sourceId: unknown, identityId: unknown) => (sourceId ? `source:${sourceId}` : `identity:${identityId}`);
+    const summaryByBucket = new Map(summaries.map(row => [bucketKey(row.source_id, row.identity_id), row]));
+    const summarize = (sourceId: string | null, identityId: string | null): KnowledgeSourceSummary => {
+      const row = summaryByBucket.get(bucketKey(sourceId, identityId));
+      const identity = identityId ? identityById.get(identityId) : undefined;
+      return {
+        source_id: sourceId,
+        identity_ids: sourceId ? identities.filter(item => item.source_id === sourceId).map(item => item.id as string) : [identityId!],
+        label: sourceId ? (sourceById.get(sourceId)?.label as string) ?? null : null,
+        resource_key: (identity?.resource_key as string) ?? null, install_id: (identity?.install_id as string) ?? null,
+        machine_label: (identity?.machine_label as string) ?? null,
+        accesses: Number(row?.accesses ?? 0), distinct_invocations: Number(row?.distinct_invocations ?? 0),
+        distinct_sessions: Number(row?.distinct_sessions ?? 0), distinct_agents: Number(row?.distinct_agents ?? 0),
+        by_access_kind: tally(ACCESS_KINDS, row, 'kind_'), by_evidence_basis: tally(EVIDENCE_BASES, row, 'basis_'),
+        by_outcome: tally(EVENT_OUTCOMES, row, 'outcome_'),
+        top_tools: (row?.top_tools ?? []) as KnowledgeSourceSummary['top_tools'],
+        first_observed: (row?.first_observed as string) ?? null, last_observed: (row?.last_observed as string) ?? null,
+      };
+    };
+    const perSource = [
+      ...sources.map(source => summarize(source.id as string, null)),
+      ...identities.filter(identity => identity.source_id === null).map(identity => summarize(null, identity.id as string)),
+    ];
+    const mapped = identities.filter(identity => identity.source_id !== null).length;
+    return clone({ sources, identities, per_source: perSource, coverage: {
+      evidence: {
+        access_rows: Number(observations.access_rows ?? 0),
+        canonical_accesses: Number(evidence.canonical_accesses ?? 0),
+        current_configuration_accesses: Number(evidence.current_configuration_accesses ?? 0),
+        earlier_configuration_accesses: Number(evidence.earlier_configuration_accesses ?? 0),
+        distinct_invocations: Number(evidence.distinct_invocations ?? 0),
+        overlapping_invocations: Number(evidence.overlapping_invocations ?? 0),
+        by_access_kind: tally(ACCESS_KINDS, evidence, 'kind_'), by_evidence_basis: tally(EVIDENCE_BASES, evidence, 'basis_'),
+        by_outcome: tally(EVENT_OUTCOMES, evidence, 'outcome_'),
+        note: 'accesses count resource rows and distinct_invocations count tool calls: one call touching several sources or nested roots'
+          + ' yields one row per source, so per-source totals overlap by accesses minus distinct_invocations. Only rows classified under'
+          + ' the configuration each install most recently applied are counted; earlier-configuration rows are listed separately because'
+          + ' transcripts deleted before a configuration change cannot be re-verified.',
+      },
+      mapping: { identities: identities.length, mapped, unassigned: identities.length - mapped },
+      resolved: { source: Number(evidence.resolved_source ?? 0), unassigned: Number(evidence.resolved_unassigned ?? 0), unknown: Number(evidence.resolved_unknown ?? 0) },
+      detection,
+    } });
+  }
+
+  /** Appends mapping revisions so historical resolution changes without raw fact edits. */
+  async function updateKnowledgeSources(input: unknown) {
+    const data = knowledgeSourceMutationSchema.parse(input);
+    const db = await sql();
+    const result = await db.begin(async transaction => {
+      const tx = transaction as unknown as Sql;
+      if (data.action === 'create') {
+        const id = randomUUID();
+        await tx`INSERT INTO personal_hub.usage_knowledge_sources (id, label) VALUES (${id}, ${data.label})`;
+        return { ok: true, action: data.action, source_id: id, label: data.label };
+      }
+      if (data.action === 'rename') {
+        const changed = await tx`UPDATE personal_hub.usage_knowledge_sources
+          SET label = ${data.label}, updated_at = now() WHERE id = ${data.source_id} RETURNING id`;
+        if (!changed.length) throw new RequestError('Unknown knowledge source', 404);
+        return { ok: true, action: data.action, source_id: data.source_id, label: data.label };
+      }
+      if (data.action === 'map') {
+        const source = await tx`SELECT id FROM personal_hub.usage_knowledge_sources WHERE id = ${data.source_id}`;
+        if (!source.length) throw new RequestError('Unknown knowledge source', 404);
+      }
+      const identityIds = [...data.identity_ids].sort();
+      for (const identityId of identityIds) {
+        const identity = await tx`SELECT id FROM personal_hub.usage_knowledge_source_identities WHERE id = ${identityId} FOR UPDATE`;
+        if (!identity.length) throw new RequestError('Unknown knowledge source identity', 404);
+      }
+      for (const identityId of identityIds) {
+        await tx`INSERT INTO personal_hub.usage_knowledge_source_mapping_revisions (id, identity_id, source_id, changed_at)
+          VALUES (${randomUUID()}, ${identityId}, ${data.action === 'map' ? data.source_id : null}, DEFAULT)`;
+      }
+      return { ok: true, action: data.action, identities: data.identity_ids.length,
+        source_id: data.action === 'map' ? data.source_id : null };
     });
     dashboardCache.invalidate();
     return result;
@@ -649,7 +889,8 @@ export function createUsageStore(getDatabase?: () => Sql) {
   }
 
   return { issuePairingCode, pairInstall, companionInstall, companionConfig, createBinding, updateInstallSettings, confirmIdentity, ingestUsage,
-    collectionSettings, updateCollectionSettings, listProjects, updateProjects, listInstalls, updateInstall, usageDashboard, reconcile, syncCompanionRelease };
+    collectionSettings, updateCollectionSettings, listProjects, updateProjects, listKnowledgeSources, updateKnowledgeSources, listInstalls, updateInstall,
+    usageDashboard, reconcile, syncCompanionRelease };
 }
 
 export const usageStore = createUsageStore();

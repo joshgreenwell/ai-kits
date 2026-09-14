@@ -71,6 +71,7 @@ pub fn connect(dir: &Path, args: ConnectArgs) -> CommandResult {
         since,
         bindings: Vec::new(),
         deny: Vec::new(),
+        resources: Vec::new(),
         claude_statusline_inbox: None,
     };
     config.save(dir)?;

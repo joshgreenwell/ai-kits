@@ -15,6 +15,7 @@ use observatory_contract::{
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::resources::{ResourceConfiguration, resource_attribution_denied};
 use crate::state::{State, StateError};
 
 /// The contract's adapter identifier.
@@ -69,6 +70,9 @@ pub struct RunContext {
     pub document: Option<ConfigDocument>,
     pub bindings: Vec<BindingContext>,
     pub deny: Vec<String>,
+    /// The knowledge sources this run classifies tool arguments against; empty
+    /// unless `companion.json` names some. Roots stay in here, on this machine.
+    pub resources: ResourceConfiguration,
     pub config_dir: PathBuf,
     pub state_path: PathBuf,
     /// Where the Claude Code statusline hook writes allowance samples.
@@ -108,6 +112,7 @@ impl RunContext {
             document,
             bindings,
             deny,
+            resources: ResourceConfiguration::default(),
             config_dir,
             state_path,
             statusline_inbox,
@@ -116,6 +121,13 @@ impl RunContext {
             deadline: Instant::now() + budget,
             cancel: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// The knowledge sources to classify against; `run::prepare` attaches
+    /// the validated `companion.json` entries here.
+    pub fn with_resources(mut self, resources: ResourceConfiguration) -> Self {
+        self.resources = resources;
+        self
     }
 
     /// Opens this thread's own connection to the state database.
@@ -131,6 +143,14 @@ impl RunContext {
     /// local rule always wins and is also applied to records queued offline.
     pub fn effective_project_attribution(&self) -> ProjectAttribution {
         restrict_project_attribution(self.settings.execution.project_attribution, &self.deny)
+    }
+
+    /// Whether `resource.access` rows may leave this machine: some source is
+    /// configured and the local deny list does not keep the rows home. Gates
+    /// emission and the upload-time filter only; classification itself runs
+    /// whenever sources are configured, so lifting the deny needs no rescan.
+    pub fn effective_resource_attribution(&self) -> bool {
+        !self.resources.is_empty() && !resource_attribution_denied(&self.deny)
     }
 
     /// Set by the runner when the run's deadline passes; adapters check it between files.
@@ -335,6 +355,56 @@ mod tests {
         assert_eq!(
             restrict_project_attribution(ProjectAttribution::Hashed, &["execution.tools".into()]),
             ProjectAttribution::Hashed
+        );
+    }
+
+    #[test]
+    fn resource_attribution_needs_a_configuration_and_no_local_deny() {
+        use std::path::PathBuf;
+
+        use observatory_contract::CollectionSettings;
+
+        let context = |deny: Vec<String>| {
+            RunContext::new(
+                Timestamp::UNIX_EPOCH,
+                "2026-09-01".into(),
+                0.0,
+                CollectionSettings::defaults(),
+                0,
+                None,
+                Vec::new(),
+                deny,
+                PathBuf::from("config"),
+                PathBuf::from("state.sqlite3"),
+                PathBuf::from("statusline"),
+                true,
+                Duration::from_secs(1),
+            )
+        };
+        assert!(!context(Vec::new()).effective_resource_attribution());
+        let configured = ResourceConfiguration::from_local(
+            &[crate::config::LocalResource {
+                key: "alpha-src".into(),
+                label: None,
+                roots: vec![PathBuf::from("/synthetic/vault-alpha")],
+                connectors: Vec::new(),
+                source: None,
+            }],
+            None,
+        );
+        assert!(context(Vec::new()).with_resources(configured.clone()).effective_resource_attribution());
+        for entry in ["execution", "execution.resource_attribution"] {
+            assert!(
+                !context(vec![entry.into()])
+                    .with_resources(configured.clone())
+                    .effective_resource_attribution(),
+                "{entry} keeps resource rows local"
+            );
+        }
+        assert!(
+            context(vec!["execution.project_attribution".into()])
+                .with_resources(configured)
+                .effective_resource_attribution()
         );
     }
 }

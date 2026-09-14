@@ -1,8 +1,9 @@
 //! `setup`: discovers installed products and stores, reads each signed-in
-//! identity for display, proposes bindings, asks one question each for the
-//! private-interface readers, the statusline hook, and the schedule, writes
-//! bindings and this install's settings override, runs a dry run, a first
-//! publish, and `service install`, and offers to uninstall a v1 schedule.
+//! identity for display, proposes bindings, offers each Obsidian vault as a
+//! knowledge source, asks one question each for the private-interface readers,
+//! the statusline hook, and the schedule, writes bindings and this install's
+//! settings override, runs a dry run, a first publish, and `service install`,
+//! and offers to uninstall a v1 schedule.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,8 +15,8 @@ use observatory_contract::settings::{
     AllowanceSettings, ClaudeReader, CursorReader, HookSettings, ProviderSwitches,
 };
 use observatory_contract::{AccountId, BindingRequest, InstallOverride, Nullable, Provider, Text};
-use observatory_core::config::{CompanionConfig, LocalBinding, Secrets};
-use observatory_core::discovery::{Discovered, DisplayIdentity, discover};
+use observatory_core::config::{CompanionConfig, LocalBinding, LocalResource, Secrets};
+use observatory_core::discovery::{Discovered, DisplayIdentity, ObsidianVault, discover};
 use observatory_core::http::Client;
 use observatory_core::paths::{home_dir, write_private};
 use observatory_core::run::{RunOptions, run as run_cycle};
@@ -102,6 +103,80 @@ fn proposals(found: &Discovered, binds: &[(Provider, AccountId)], config: &Compa
     out
 }
 
+/// The default key for a discovered vault: Obsidian's own id, which fits the
+/// `Code` pattern and does not name the folder.
+fn vault_key(vault: &ObsidianVault) -> String {
+    format!("obsidian.{}", vault.id)
+}
+
+/// The informational `source` recorded with a vault's definition.
+fn vault_source(vault: &ObsidianVault) -> String {
+    format!("obsidian:{}", vault.id)
+}
+
+/// The discovered vaults not configured yet, by source id or by default key:
+/// a vault the operator renamed keeps its `source`, one added by hand with the
+/// default key has no `source`.
+fn unconfigured_vaults<'a>(config: &CompanionConfig, vaults: &'a [ObsidianVault]) -> Vec<&'a ObsidianVault> {
+    vaults
+        .iter()
+        .filter(|vault| {
+            let source = vault_source(vault);
+            config.resource(&vault_key(vault)).is_none()
+                && !config
+                    .resources
+                    .iter()
+                    .any(|resource| resource.source.as_deref() == Some(source.as_str()))
+        })
+        .collect()
+}
+
+/// Offers each unconfigured Obsidian vault as a knowledge source: default key
+/// `obsidian.<vault id>`, the folder name only in the local label, the vault
+/// folder as the single root. The question defaults to no, and under `--yes`
+/// the block is skipped altogether (a source is an opt-in whose roots the
+/// operator should have seen), so `setup --yes` never adds one. Returns whether
+/// the configuration changed.
+fn propose_resources(config: &mut CompanionConfig, vaults: &[ObsidianVault], prompt: &Prompt) -> bool {
+    let candidates = unconfigured_vaults(config, vaults);
+    if candidates.is_empty() {
+        return false;
+    }
+    if prompt.assume_yes {
+        let named: Vec<String> =
+            candidates.iter().map(|vault| format!("{} ({})", vault.name, vault_key(vault))).collect();
+        println!(
+            "  Obsidian vaults not tracked as knowledge sources: {}; add one with `observatory resources add --key <key> --root <vault folder>`",
+            named.join(", ")
+        );
+        return false;
+    }
+    let mut changed = false;
+    for vault in candidates {
+        let default_key = vault_key(vault);
+        let question = format!("Track Obsidian vault '{}' as knowledge source '{default_key}'?", vault.name);
+        if !prompt.confirm(&question, false) {
+            continue;
+        }
+        let key = prompt.text("  Source key", &default_key);
+        let resource = LocalResource {
+            key: key.trim().to_owned(),
+            label: Some(vault.name.clone()),
+            roots: vec![vault.path.clone()],
+            connectors: Vec::new(),
+            source: Some(vault_source(vault)),
+        };
+        if let Err(error) = super::resources::check_resource(&resource) {
+            println!("  not added: {error}");
+            continue;
+        }
+        println!("  tracking '{}' as '{}'; {}", vault.name, resource.key, super::resources::UPLOAD_NOTE);
+        config.upsert_resource(resource);
+        changed = true;
+    }
+    changed
+}
+
 fn claude_settings_path() -> Option<PathBuf> {
     home_dir().map(|home| home.join(".claude").join("settings.json"))
 }
@@ -166,6 +241,14 @@ pub fn setup(dir: &Path, args: SetupArgs) -> CommandResult {
         found.codex.identity.as_ref().map(|i| format!(", signed in ({})", i.label)).unwrap_or_default()
     );
     println!("  Cursor: {}", if found.cursor.present { "state found" } else { "not found" });
+    println!(
+        "  Obsidian: {}",
+        if found.obsidian.present {
+            format!("{} vault(s) registered", found.obsidian.vaults.len())
+        } else {
+            "not found".to_owned()
+        }
+    );
 
     // Bindings.
     let mut bound: Vec<Provider> = Vec::new();
@@ -222,6 +305,12 @@ pub fn setup(dir: &Path, args: SetupArgs) -> CommandResult {
     if detailed_enabled {
         config.save(dir)?;
     }
+
+    // Knowledge sources: each Obsidian vault not tracked yet.
+    if propose_resources(&mut config, &found.obsidian.vaults, &prompt) {
+        config.save(dir)?;
+    }
+
     // Readers, hook, and schedule: one question each.
     let mut over = InstallOverride::default();
     let mut allowance = AllowanceSettings {
@@ -328,4 +417,71 @@ pub fn setup(dir: &Path, args: SetupArgs) -> CommandResult {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use observatory_contract::{Lit, Uuid};
+    use observatory_core::config::Secret;
+
+    use super::*;
+
+    fn config() -> CompanionConfig {
+        CompanionConfig {
+            schema_version: Lit,
+            url: "https://example.test".into(),
+            install_id: Uuid::v4(),
+            key: Secret::new("k".repeat(43)),
+            machine_label: "mac".into(),
+            since: None,
+            bindings: Vec::new(),
+            deny: Vec::new(),
+            resources: Vec::new(),
+            claude_statusline_inbox: None,
+        }
+    }
+
+    fn vault(id: &str, name: &str) -> ObsidianVault {
+        let root = std::env::temp_dir().join("synthetic").join(name);
+        ObsidianVault { id: id.into(), path: root, name: name.into(), open: false }
+    }
+
+    #[test]
+    fn setup_yes_never_adds_a_knowledge_source() {
+        let mut config = config();
+        let vaults = vec![vault("f00dbeefcafe0001", "vault-alpha"), vault("f00dbeefcafe0002", "vault-beta")];
+        assert!(!propose_resources(&mut config, &vaults, &Prompt::new(true)));
+        assert!(config.resources.is_empty());
+        assert!(!propose_resources(&mut config, &[], &Prompt::new(true)));
+        assert!(config.resources.is_empty());
+    }
+
+    #[test]
+    fn configured_vaults_are_not_proposed_again() {
+        let mut config = config();
+        let vaults = vec![vault("f00dbeefcafe0001", "vault-alpha"), vault("f00dbeefcafe0002", "vault-beta")];
+        let proposed: Vec<&str> =
+            unconfigured_vaults(&config, &vaults).iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(proposed, vec!["f00dbeefcafe0001", "f00dbeefcafe0002"]);
+
+        // A renamed key still carries the vault's source id.
+        config.upsert_resource(LocalResource {
+            key: "notes".into(),
+            label: Some("vault-alpha".into()),
+            roots: vec![vaults[0].path.clone()],
+            connectors: Vec::new(),
+            source: Some("obsidian:f00dbeefcafe0001".into()),
+        });
+        // A hand-added definition may use the default key without a source.
+        config.upsert_resource(LocalResource {
+            key: "obsidian.f00dbeefcafe0002".into(),
+            label: None,
+            roots: vec![vaults[1].path.clone()],
+            connectors: Vec::new(),
+            source: None,
+        });
+        assert!(unconfigured_vaults(&config, &vaults).is_empty());
+        assert_eq!(vault_key(&vaults[0]), "obsidian.f00dbeefcafe0001");
+        assert_eq!(vault_source(&vaults[1]), "obsidian:f00dbeefcafe0002");
+    }
 }

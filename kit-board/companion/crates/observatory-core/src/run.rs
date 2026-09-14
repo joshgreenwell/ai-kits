@@ -1,7 +1,7 @@
 //! The run loop (section 2.4): lock, config, effective modes, adapters on
 //! scoped threads, sink, buckets, envelopes, outbox, upload, summary.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -30,7 +30,10 @@ use crate::http::{Client, ConfigFetch, HttpError};
 use crate::outbox;
 use crate::paths;
 use crate::pyjson::{digest, epoch_text};
-use crate::state::{AdapterStateRow, CachedConfig, RecordRow, RunRow, State, StateError};
+use crate::resources::{ResourceConfiguration, resource_attribution_denied};
+use crate::state::{
+    AdapterStateRow, CachedConfig, RecordRow, RunRow, SUPERSEDED_CONFIGURATION, State, StateError,
+};
 use crate::{VERSION, lock};
 
 #[derive(Debug, Error)]
@@ -145,6 +148,23 @@ fn resolve_roots(binding: &crate::config::LocalBinding) -> Vec<PathBuf> {
             .unwrap_or_default(),
         Provider::Cursor | Provider::AnthropicApi | Provider::OpenaiApi => Vec::new(),
     }
+}
+
+/// The knowledge sources a run classifies against: every `companion.json`
+/// entry that validates, normalized against this machine's home directory.
+/// Entries that fail validation are skipped; the returned messages name the
+/// key and the failing part by position, never a path.
+pub fn configured_resources(config: &CompanionConfig) -> (ResourceConfiguration, Vec<String>) {
+    let mut valid = Vec::new();
+    let mut skipped = Vec::new();
+    for resource in &config.resources {
+        match resource.validate() {
+            Ok(()) => valid.push(resource.clone()),
+            Err(problem) => skipped.push(format!("knowledge source skipped: {problem}")),
+        }
+    }
+    let home = paths::home_dir().map(|home| home.to_string_lossy().into_owned());
+    (ResourceConfiguration::from_local(&valid, home.as_deref()), skipped)
 }
 
 fn local_identity(binding: &crate::config::LocalBinding) -> Option<Sha256Hex> {
@@ -342,6 +362,11 @@ pub fn prepare(config_dir: &Path, options: &RunOptions, take_lock: bool) -> Resu
         options.dry_run,
         options.budget,
     );
+    let (resources, skipped) = configured_resources(&config);
+    for warning in skipped {
+        tracing::warn!(code = "resource_invalid", "{warning}");
+    }
+    let ctx = ctx.with_resources(resources);
     Ok(Prepared { config, config_dir: config_dir.to_path_buf(), ctx, config_source, config_error, lock })
 }
 
@@ -632,11 +657,52 @@ fn pending_records_for_agent_setting(
     )
 }
 
+/// The machine-local rules a queued record must pass before an upload: the
+/// adapter/provider/mode deny list and the knowledge-source policy.
+struct LocalPolicy<'a> {
+    settings: &'a CollectionSettings,
+    deny: &'a [String],
+    resources: ResourceUploadPolicy,
+}
+
+/// Which queued `resource.access` records may leave now. `Denied` keeps every
+/// row pending on this machine, like a denied project attribution; `Current`
+/// admits only rows stamped with each configured key's present token, and
+/// marks the rest `superseded_configuration` so they never upload (a removed
+/// key, a changed root set, or a transcript deleted before the change).
+enum ResourceUploadPolicy {
+    Denied,
+    Current(BTreeMap<String, String>),
+}
+
+impl ResourceUploadPolicy {
+    fn current(
+        state: &State,
+        deny: &[String],
+        resources: &ResourceConfiguration,
+    ) -> Result<Self, StateError> {
+        if resource_attribution_denied(deny) {
+            return Ok(ResourceUploadPolicy::Denied);
+        }
+        let mut versions = BTreeMap::new();
+        for resource in &resources.resources {
+            if let Some(digest) = resources.resource_version(&resource.key) {
+                let token = state.resource_config_token(&digest)?;
+                versions.insert(resource.key.clone(), format!("cfg:{token}"));
+            }
+        }
+        Ok(ResourceUploadPolicy::Current(versions))
+    }
+}
+
 fn pending_records_for_current_settings(
     state: &State,
     settings: &CollectionSettings,
     deny: &[String],
+    resources: &ResourceConfiguration,
 ) -> Result<Vec<Record>, StateError> {
+    let policy =
+        LocalPolicy { settings, deny, resources: ResourceUploadPolicy::current(state, deny, resources)? };
     pending_records_for_agent_setting_with_limit(
         state,
         settings.execution.detail_level,
@@ -644,7 +710,7 @@ fn pending_records_for_current_settings(
         crate::adapter::restrict_project_attribution(settings.execution.project_attribution, deny),
         settings.execution.tool_detail,
         50_000,
-        Some((settings, deny)),
+        Some(&policy),
     )
 }
 
@@ -655,7 +721,7 @@ fn pending_records_for_agent_setting_with_limit(
     project_attribution: ProjectAttribution,
     tool_detail: ToolDetail,
     limit: usize,
-    local_policy: Option<(&CollectionSettings, &[String])>,
+    local_policy: Option<&LocalPolicy<'_>>,
 ) -> Result<Vec<Record>, StateError> {
     let mut records = Vec::new();
     let mut cursor: Option<(String, String)> = None;
@@ -671,12 +737,30 @@ fn pending_records_for_agent_setting_with_limit(
         for row in &page {
             match serde_json::from_str::<Record>(&row.record) {
                 Ok(mut record) => {
-                    if local_policy.is_some_and(|(settings, deny)| {
+                    if local_policy.is_some_and(|policy| {
                         let adapter = record.adapter();
-                        let gate = settings.gate(adapter);
-                        deny.iter().any(|entry| observatory_contract::settings::denied(entry, adapter, &gate))
+                        let gate = policy.settings.gate(adapter);
+                        policy
+                            .deny
+                            .iter()
+                            .any(|entry| observatory_contract::settings::denied(entry, adapter, &gate))
                     }) {
                         continue;
+                    }
+                    if let Record::ResourceAccess(access) = &record
+                        && let Some(policy) = local_policy
+                    {
+                        match &policy.resources {
+                            ResourceUploadPolicy::Denied => continue,
+                            ResourceUploadPolicy::Current(versions) => {
+                                let current = versions.get(access.resource_key.as_str()).map(String::as_str);
+                                let stamped = access.configuration_version.as_ref().map(|code| code.as_str());
+                                if current.is_none() || current != stamped {
+                                    state.mark_record_rejected(&row.record_id, SUPERSEDED_CONFIGURATION)?;
+                                    continue;
+                                }
+                            }
+                        }
                     }
                     apply_current_privacy_policy(&mut record, detail_level, project_attribution, tool_detail);
                     let revised = serde_json::to_string(&record).map_err(|_| StateError::Corrupt)?;
@@ -699,12 +783,15 @@ fn pending_records_for_agent_setting_with_limit(
                     if !record_matches_execution_settings(&record, detail_level, include_subagents) {
                         continue;
                     }
+                    // Tool and resource rows join their caller through the invocation.
+                    let invocation = match &record {
+                        Record::ToolEvent(event) => Some((&event.binding_id, &event.invocation_key)),
+                        Record::ResourceAccess(access) => Some((&access.binding_id, &access.invocation_key)),
+                        _ => None,
+                    };
                     if !include_subagents
-                        && let Record::ToolEvent(event) = &record
-                        && state.tool_invocation_is_subagent(
-                            event.binding_id.as_str(),
-                            event.invocation_key.as_str(),
-                        )?
+                        && let Some((binding, invocation_key)) = invocation
+                        && state.tool_invocation_is_subagent(binding.as_str(), invocation_key.as_str())?
                     {
                         continue;
                     }
@@ -960,7 +1047,7 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
             }
         }
     }
-    let records = pending_records_for_current_settings(&state, &ctx.settings, &ctx.deny)?;
+    let records = pending_records_for_current_settings(&state, &ctx.settings, &ctx.deny, &ctx.resources)?;
 
     let finished_at = Stamp::from_timestamp(Timestamp::now());
     let run = Run {
@@ -1184,16 +1271,24 @@ mod tests {
         current.execution.detail_level = DetailLevel::Requests;
         current.execution.include_subagents = true;
         current.execution.project_attribution = ProjectAttribution::Hashed;
+        let no_resources = ResourceConfiguration::default();
         for entry in ["claude_execution", "providers.claude", "execution", "execution.claude_local_logs"] {
             assert!(
-                pending_records_for_current_settings(&state, &current, &[entry.into()]).unwrap().is_empty(),
+                pending_records_for_current_settings(&state, &current, &[entry.into()], &no_resources)
+                    .unwrap()
+                    .is_empty(),
                 "{entry} must keep queued Claude records local"
             );
         }
         assert_eq!(
-            pending_records_for_current_settings(&state, &current, &["execution.codex_local_history".into()])
-                .unwrap()
-                .len(),
+            pending_records_for_current_settings(
+                &state,
+                &current,
+                &["execution.codex_local_history".into()],
+                &no_resources
+            )
+            .unwrap()
+            .len(),
             4,
             "an unrelated adapter deny does not drop Claude records"
         );
@@ -1371,6 +1466,216 @@ mod tests {
         };
         assert!(pending(false).is_empty());
         assert_eq!(pending(true).len(), 1);
+    }
+
+    /// The two `resource.access` fixture records (one invocation, two
+    /// resources) re-stamped with this state's current token for their keys.
+    fn queued_resource_accesses(state: &State, configuration: &ResourceConfiguration) -> Vec<Record> {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/usage-v2/wire/valid/detail-contract-events.json"
+        ))
+        .unwrap();
+        let mut records = Vec::new();
+        for index in [15, 16] {
+            let mut value = fixture["records"][index].clone();
+            let key = value["resource_key"].as_str().unwrap();
+            if let Some(digest) = configuration.resource_version(key) {
+                let token = state.resource_config_token(&digest).unwrap();
+                value["configuration_version"] = json!(format!("cfg:{token}"));
+            }
+            let record: Record = serde_json::from_value(value).unwrap();
+            save_record(state, &record, "2026-09-02T04:01:00.000Z");
+            records.push(record);
+        }
+        records
+    }
+
+    fn resource_configuration(keys: &[&str]) -> ResourceConfiguration {
+        let resources: Vec<_> = keys
+            .iter()
+            .map(|key| crate::config::LocalResource {
+                key: (*key).to_owned(),
+                label: None,
+                roots: vec![PathBuf::from(format!("/synthetic/{key}"))],
+                connectors: Vec::new(),
+                source: None,
+            })
+            .collect();
+        ResourceConfiguration::from_local(&resources, Some("/synthetic/home"))
+    }
+
+    fn resource_keys(records: &[Record]) -> Vec<String> {
+        let mut keys: Vec<String> = records
+            .iter()
+            .filter_map(|record| match record {
+                Record::ResourceAccess(access) => Some(access.resource_key.as_str().to_owned()),
+                _ => None,
+            })
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    #[test]
+    fn queued_resource_accesses_upload_only_under_their_current_configuration() {
+        let mut settings = CollectionSettings::defaults();
+        settings.execution.detail_level = DetailLevel::RequestsWithTools;
+        settings.execution.include_subagents = true;
+        let both = resource_configuration(&["obsidian.primary", "obsidian.reference"]);
+
+        // Both keys configured with matching tokens: both upload.
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        queued_resource_accesses(&state, &both);
+        let uploaded = pending_records_for_current_settings(&state, &settings, &[], &both).unwrap();
+        assert_eq!(resource_keys(&uploaded), vec!["obsidian.primary", "obsidian.reference"]);
+        assert_eq!(state.record_counts().unwrap(), (2, 2, 0));
+        assert!(pending_records_for_current_settings(&state, &settings, &[], &both).unwrap().iter().all(
+            |record| {
+                match record {
+                    Record::ResourceAccess(access) => access
+                        .configuration_version
+                        .as_ref()
+                        .is_some_and(|code| code.as_str().starts_with("cfg:")),
+                    _ => false,
+                }
+            }
+        ));
+
+        // A key that is no longer configured is superseded and stays rejected.
+        let primary_only = resource_configuration(&["obsidian.primary"]);
+        let uploaded = pending_records_for_current_settings(&state, &settings, &[], &primary_only).unwrap();
+        assert_eq!(resource_keys(&uploaded), vec!["obsidian.primary"]);
+        assert_eq!(state.record_counts().unwrap(), (2, 1, 1));
+        let uploaded = pending_records_for_current_settings(&state, &settings, &[], &both).unwrap();
+        assert_eq!(
+            resource_keys(&uploaded),
+            vec!["obsidian.primary"],
+            "a rejected record does not return by itself"
+        );
+
+        // A changed root set gives the key a new token; the stale row is superseded.
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        queued_resource_accesses(&state, &both);
+        let moved = ResourceConfiguration::from_local(
+            &[
+                crate::config::LocalResource {
+                    key: "obsidian.primary".into(),
+                    label: None,
+                    roots: vec![PathBuf::from("/synthetic/moved")],
+                    connectors: Vec::new(),
+                    source: None,
+                },
+                crate::config::LocalResource {
+                    key: "obsidian.reference".into(),
+                    label: None,
+                    roots: vec![PathBuf::from("/synthetic/obsidian.reference")],
+                    connectors: Vec::new(),
+                    source: None,
+                },
+            ],
+            Some("/synthetic/home"),
+        );
+        let uploaded = pending_records_for_current_settings(&state, &settings, &[], &moved).unwrap();
+        assert_eq!(resource_keys(&uploaded), vec!["obsidian.reference"]);
+        assert_eq!(
+            state.record_counts().unwrap(),
+            (2, 1, 1),
+            "the stale primary row is marked superseded_configuration"
+        );
+
+        // Nothing configured: every queued row is superseded.
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        queued_resource_accesses(&state, &both);
+        let uploaded =
+            pending_records_for_current_settings(&state, &settings, &[], &ResourceConfiguration::default())
+                .unwrap();
+        assert!(resource_keys(&uploaded).is_empty());
+        assert_eq!(state.record_counts().unwrap(), (2, 0, 2));
+
+        // Below requests_with_tools nothing leaves either, but nothing is marked.
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        queued_resource_accesses(&state, &both);
+        let mut requests_only = settings.clone();
+        requests_only.execution.detail_level = DetailLevel::Requests;
+        assert!(pending_records_for_current_settings(&state, &requests_only, &[], &both).unwrap().is_empty());
+        assert_eq!(state.record_counts().unwrap(), (2, 2, 0));
+    }
+
+    #[test]
+    fn queued_resource_accesses_stay_local_under_the_deny_entry_and_subagent_rule() {
+        let mut settings = CollectionSettings::defaults();
+        settings.execution.detail_level = DetailLevel::RequestsWithTools;
+        settings.execution.include_subagents = true;
+        let both = resource_configuration(&["obsidian.primary", "obsidian.reference"]);
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        let records = queued_resource_accesses(&state, &both);
+
+        // The deny entry keeps rows pending on this machine; lifting it uploads them.
+        for entry in ["execution", "execution.resource_attribution"] {
+            assert!(
+                resource_keys(
+                    &pending_records_for_current_settings(&state, &settings, &[entry.into()], &both).unwrap()
+                )
+                .is_empty(),
+                "{entry} must keep queued resource rows local"
+            );
+            assert_eq!(state.record_counts().unwrap(), (2, 2, 0), "{entry} rejects nothing");
+        }
+        assert_eq!(
+            resource_keys(
+                &pending_records_for_current_settings(
+                    &state,
+                    &settings,
+                    &["execution.project_attribution".into()],
+                    &both
+                )
+                .unwrap()
+            )
+            .len(),
+            2
+        );
+
+        // Rows from a subagent invocation follow the include_subagents setting.
+        let Record::ResourceAccess(access) = &records[0] else { panic!("fixture must be a resource access") };
+        state
+            .upsert_tool_event(
+                access.binding_id.as_str(),
+                &crate::state::ToolEventRow {
+                    id: access.invocation_key.as_str().to_owned(),
+                    timestamp: access.observed_at.to_string(),
+                    event_kind: "invocation".into(),
+                    invocation_key: access.invocation_key.as_str().to_owned(),
+                    session_hash: None,
+                    caller_request_key: None,
+                    caller_agent_key: Some("9".repeat(64)),
+                    caller_is_subagent: true,
+                    parent_invocation_key: None,
+                    class: "builtin".into(),
+                    name: Some("Read".into()),
+                    name_hash: None,
+                    namespace: None,
+                    namespace_hash: None,
+                    outcome: "unknown".into(),
+                    name_truncated: false,
+                },
+            )
+            .unwrap();
+        settings.execution.include_subagents = false;
+        assert!(
+            resource_keys(&pending_records_for_current_settings(&state, &settings, &[], &both).unwrap())
+                .is_empty()
+        );
+        settings.execution.include_subagents = true;
+        assert_eq!(
+            resource_keys(&pending_records_for_current_settings(&state, &settings, &[], &both).unwrap())
+                .len(),
+            2
+        );
     }
 
     #[test]

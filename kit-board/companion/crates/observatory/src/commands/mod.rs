@@ -4,6 +4,7 @@ mod connect;
 mod doctor;
 mod hook;
 mod projects;
+mod resources;
 mod run;
 mod service;
 mod settings;
@@ -116,6 +117,7 @@ pub fn dispatch(cli: Cli) -> CommandResult {
         Command::Hook(args) => Ok(hook::hook(&dir, args)),
         Command::Status => status::status(&dir),
         Command::Projects => projects::projects(&dir),
+        Command::Resources(args) => resources::resources(&dir, args),
         Command::Doctor => doctor::doctor(&dir),
         Command::Settings(args) => settings::settings(&dir, args),
         Command::Version => {

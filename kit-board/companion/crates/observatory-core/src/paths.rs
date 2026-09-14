@@ -111,6 +111,18 @@ pub fn cursor_tracking_db() -> Option<PathBuf> {
     home_dir().map(|home| home.join(".cursor").join("ai-tracking").join("ai-code-tracking.db"))
 }
 
+/// Obsidian's vault registry (`vaults.<id>.path`), read at setup to propose
+/// knowledge sources. Windows keeps it under the roaming profile, not `%LOCALAPPDATA%`.
+pub fn obsidian_config_file() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        home_dir().map(|home| home.join("Library/Application Support/obsidian/obsidian.json"))
+    } else if cfg!(windows) {
+        std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join("obsidian").join("obsidian.json"))
+    } else {
+        home_dir().map(|home| home.join(".config/obsidian/obsidian.json"))
+    }
+}
+
 /// Creates a directory the current user alone can read (`0700` on Unix).
 pub fn ensure_private_dir(path: &Path) -> io::Result<()> {
     fs::create_dir_all(path)?;
@@ -206,5 +218,13 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"two");
         assert!(fs::read_dir(path.parent().unwrap()).unwrap().count() == 1);
         assert!(file_identity(&path).unwrap().contains(':'));
+    }
+
+    #[test]
+    fn obsidian_registry_sits_in_an_obsidian_folder() {
+        // The platform base (home or `%APPDATA%`) may be unset on a bare CI runner.
+        let Some(path) = obsidian_config_file() else { return };
+        assert_eq!(path.file_name().and_then(|n| n.to_str()), Some("obsidian.json"));
+        assert_eq!(path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()), Some("obsidian"));
     }
 }

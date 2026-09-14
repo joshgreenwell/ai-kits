@@ -41,6 +41,8 @@
     "request-detail/claude/projects/session-detail.jsonl",
     "request-detail/codex/sessions/rollout-detail.jsonl",
     "request-detail/codex/sessions/rollout-partial.jsonl",
+    "resource-detail/claude/projects/session-resources.jsonl",
+    "resource-detail/codex/sessions/rollout-resources.jsonl",
     "tool-detail/claude/projects/session-tools.jsonl",
     "tool-detail/codex/sessions/rollout-tools.jsonl",
     "wire/invalid/agent-key-basis-mismatch.json",

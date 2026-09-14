@@ -17,6 +17,7 @@ pub mod lock;
 pub mod outbox;
 pub mod paths;
 pub mod pyjson;
+pub mod resources;
 pub mod run;
 pub mod service;
 pub mod state;

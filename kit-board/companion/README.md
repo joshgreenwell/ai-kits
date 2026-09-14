@@ -46,14 +46,17 @@ shows "update available" when an install's reported version is behind
 | Command | What it does |
 | --- | --- |
 | `observatory connect --url <observatory> --code XXXX-XXXX [--label <machine>] [--since YYYY-MM-DD]` | Exchanges a one-time pairing code for an install id and key and writes `companion.json` (`0600`). `--since` sets the backfill start (default: the first day of the current UTC month); the first run pins it in state, so choose it before that run. The URL must be `https`, or `http` to `localhost`/`127.0.0.1`, with no userinfo; redirects are errors. |
-| `observatory setup [--yes] [--bind claude=claude-primary]... [--secrets]` | Discovers Claude Code, Codex, and Cursor stores; shows each signed-in identity; proposes bindings; asks once each about the private-interface readers, the Claude statusline hook (an existing statusline command is preserved as a passthrough), and the schedule; writes bindings and this install's settings override; runs a dry run, a first publish, and `service install`; offers to remove a v1 schedule. |
+| `observatory setup [--yes] [--bind claude=claude-primary]... [--secrets]` | Discovers Claude Code, Codex, and Cursor stores; shows each signed-in identity; proposes bindings; offers each Obsidian vault from the application's own registry as a knowledge source (key `obsidian.<vault id>`, folder name as the local label; default no, skipped under `--yes`); asks once each about the private-interface readers, the Claude statusline hook (an existing statusline command is preserved as a passthrough), and the schedule; writes bindings and this install's settings override; runs a dry run, a first publish, and `service install`; offers to remove a v1 schedule. |
 | `observatory run [--dry-run] [--offline]` | One collection cycle (below). |
 | `observatory service install\|uninstall\|status` | LaunchAgent `com.personal-observatory.companion.<install-id>`, Task Scheduler task `Personal Observatory Companion <install-id>`, or systemd user timer `personal-observatory-companion.timer`, at the effective cadence. Uninstall removes only what it installed. |
 | `observatory statusline` | Claude Code statusline command: reads the statusline JSON on stdin, appends allowance samples to the inbox, prints the same one-line summary `statusline.py` printed, always exits 0 (`Claude` on any failure). No network, no SQLite. |
 | `observatory hook claude\|cursor` | Tool hook receivers: append a bounded snapshot (event name, tool name, hashed session id) to the local inbox and exit 0. |
 | `observatory status` | Last run summary, outbox depth, last receipt, schedule state, per-adapter state. |
 | `observatory projects` | Every working directory this install has seen, per binding, with its `project_hash` and first and last sighting. Local only: this listing is how a hash gets a label on the Observatory. |
-| `observatory doctor` | Effective mode and reason per adapter, prerequisite and credential checks as coverage states, discovery booleans, v1 schedules found. Never a token or a path outside the configuration directory. |
+| `observatory resources` | Every knowledge source in `companion.json` with its key, label, source, roots (and how many exist), connectors, validation problem, and, once a run has created the state, the `cfg:` token its rows carry; the local deny state; per binding, access counts by key, kind, and evidence basis and inspection counts by class. Local only: roots, labels, and connector ids never leave the machine. |
+| `observatory resources add --key <key> --root <dir>... [--connector <id>]... [--label <text>] [--source <text>]` | Adds a source, or replaces the one with the same key, after validation (key `^[a-z0-9_.:-]{1,64}$`; roots absolute or `~/`-anchored; connectors `mcp:<namespace>` or `url:<prefix>`; at least one root or connector). The next run replays retained transcripts under the new configuration. |
+| `observatory resources remove --key <key>` | Removes a source. Future runs stop uploading rows for that key; rows the Observatory already holds are append-only and stay. |
+| `observatory doctor` | Effective mode and reason per adapter, prerequisite and credential checks as coverage states, discovery booleans (including Obsidian's registry and vault count), `resources_configured`, `resources_invalid`, `resource_attribution_effective` with its reason (`detail_level`, `denied_locally`, `no_resources`, `ok`), v1 schedules found. Never a token or a path outside the configuration directory. |
 | `observatory settings show` | The cached effective settings document and its `settings_version`. |
 | `observatory version` | The semantic version, also reported in every envelope. |
 | `observatory serve` | Placeholder; live mode is a later phase. |
@@ -104,7 +107,7 @@ The adapter keeps its own analyzers, state, artifacts, and usage-publisher crede
 | Item | macOS and Linux | Windows |
 | --- | --- | --- |
 | Config, key, state, inbox, logs | `~/.config/personal-hub/companion/` | `%USERPROFILE%\.config\personal-hub\companion\` is recommended so packaged and ordinary apps share one tree; `%LOCALAPPDATA%\PersonalObservatory\` remains the CLI default |
-| `companion.json` | install id and key, Observatory URL, per-binding root overrides, `deny` list, optional `since`; `0600` | same; pass the selected root consistently with `--config-dir` |
+| `companion.json` | install id and key, Observatory URL, per-binding root overrides, `deny` list, optional `since`, optional `resources` (knowledge sources with their local roots); `0600` | same; pass the selected root consistently with `--config-dir` |
 | `secrets.json` (opt-in) | Admin API keys; read only by `anthropic_api` and `openai_api` | same |
 | `<install-id>.sqlite3`, `<install-id>.lock` | state and the run lock | same |
 | `inbox/claude-statusline/`, `inbox/hooks/` | hook inboxes; one file per UTC hour | same |
@@ -118,7 +121,9 @@ connection's `detailed_report` block into the binding (asking first) when it fin
 hand otherwise (`python` optionally names the interpreter; `analyzer_config_path` replaces
 `codex_home` for the Claude analyzer). The example assumes the current Python adapter has been
 installed at its stated `script` path; the binary does not bundle it. Verify the migrated path
-and detailed publication before removing the old directory.
+and detailed publication before removing the old directory. `resources` names the knowledge
+sources this machine classifies tool calls against (`observatory resources`, below); `setup`
+proposes Obsidian vaults, and `key` is the only part of an entry the Observatory ever sees.
 
 ```json
 {
@@ -134,7 +139,11 @@ and detailed publication before removing the old directory.
         "codex_home": "/Users/me/.codex", "upload_config_path": "/Users/me/.config/personal-hub/token-usage-upload.json",
         "machine_id": "mac-personal" } }
   ],
-  "deny": ["allowance.claude_reader.oauth_usage"]
+  "deny": ["allowance.claude_reader.oauth_usage"],
+  "resources": [
+    { "key": "obsidian.f00dbeefcafe0001", "label": "notes", "roots": ["/Users/me/Documents/notes"],
+      "connectors": ["mcp:notes"], "source": "obsidian:f00dbeefcafe0001" }
+  ]
 }
 ```
 
@@ -154,13 +163,16 @@ effective(adapter, mode) =
 
 A deny entry matches an adapter id (`codex_account`), a provider switch (`providers.cursor`), an
 exact mode path (`allowance.codex_reader.app_server`), project attribution
-(`execution.project_attribution` or `execution.project_attribution.hashed`), or a dotted prefix of one
+(`execution.project_attribution` or `execution.project_attribution.hashed`), knowledge-source
+attribution (`execution.resource_attribution`, which has no settings-document counterpart: sources
+are local configuration and this entry is the only switch), or a dotted prefix of one
 (`allowance.codex_reader` or `execution`). The deny list can only remove. Every adapter reports its effective
 state in coverage (`disabled_by_setting`, `denied_locally`, `prerequisite_missing`,
 `credential_unavailable`, `identity_changed`, …) with a code from the closed `DetailCode` list, so
 "off" is always distinguishable from "broken".
 Outbox rebuild applies adapter, provider, and mode denies to pending records as well, so data queued
-before a local deny was added remains local while that rule is active.
+before a local deny was added remains local while that rule is active; a resource deny leaves queued
+`resource.access` records pending rather than dropping them, so lifting it uploads them.
 
 ## Adapters
 
@@ -219,21 +231,49 @@ visible, explicit outcomes are classified conservatively, and opaque outcomes re
 arguments and result content are never stored. Built-in names may be emitted; MCP, function, and custom
 names and namespaces are omitted or hashed according to `tool_detail`.
 
+When `companion.json` names knowledge sources, the same in-memory arguments are classified against
+their roots and connectors before they are dropped. Claude dispatches by raw tool name (`Read`,
+`NotebookRead`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Glob` with its `path` and the absolute
+prefix of `pattern`, `Grep` and `LS` by `path` only, `Bash` and `PowerShell` by `command`, `WebFetch`
+by `url` against `url:` connectors, `mcp__<namespace>__*` against `mcp:<namespace>`); Codex reads
+`shell_command`, `exec_command`, and `local_shell_call` commands with their `workdir`, `apply_patch`
+headers, `view_image` paths, MCP namespaces, and only the `tools.*` calls inside `exec` scripts.
+Shell text is tokenized conservatively: heredoc bodies are stripped, `cd` tracks the base for later
+segments, and a token counts only when it is absolute (POSIX, drive, UNC, MSYS, WSL, or `~/`),
+`./`-relative, or a bare `name.ext` operand of a recognized file command on a single line. Drive,
+UNC, MSYS, and WSL forms compare case-insensitively and POSIX paths exactly, decided by the path
+text rather than the platform; matching is by component prefix; a working directory only resolves
+relative arguments and is never access by itself. `Workflow`, REPL tools, `python -c` bodies, and
+`exec` scripts with no recognized call are unsupported rather than guessed. State schema 7 keeps one
+row per (invocation, source) with the strongest kind and basis, plus one inspection class per
+invocation (`matched`, `unmatched`, `no_evidence`, `unresolved`, `unsupported`, `ambiguous`); no
+path, argument, or file name is stored. Each row is stamped `cfg:<16 random hex>`, a token the state
+assigns on first sight of that source's configuration digest, so a changed root re-versions rows
+without disclosing anything about the root. Rows are emitted at `requests_with_tools` when sources
+are configured and `execution.resource_attribution` is not denied, with the invocation's outcome and
+subagent rule; a configuration change replays retained transcripts from empty resource tables, and
+queued rows under an earlier token or a removed key are marked `superseded_configuration` and never
+upload. `observatory resources` is the only place keys, roots, and counts appear together.
+
 The parser version includes a detail generation, and the local scan generation also includes the
-subagent setting. When either changes, the state atomically removes the binding's file checkpoints
-so retained files still eligible under `since` are replayed; interrupted replays resume normally.
+subagent setting and the knowledge-source configuration digest. When any of them changes, the state
+atomically removes the binding's file checkpoints (and, for a resource change, its local resource
+rows) so retained files still eligible under `since` are replayed; interrupted replays resume normally.
 Unresolved parse gaps are stored separately, survive a deleted source or checkpoint invalidation,
 and clear only after that file is successfully replayed from the start.
 Hourly identities and values remain under the v1 parity gate. Coverage adds request,
-token-composition, pricing, agent, and tool capability states, including detail-level gating, partial
-source history, unmapped tool forms, and truncated tool names.
+token-composition, pricing, agent, tool, and resource capability states, including detail-level
+gating, partial source history, unmapped tool forms, truncated tool names, and, for resources,
+`denied_locally`, `no_resources_configured`, `unsupported_forms`, `unresolved_paths`,
+`ambiguous_connectors`, and `scan_partial`.
 
 Envelope v2 also defines optional detail blocks for token accounting, pricing, agent attribution,
 and explicit project state, plus independent `agent.event`, `tool.event`, and `resource.access`
 records. The two execution adapters now emit token accounting, available pricing fields, agent
-attribution, and supported agent lifecycle events. Tool and resource collection remains separate
-follow-up work. Existing producers omit those blocks and remain wire-compatible. Missing blocks mean
-the producer did not report that capability; they are not zero, No project, a main agent, or success.
+attribution, supported agent lifecycle events, tool invocation and result events, and resource-access
+rows for locally configured sources. The stub producers omit those blocks and remain wire-compatible.
+Missing blocks mean the producer did not report that capability; they are not zero, No project, a
+main agent, or success.
 The server and `20260913230451_extend_usage_detail_contract.sql` migration must be deployed before
 shipping a producer that emits the new variants. There is no runtime version negotiation inside
 schema version 2, so this server-first order prevents an older server from retaining an upgraded
@@ -310,9 +350,11 @@ owner can veto any of them.
 ## What is uploaded
 
 Counters, hashed identifiers, model names, allowlisted or hashed tool names, allowance readings,
-provider aggregates and charges, coverage codes, versions, and, only when project attribution is
-`hashed`, a hash of each request's working directory. Never: prompts, responses, file
-paths, repository names, credentials, raw provider payloads, free-text errors. Credentials are
+provider aggregates and charges, coverage codes, versions, only when project attribution is
+`hashed`, a hash of each request's working directory, and, only for knowledge sources configured
+in `companion.json` at `requests_with_tools`, each matched call's source key, opaque configuration
+token, and typed access, evidence, and outcome codes. Never: prompts, responses, file paths,
+vault roots, connector ids, repository names, credentials, raw provider payloads, free-text errors. Credentials are
 read at run time from their owning application's store, used for one read, and dropped; the
 companion never refreshes one. `companion.json`, `secrets.json`, the state database, and the
 inbox are `0600` on Unix; `%LOCALAPPDATA%` is private by its default ACL on Windows. The companion

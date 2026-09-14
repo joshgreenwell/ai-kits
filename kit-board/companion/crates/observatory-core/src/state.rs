@@ -13,7 +13,12 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: &str = "6";
+pub const SCHEMA_VERSION: &str = "7";
+
+/// The local-only rejection mark on a queued `resource.access` record whose
+/// key or configuration token no longer matches this machine's configuration.
+/// Lifted again when a replay re-emits the record under the current token.
+pub const SUPERSEDED_CONFIGURATION: &str = "superseded_configuration";
 
 #[derive(Debug, Error)]
 pub enum StateError {
@@ -78,6 +83,16 @@ CREATE TABLE IF NOT EXISTS tool_coverage (binding_id TEXT PRIMARY KEY,
   unmapped_forms INTEGER NOT NULL DEFAULT 0, truncated_names INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS projects (binding_id TEXT NOT NULL, project_hash TEXT NOT NULL, path TEXT NOT NULL,
   first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, PRIMARY KEY (binding_id, project_hash));
+CREATE TABLE IF NOT EXISTS local_resource_accesses (binding_id TEXT NOT NULL, id TEXT NOT NULL,
+  timestamp TEXT NOT NULL, invocation_key TEXT NOT NULL, resource_key TEXT NOT NULL,
+  configuration_version TEXT NOT NULL, access_kind TEXT NOT NULL, evidence_basis TEXT NOT NULL,
+  nested_overlap INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (binding_id, id));
+CREATE INDEX IF NOT EXISTS local_resource_accesses_invocation
+  ON local_resource_accesses(binding_id, invocation_key);
+CREATE TABLE IF NOT EXISTS local_resource_inspections (binding_id TEXT NOT NULL, invocation_key TEXT NOT NULL,
+  class TEXT NOT NULL, overlapping INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (binding_id, invocation_key));
 CREATE TABLE IF NOT EXISTS allowance_slots (binding_id TEXT NOT NULL, slot TEXT NOT NULL, payload TEXT NOT NULL,
   dirty INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (binding_id, slot));
 CREATE TABLE IF NOT EXISTS observations (record_id TEXT PRIMARY KEY, adapter TEXT NOT NULL,
@@ -254,6 +269,65 @@ pub struct ProjectRow {
     pub last_seen: String,
 }
 
+/// One (invocation, resource) classification kept locally: the resource key,
+/// the opaque configuration token, and typed evidence only. No path, argument,
+/// or matched file name is stored here, ever. Rows are a pure function of
+/// transcript, parser, and configuration, so a new scan generation drops them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResourceAccessRow {
+    pub id: String,
+    pub timestamp: String,
+    pub invocation_key: String,
+    pub resource_key: String,
+    /// `cfg:<token>` as uploaded; see `resource_config_token`.
+    pub configuration_version: String,
+    pub access_kind: String,
+    pub evidence_basis: String,
+    /// The invocation also matched another resource or a nested root.
+    pub nested_overlap: bool,
+}
+
+/// One access-count bucket for `observatory resources`: rows per
+/// resource key, access kind, and evidence basis.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResourceAccessCount {
+    pub resource_key: String,
+    pub access_kind: String,
+    pub evidence_basis: String,
+    pub rows: u64,
+}
+
+/// Inspection totals per class for one binding, read with `GROUP BY` at query
+/// time so a file rescan cannot inflate them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ResourceInspectionCounts {
+    pub matched: u64,
+    pub unmatched: u64,
+    pub no_evidence: u64,
+    pub unresolved: u64,
+    pub unsupported: u64,
+    pub ambiguous: u64,
+    /// Inspections whose evidence matched several resources or nested roots.
+    pub overlapping: u64,
+}
+
+impl ResourceInspectionCounts {
+    /// Every invocation inspected, whatever its class.
+    pub fn inspected(&self) -> u64 {
+        self.matched + self.unmatched + self.no_evidence + self.unresolved + self.unsupported + self.ambiguous
+    }
+
+    pub fn add(&mut self, other: ResourceInspectionCounts) {
+        self.matched += other.matched;
+        self.unmatched += other.unmatched;
+        self.no_evidence += other.no_evidence;
+        self.unresolved += other.unresolved;
+        self.unsupported += other.unsupported;
+        self.ambiguous += other.ambiguous;
+        self.overlapping += other.overlapping;
+    }
+}
+
 /// One v1 bucket row as `bucket_rows` in `collect.py` yields it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BucketRow {
@@ -331,11 +405,24 @@ impl State {
         Ok(state)
     }
 
+    /// A read-only connection for local listings: no schema creation, no
+    /// migration, no write lock, so a listing never races a running
+    /// collection. Fails when the file does not exist yet.
+    pub fn open_read_only(path: &Path) -> Result<State, StateError> {
+        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+        let conn = Connection::open_with_flags(path, flags)?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        Ok(State { conn })
+    }
+
     /// Forward migrations. Version 1 predates project attribution, version 2
     /// predates nullable request and pricing evidence, and version 3 predates
-    /// agent attribution, version 4 predates tool evidence, and version 5
-    /// predates explicit project identity states. Every step is idempotent, so
-    /// an interrupted upgrade resumes.
+    /// agent attribution, version 4 predates tool evidence, version 5
+    /// predates explicit project identity states, and version 6 predates
+    /// knowledge-source access evidence (new tables only, created above).
+    /// Every step is idempotent, so an interrupted upgrade resumes.
     fn migrate(&self) -> Result<(), StateError> {
         let version = self.meta("schema_version")?;
         if version.as_deref() == Some("1") {
@@ -623,6 +710,25 @@ impl State {
     /// The generation marker and checkpoint deletion are one transaction; an
     /// interrupted later scan resumes from the new checkpoints it completed.
     pub fn prepare_file_scan(&self, binding: &str, generation: &str) -> Result<bool, StateError> {
+        self.reset_file_scan(binding, generation, false)
+    }
+
+    /// `prepare_file_scan` for scans that classify resource access: a new
+    /// generation (parser, subagent setting, or resource configuration) also
+    /// drops every local resource-access and inspection row for the binding in
+    /// the same transaction. Those rows are a pure function of transcript,
+    /// parser, and configuration, so the replay rebuilds them from empty
+    /// tables and the precedence merge only reconciles one generation.
+    pub fn prepare_file_scan_with_purge(&self, binding: &str, generation: &str) -> Result<bool, StateError> {
+        self.reset_file_scan(binding, generation, true)
+    }
+
+    fn reset_file_scan(
+        &self,
+        binding: &str,
+        generation: &str,
+        purge_resources: bool,
+    ) -> Result<bool, StateError> {
         let key = format!("file_parser:{binding}");
         if self.meta(&key)?.as_deref() == Some(generation) {
             return Ok(false);
@@ -630,6 +736,21 @@ impl State {
         self.begin()?;
         let result = (|| {
             self.conn.execute("DELETE FROM files WHERE binding_id = ?1", params![binding])?;
+            if purge_resources {
+                self.conn
+                    .execute("DELETE FROM local_resource_accesses WHERE binding_id = ?1", params![binding])?;
+                self.conn.execute(
+                    "DELETE FROM local_resource_inspections WHERE binding_id = ?1",
+                    params![binding],
+                )?;
+                // Queued resource records belong to the generation being replaced; the replay
+                // re-emits every access it still recognizes, which lifts this mark again.
+                self.conn.execute(
+                    "UPDATE records SET rejected_reason = ?2
+                     WHERE binding_id = ?1 AND record_type = 'resource.access' AND rejected_reason IS NULL",
+                    params![binding, SUPERSEDED_CONFIGURATION],
+                )?;
+            }
             self.set_meta(&key, generation)?;
             Ok::<(), StateError>(())
         })();
@@ -1368,6 +1489,164 @@ impl State {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    // --- resource evidence --------------------------------------------------
+
+    /// The opaque token uploaded as `configuration_version` for one
+    /// per-resource configuration digest: sixteen random hex digits chosen on
+    /// first sight and stable afterwards, so nothing derived from a root ever
+    /// leaves the machine. Two adapter threads seeing a digest at once agree on
+    /// the first insert.
+    pub fn resource_config_token(&self, digest: &str) -> Result<String, StateError> {
+        let key = resource_config_token_key(digest);
+        self.set_meta_if_absent(&key, &random_token())?;
+        self.meta(&key)?.ok_or(StateError::Corrupt)
+    }
+
+    /// The token already assigned to a digest, without assigning one; for
+    /// read-only listings.
+    pub fn assigned_resource_config_token(&self, digest: &str) -> Result<Option<String>, StateError> {
+        self.meta(&resource_config_token_key(digest))
+    }
+
+    /// Upserts one (invocation, resource) row. A replay within one generation
+    /// reconciles candidates: the earliest timestamp, the strongest access kind
+    /// (write > read > search > unknown) and evidence basis (explicit_argument >
+    /// connector > indirect_shell > unknown), any overlap flag, and the newest
+    /// configuration token.
+    pub fn upsert_resource_access(&self, binding: &str, row: &ResourceAccessRow) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT INTO local_resource_accesses
+             (binding_id, id, timestamp, invocation_key, resource_key, configuration_version,
+              access_kind, evidence_basis, nested_overlap)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(binding_id, id) DO UPDATE SET
+               timestamp = min(local_resource_accesses.timestamp, excluded.timestamp),
+               configuration_version = excluded.configuration_version,
+               access_kind = CASE
+                 WHEN (CASE excluded.access_kind
+                         WHEN 'write' THEN 3 WHEN 'read' THEN 2 WHEN 'search' THEN 1 ELSE 0 END)
+                    > (CASE local_resource_accesses.access_kind
+                         WHEN 'write' THEN 3 WHEN 'read' THEN 2 WHEN 'search' THEN 1 ELSE 0 END)
+                 THEN excluded.access_kind ELSE local_resource_accesses.access_kind END,
+               evidence_basis = CASE
+                 WHEN (CASE excluded.evidence_basis
+                         WHEN 'explicit_argument' THEN 3 WHEN 'connector' THEN 2
+                         WHEN 'indirect_shell' THEN 1 ELSE 0 END)
+                    > (CASE local_resource_accesses.evidence_basis
+                         WHEN 'explicit_argument' THEN 3 WHEN 'connector' THEN 2
+                         WHEN 'indirect_shell' THEN 1 ELSE 0 END)
+                 THEN excluded.evidence_basis ELSE local_resource_accesses.evidence_basis END,
+               nested_overlap = max(local_resource_accesses.nested_overlap, excluded.nested_overlap)",
+            params![
+                binding,
+                row.id,
+                row.timestamp,
+                row.invocation_key,
+                row.resource_key,
+                row.configuration_version,
+                row.access_kind,
+                row.evidence_basis,
+                row.nested_overlap,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Records that one invocation was inspected. On conflict the class keeps
+    /// the most informative outcome (matched > ambiguous > unsupported >
+    /// unresolved > unmatched > no_evidence) and the overlap flag never clears,
+    /// so a replay changes nothing.
+    pub fn upsert_resource_inspection(
+        &self,
+        binding: &str,
+        invocation_key: &str,
+        class: &str,
+        overlapping: bool,
+    ) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT INTO local_resource_inspections (binding_id, invocation_key, class, overlapping)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(binding_id, invocation_key) DO UPDATE SET
+               class = CASE
+                 WHEN (CASE excluded.class
+                         WHEN 'matched' THEN 5 WHEN 'ambiguous' THEN 4 WHEN 'unsupported' THEN 3
+                         WHEN 'unresolved' THEN 2 WHEN 'unmatched' THEN 1 ELSE 0 END)
+                    > (CASE local_resource_inspections.class
+                         WHEN 'matched' THEN 5 WHEN 'ambiguous' THEN 4 WHEN 'unsupported' THEN 3
+                         WHEN 'unresolved' THEN 2 WHEN 'unmatched' THEN 1 ELSE 0 END)
+                 THEN excluded.class ELSE local_resource_inspections.class END,
+               overlapping = max(local_resource_inspections.overlapping, excluded.overlapping)",
+            params![binding, invocation_key, class, overlapping],
+        )?;
+        Ok(())
+    }
+
+    pub fn resource_accesses(&self, binding: &str) -> Result<Vec<ResourceAccessRow>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, timestamp, invocation_key, resource_key, configuration_version, access_kind,
+                    evidence_basis, nested_overlap
+               FROM local_resource_accesses WHERE binding_id = ?1 ORDER BY timestamp, id",
+        )?;
+        let rows = statement.query_map(params![binding], |row| {
+            Ok(ResourceAccessRow {
+                id: row.get(0)?,
+                timestamp: row.get(1)?,
+                invocation_key: row.get(2)?,
+                resource_key: row.get(3)?,
+                configuration_version: row.get(4)?,
+                access_kind: row.get(5)?,
+                evidence_basis: row.get(6)?,
+                nested_overlap: row.get(7)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Rows per resource key, access kind, and evidence basis, for the local listing.
+    pub fn resource_access_counts(&self, binding: &str) -> Result<Vec<ResourceAccessCount>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT resource_key, access_kind, evidence_basis, count(*)
+               FROM local_resource_accesses WHERE binding_id = ?1
+              GROUP BY resource_key, access_kind, evidence_basis
+              ORDER BY resource_key, access_kind, evidence_basis",
+        )?;
+        let rows = statement.query_map(params![binding], |row| {
+            Ok(ResourceAccessCount {
+                resource_key: row.get(0)?,
+                access_kind: row.get(1)?,
+                evidence_basis: row.get(2)?,
+                rows: row.get::<_, i64>(3)?.max(0) as u64,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn resource_inspection_counts(&self, binding: &str) -> Result<ResourceInspectionCounts, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT class, count(*), sum(overlapping) FROM local_resource_inspections
+              WHERE binding_id = ?1 GROUP BY class",
+        )?;
+        let rows = statement.query_map(params![binding], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, Option<i64>>(2)?))
+        })?;
+        let mut counts = ResourceInspectionCounts::default();
+        for row in rows {
+            let (class, total, overlapping) = row?;
+            let total = total.max(0) as u64;
+            match class.as_str() {
+                "matched" => counts.matched += total,
+                "unmatched" => counts.unmatched += total,
+                "no_evidence" => counts.no_evidence += total,
+                "unresolved" => counts.unresolved += total,
+                "unsupported" => counts.unsupported += total,
+                "ambiguous" => counts.ambiguous += total,
+                _ => {}
+            }
+            counts.overlapping += overlapping.unwrap_or(0).max(0) as u64;
+        }
+        Ok(counts)
+    }
+
     // --- allowance slots ----------------------------------------------------
 
     pub fn allowance_slot(&self, binding: &str, slot: &str) -> Result<Option<String>, StateError> {
@@ -1422,16 +1701,19 @@ impl State {
 
     // --- records ------------------------------------------------------------
 
-    /// Inserts or revises a record. Returns true when the stored content changed.
-    /// Publication and rejection marks survive a revision.
+    /// Inserts or revises a record. Returns true when the stored row changed.
+    /// Publication and rejection marks survive a revision, except the local
+    /// `superseded_configuration` mark: a producer re-emitting the record
+    /// proves it is classified under the current configuration again.
     pub fn upsert_record(&self, row: &RecordRow) -> Result<bool, StateError> {
         let changed = self.conn.execute(
             "INSERT INTO records (record_id, binding_id, adapter, record_type, semantic_key, content_hash,
                                   published_hash, rejected_reason, record, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, ?7, ?8)
              ON CONFLICT(record_id) DO UPDATE SET content_hash = excluded.content_hash, record = excluded.record,
-                 semantic_key = excluded.semantic_key, updated_at = excluded.updated_at
-             WHERE records.content_hash <> excluded.content_hash",
+                 semantic_key = excluded.semantic_key, updated_at = excluded.updated_at,
+                 rejected_reason = CASE WHEN records.rejected_reason = ?9 THEN NULL ELSE records.rejected_reason END
+             WHERE records.content_hash <> excluded.content_hash OR records.rejected_reason = ?9",
             params![
                 row.record_id,
                 row.binding_id,
@@ -1440,7 +1722,8 @@ impl State {
                 row.semantic_key,
                 row.content_hash,
                 row.record,
-                row.updated_at
+                row.updated_at,
+                SUPERSEDED_CONFIGURATION,
             ],
         )?;
         Ok(changed > 0)
@@ -1644,6 +1927,17 @@ impl State {
             )
             .optional()?)
     }
+}
+
+fn resource_config_token_key(digest: &str) -> String {
+    format!("resource_config_token:{digest}")
+}
+
+/// Sixteen lowercase hex digits from the UUID v4 random source, skipping the
+/// bytes that carry the version and variant so every digit is random.
+fn random_token() -> String {
+    let bytes = uuid::Uuid::new_v4().into_bytes();
+    [0usize, 1, 2, 3, 4, 5, 9, 10].iter().map(|index| format!("{:02x}", bytes[*index])).collect()
 }
 
 fn prefer_code(old: &str, new: &str, unknown: &str) -> String {
@@ -1853,7 +2147,7 @@ mod tests {
         assert_eq!(rows[0].calls, 2);
         assert_eq!(rows[0].total_tokens, 2 * 30 + 25);
         assert!(state.bucket_rows("other").unwrap().is_empty());
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("6"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("7"));
     }
 
     #[test]
@@ -1963,7 +2257,7 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("6"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("7"));
         let mut row = event("a", 10);
         row.project_hash = Some("h".repeat(64));
         row.project_key = row.project_hash.clone();
@@ -2021,7 +2315,7 @@ mod tests {
         let migrated = state.event("b", "legacy").unwrap().unwrap();
         assert_eq!(migrated.project_key, migrated.project_hash);
         assert_eq!(migrated.project_basis, "working_directory");
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("6"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("7"));
     }
 
     #[test]
@@ -2054,7 +2348,7 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("6"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("7"));
         let legacy = state.event("b", "legacy-child").unwrap().unwrap();
         assert!(!legacy.agent_observed);
         assert!(legacy.parent_session.is_some());
@@ -2457,6 +2751,279 @@ mod tests {
             state.tool_coverage("b").unwrap(),
             ToolCoverageRow { unmapped_forms: true, truncated_names: true }
         );
+    }
+
+    fn access(id: &str, kind: &str, basis: &str) -> ResourceAccessRow {
+        ResourceAccessRow {
+            id: id.repeat(64),
+            timestamp: "2026-09-04T00:00:05Z".into(),
+            invocation_key: "1".repeat(64),
+            resource_key: "alpha-src".into(),
+            configuration_version: "cfg:0123456789abcdef".into(),
+            access_kind: kind.into(),
+            evidence_basis: basis.into(),
+            nested_overlap: false,
+        }
+    }
+
+    #[test]
+    fn resource_accesses_merge_by_precedence_within_one_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        state.upsert_resource_access("b", &access("a", "search", "indirect_shell")).unwrap();
+        state
+            .upsert_resource_access(
+                "b",
+                &ResourceAccessRow {
+                    timestamp: "2026-09-04T00:00:01Z".into(),
+                    nested_overlap: true,
+                    ..access("a", "read", "explicit_argument")
+                },
+            )
+            .unwrap();
+        // Weaker evidence and a later timestamp never replace stronger, earlier facts.
+        state
+            .upsert_resource_access(
+                "b",
+                &ResourceAccessRow {
+                    timestamp: "2026-09-04T00:00:09Z".into(),
+                    configuration_version: "cfg:fedcba9876543210".into(),
+                    ..access("a", "unknown", "unknown")
+                },
+            )
+            .unwrap();
+        let rows = state.resource_accesses("b").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (
+                rows[0].timestamp.as_str(),
+                rows[0].access_kind.as_str(),
+                rows[0].evidence_basis.as_str(),
+                rows[0].nested_overlap,
+                rows[0].configuration_version.as_str()
+            ),
+            ("2026-09-04T00:00:01Z", "read", "explicit_argument", true, "cfg:fedcba9876543210")
+        );
+        state.upsert_resource_access("b", &access("a", "write", "indirect_shell")).unwrap();
+        assert_eq!(state.resource_accesses("b").unwrap()[0].access_kind, "write");
+        assert_eq!(state.resource_accesses("b").unwrap()[0].evidence_basis, "explicit_argument");
+        assert!(state.resource_accesses("other").unwrap().is_empty());
+
+        state.upsert_resource_access("b", &access("c", "read", "connector")).unwrap();
+        state
+            .upsert_resource_access(
+                "b",
+                &ResourceAccessRow { resource_key: "beta-src".into(), ..access("d", "read", "connector") },
+            )
+            .unwrap();
+        let counts = state.resource_access_counts("b").unwrap();
+        assert_eq!(
+            counts
+                .iter()
+                .map(|count| (
+                    count.resource_key.as_str(),
+                    count.access_kind.as_str(),
+                    count.evidence_basis.as_str(),
+                    count.rows
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("alpha-src", "read", "connector", 1),
+                ("alpha-src", "write", "explicit_argument", 1),
+                ("beta-src", "read", "connector", 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn resource_inspections_keep_the_most_informative_class_and_count_by_class() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        state.upsert_resource_inspection("b", "inv-1", "no_evidence", false).unwrap();
+        state.upsert_resource_inspection("b", "inv-1", "unmatched", false).unwrap();
+        state.upsert_resource_inspection("b", "inv-1", "unresolved", false).unwrap();
+        state.upsert_resource_inspection("b", "inv-1", "unsupported", false).unwrap();
+        state.upsert_resource_inspection("b", "inv-1", "ambiguous", false).unwrap();
+        state.upsert_resource_inspection("b", "inv-1", "matched", true).unwrap();
+        state.upsert_resource_inspection("b", "inv-1", "no_evidence", false).unwrap();
+        state.upsert_resource_inspection("b", "inv-2", "unmatched", false).unwrap();
+        state.upsert_resource_inspection("b", "inv-2", "no_evidence", false).unwrap();
+        state.upsert_resource_inspection("b", "inv-3", "unsupported", false).unwrap();
+        state.upsert_resource_inspection("b", "inv-3", "unsupported", false).unwrap();
+        state.upsert_resource_inspection("b", "inv-4", "matched", false).unwrap();
+        let counts = state.resource_inspection_counts("b").unwrap();
+        assert_eq!(
+            counts,
+            ResourceInspectionCounts {
+                matched: 2,
+                unmatched: 1,
+                no_evidence: 0,
+                unresolved: 0,
+                unsupported: 1,
+                ambiguous: 0,
+                overlapping: 1,
+            }
+        );
+        assert_eq!(counts.inspected(), 4);
+        assert_eq!(state.resource_inspection_counts("other").unwrap(), ResourceInspectionCounts::default());
+    }
+
+    #[test]
+    fn a_new_scan_generation_purges_resource_rows_with_the_checkpoints() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        let checkpoint = FileCheckpoint {
+            path: "history.jsonl".into(),
+            size: 10,
+            mtime_ns: 20,
+            inode: "file-1".into(),
+            offset: 10,
+            context: "{}".into(),
+        };
+        state.save_file_checkpoint("b", &checkpoint).unwrap();
+        state.upsert_resource_access("b", &access("a", "read", "explicit_argument")).unwrap();
+        state.upsert_resource_inspection("b", "inv-1", "matched", false).unwrap();
+        state.save_file_checkpoint("other", &checkpoint).unwrap();
+        state.upsert_resource_access("other", &access("a", "read", "explicit_argument")).unwrap();
+        state.upsert_resource_inspection("other", "inv-1", "matched", false).unwrap();
+
+        assert!(state.prepare_file_scan_with_purge("b", "parser-1:resources=x").unwrap());
+        assert_eq!(state.file_count("b").unwrap(), 0);
+        assert!(state.resource_accesses("b").unwrap().is_empty());
+        assert_eq!(state.resource_inspection_counts("b").unwrap().inspected(), 0);
+        // Another binding's rows and checkpoints are untouched.
+        assert_eq!(state.file_count("other").unwrap(), 1);
+        assert_eq!(state.resource_accesses("other").unwrap().len(), 1);
+
+        // The same generation keeps what the replay has rebuilt so far.
+        state.save_file_checkpoint("b", &checkpoint).unwrap();
+        state.upsert_resource_access("b", &access("a", "read", "explicit_argument")).unwrap();
+        state.upsert_resource_inspection("b", "inv-1", "matched", false).unwrap();
+        assert!(!state.prepare_file_scan_with_purge("b", "parser-1:resources=x").unwrap());
+        assert_eq!(state.file_count("b").unwrap(), 1);
+        assert_eq!(state.resource_accesses("b").unwrap().len(), 1);
+        assert_eq!(state.resource_inspection_counts("b").unwrap().matched, 1);
+
+        // The plain form leaves resource rows alone for callers that own none.
+        assert!(state.prepare_file_scan("b", "parser-2").unwrap());
+        assert_eq!(state.file_count("b").unwrap(), 0);
+        assert_eq!(state.resource_accesses("b").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_new_scan_generation_supersedes_queued_resource_records_until_re_emitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        let row = |record_id: &str, record_type: &str, binding: &str| RecordRow {
+            record_id: record_id.into(),
+            binding_id: binding.into(),
+            adapter: "claude_execution".into(),
+            record_type: record_type.into(),
+            semantic_key: record_id.into(),
+            content_hash: "h1".into(),
+            published_hash: None,
+            rejected_reason: None,
+            record: "{}".into(),
+            updated_at: "t".into(),
+        };
+        state.upsert_record(&row("res-1", "resource.access", "b")).unwrap();
+        state.upsert_record(&row("res-2", "resource.access", "b")).unwrap();
+        state.upsert_record(&row("tool-1", "tool.event", "b")).unwrap();
+        state.upsert_record(&row("res-other", "resource.access", "other")).unwrap();
+
+        // A parser bump replays the binding: queued resource records are held back until the
+        // replay proves the access still exists; other record types and bindings are untouched.
+        assert!(state.prepare_file_scan_with_purge("b", "parser-2:resources=x").unwrap());
+        let reason = |id: &str| state.record(id).unwrap().unwrap().rejected_reason;
+        assert_eq!(reason("res-1").as_deref(), Some(SUPERSEDED_CONFIGURATION));
+        assert_eq!(reason("res-2").as_deref(), Some(SUPERSEDED_CONFIGURATION));
+        assert_eq!(reason("tool-1"), None);
+        assert_eq!(reason("res-other"), None);
+        let pending: Vec<String> =
+            state.pending_records(100).unwrap().into_iter().map(|r| r.record_id).collect();
+        assert_eq!(pending, vec!["res-other", "tool-1"]);
+
+        // The replay re-emits one access unchanged: it uploads again; the other stays held.
+        assert!(state.upsert_record(&row("res-1", "resource.access", "b")).unwrap());
+        assert_eq!(reason("res-1"), None);
+        assert_eq!(reason("res-2").as_deref(), Some(SUPERSEDED_CONFIGURATION));
+    }
+
+    #[test]
+    fn resource_config_tokens_are_random_hex_and_stable_per_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        let digest = "a".repeat(64);
+        let token = state.resource_config_token(&digest).unwrap();
+        assert_eq!(token.len(), 16);
+        assert!(token.chars().all(|ch| ch.is_ascii_digit() || ('a'..='f').contains(&ch)));
+        assert_eq!(state.resource_config_token(&digest).unwrap(), token);
+        assert_eq!(state.assigned_resource_config_token(&digest).unwrap().as_deref(), Some(token.as_str()));
+        assert_ne!(state.resource_config_token(&"b".repeat(64)).unwrap(), token);
+        assert_eq!(state.assigned_resource_config_token(&"c".repeat(64)).unwrap(), None);
+        // Another install seeing the same digest gets its own token: nothing is derived from the digest.
+        let other = State::open(&dir.path().join("other.sqlite3")).unwrap();
+        assert_ne!(other.resource_config_token(&digest).unwrap(), token);
+        drop(other);
+
+        let listing = State::open_read_only(&dir.path().join("s.sqlite3")).unwrap();
+        assert_eq!(listing.assigned_resource_config_token(&digest).unwrap().as_deref(), Some(token.as_str()));
+        assert!(listing.upsert_resource_inspection("b", "inv", "matched", false).is_err());
+        assert!(State::open_read_only(&dir.path().join("missing.sqlite3")).is_err());
+    }
+
+    #[test]
+    fn superseded_resource_records_return_when_re_emitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        let row = RecordRow {
+            record_id: "r1".into(),
+            binding_id: "b".into(),
+            adapter: "claude_execution".into(),
+            record_type: "resource.access".into(),
+            semantic_key: "k".into(),
+            content_hash: "h1".into(),
+            published_hash: None,
+            rejected_reason: None,
+            record: "{}".into(),
+            updated_at: "t".into(),
+        };
+        assert!(state.upsert_record(&row).unwrap());
+        state.mark_record_rejected("r1", SUPERSEDED_CONFIGURATION).unwrap();
+        assert!(state.pending_records(10).unwrap().is_empty());
+        // The same content re-emitted (a key re-added with identical roots) lifts the mark.
+        assert!(state.upsert_record(&row).unwrap());
+        assert_eq!(state.pending_records(10).unwrap().len(), 1);
+        assert_eq!(state.record("r1").unwrap().unwrap().rejected_reason, None);
+        // A server rejection survives revisions as before.
+        state.mark_record_rejected("r1", "invalid").unwrap();
+        assert!(state.upsert_record(&RecordRow { content_hash: "h2".into(), ..row.clone() }).unwrap());
+        assert_eq!(state.record("r1").unwrap().unwrap().rejected_reason.as_deref(), Some("invalid"));
+        assert!(!state.upsert_record(&RecordRow { content_hash: "h2".into(), ..row }).unwrap());
+    }
+
+    #[test]
+    fn version_six_state_gains_resource_storage() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sqlite3");
+        drop(State::open(&path).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "DROP TABLE local_resource_accesses;
+                 DROP TABLE local_resource_inspections;
+                 UPDATE meta SET value = '6' WHERE key = 'schema_version';",
+            )
+            .unwrap();
+        }
+        let state = State::open(&path).unwrap();
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("7"));
+        state.upsert_resource_access("b", &access("a", "read", "explicit_argument")).unwrap();
+        state.upsert_resource_inspection("b", "inv-1", "matched", false).unwrap();
+        assert_eq!(state.resource_accesses("b").unwrap().len(), 1);
+        assert_eq!(state.resource_inspection_counts("b").unwrap().matched, 1);
+        drop(state);
+        State::open(&path).unwrap();
     }
 
     #[test]

@@ -26,6 +26,10 @@ use crate::agents::{
     invocation_key, is_known_child, save_observed_spawn, save_observed_start, save_profile,
     save_spawn_attempt,
 };
+use crate::resources::{
+    ScanResources, claude_evidence as claude_resource_evidence, codex_evidence as codex_resource_evidence,
+    save_evidence as save_resource_evidence,
+};
 use crate::tools::{
     claude_identity, codex_identity, result_key, save_invocation as save_tool_invocation,
     save_result as save_tool_result,
@@ -110,12 +114,15 @@ pub struct ScanMetrics {
     pub interrupted: bool,
 }
 
-/// What each saved event carries beyond v1: the fields `activity.request` needs.
+/// What each saved event carries beyond v1: the fields `activity.request` needs,
+/// plus the knowledge sources tool arguments are classified against.
 #[derive(Clone, Debug)]
-pub struct EventExtras {
+pub struct EventExtras<'a> {
     pub product: &'static str,
     pub parent_session: Option<String>,
     pub include_subagents: bool,
+    /// `None` when no source is configured: arguments are then not inspected at all.
+    pub resources: Option<&'a ScanResources<'a>>,
 }
 
 /// Per-line attribution beyond v1: where the request ran and from which surface.
@@ -696,6 +703,7 @@ fn process_claude_tool_evidence(
     timestamp: Option<f64>,
     since: f64,
     now: f64,
+    extras: &EventExtras<'_>,
 ) -> Result<(), AdapterError> {
     let Some(ts) = timestamp.filter(|value| since <= *value && *value <= now + 300.0) else {
         return Ok(());
@@ -751,6 +759,16 @@ fn process_claude_tool_evidence(
                     &identity,
                     "unknown",
                 )?;
+                // The block's `input` is read here and nowhere else; the line's `cwd`
+                // only resolves a relative argument. Nothing from either is kept.
+                if let Some(resources) = extras.resources {
+                    let evidence = claude_resource_evidence(
+                        raw_name.unwrap_or_default(),
+                        block.get("input").unwrap_or(&Value::Null),
+                        object.get("cwd").and_then(Value::as_str),
+                    );
+                    save_resource_evidence(state, binding, resources, &invocation, &timestamp, &evidence)?;
+                }
             }
             Some("tool_result") => {
                 let Some(raw_id) = block
@@ -803,6 +821,7 @@ fn process_codex_tool_evidence(
     timestamp: Option<f64>,
     since: f64,
     now: f64,
+    extras: &EventExtras<'_>,
 ) -> Result<(), AdapterError> {
     if object.get("type").and_then(Value::as_str) != Some("response_item") {
         return Ok(());
@@ -886,6 +905,12 @@ fn process_codex_tool_evidence(
         &identity,
         server_outcome,
     )?;
+    // `arguments`, `input`, and `action` are read here and nowhere else; the
+    // turn's working directory only resolves a relative argument.
+    if let Some(resources) = extras.resources {
+        let evidence = codex_resource_evidence(kind, raw_name, raw_namespace, payload, ctx.cwd.as_deref());
+        save_resource_evidence(state, binding, resources, &invocation, &timestamp_text, &evidence)?;
+    }
     if !ctx.pending_tool_invocations.contains(&invocation) {
         ctx.pending_tool_invocations.push(invocation);
     }
@@ -1289,13 +1314,14 @@ pub fn process_line(
             timestamp,
             since,
             now,
+            extras,
         )?;
     }
 
     if provider == Provider::Codex {
         if ctx.own_started {
             process_codex_tool_evidence(
-                state, binding, account, object, &payload, ctx, timestamp, since, now,
+                state, binding, account, object, &payload, ctx, timestamp, since, now, extras,
             )?;
         }
         match kind {
@@ -1705,8 +1731,16 @@ pub fn scan(
     let account = binding.account_id.as_str();
     let since = ctx_run.since;
     let now = ctx_run.now_seconds;
-    let scan_generation = format!("{}:subagents={include_subagents}", crate::EXECUTION_PARSER_VERSION);
-    state.prepare_file_scan(binding_id, &scan_generation)?;
+    // Resource rows are a function of transcript, parser, subagent setting, and
+    // configuration: a change to any of them replays retained histories from
+    // empty resource tables. The local deny is applied at emit time instead.
+    let resources = ScanResources::prepare(state, &ctx_run.resources)?;
+    let scan_generation = format!(
+        "{}:subagents={include_subagents}:resources={}",
+        crate::EXECUTION_PARSER_VERSION,
+        ctx_run.resources.scan_digest.as_deref().unwrap_or("none")
+    );
+    state.prepare_file_scan_with_purge(binding_id, &scan_generation)?;
     'roots: for root in &binding.roots {
         let root = expand_user(root);
         if !root.is_dir() {
@@ -1745,6 +1779,7 @@ pub fn scan(
                 include_subagents,
                 parent_session: parent_session
                     .map(|parent| digest(&json!([provider.as_str(), account, parent])).as_str().to_owned()),
+                resources: resources.as_ref(),
             };
             let path_text = resolved.to_string_lossy().into_owned();
             let size = i64::try_from(meta.len()).unwrap_or(i64::MAX);
@@ -1900,7 +1935,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
         let evidence = RequestEvidence::default();
-        let extras = EventExtras { product: "codex", parent_session: None, include_subagents: true };
+        let extras =
+            EventExtras { product: "codex", parent_session: None, include_subagents: true, resources: None };
         let save = |id: &str, cwd: Option<&str>, project_basis: &str| {
             save_event(
                 &state,
@@ -1951,7 +1987,7 @@ mod tests {
             "account",
             0.0,
             2_000_000_000.0,
-            &EventExtras { product: "codex", parent_session: None, include_subagents: true },
+            &EventExtras { product: "codex", parent_session: None, include_subagents: true, resources: None },
         )
         .unwrap();
         assert!(result.is_ok());
@@ -1969,7 +2005,8 @@ mod tests {
     fn codex_project_context_distinguishes_none_unknown_and_working_directory() {
         let dir = tempfile::tempdir().unwrap();
         let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
-        let extras = EventExtras { product: "codex", parent_session: None, include_subagents: true };
+        let extras =
+            EventExtras { product: "codex", parent_session: None, include_subagents: true, resources: None };
         let process = |ctx: &mut Ctx, payload: Value| {
             process_line(
                 &state,
