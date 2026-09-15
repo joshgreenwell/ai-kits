@@ -43,6 +43,66 @@ For a **new** install, after issuing a code in Connections:
 
 Do not re-pair a working install for troubleshooting. After changing cadence in Settings, apply it to Task Scheduler with `& $companionExe --config-dir $companionDir service install`. Normal `run` fetches collection settings but does not rewrite the OS schedule. Inspect the next scheduled run and the detailed-report result separately.
 
+### Update an existing Windows install
+
+An update keeps `companion.json`, the install key, SQLite checkpoints, receipts, inbox, and detailed-report state. Do **not** run `connect` or delete the config directory. For a tagged release installed through Scoop, use `scoop update observatory`, then run the three commands below with the path returned by `scoop which observatory`.
+
+Until a tagged release exists, build the current checkout and replace the executable already named by Task Scheduler. First confirm the companion task is not running and preserve the old binary as a rollback copy:
+
+```powershell
+cd C:\path\to\ai-kits\kit-board\companion
+cargo test --workspace
+cargo build --release --locked
+
+$companionDir = Join-Path $env:USERPROFILE '.config\personal-hub\companion'
+$companionExe = Join-Path $env:LOCALAPPDATA 'Programs\observatory\observatory.exe'
+$backupDir = Join-Path (Split-Path $companionExe) 'backups'
+New-Item -ItemType Directory -Force $backupDir | Out-Null
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+Copy-Item $companionExe (Join-Path $backupDir "observatory-before-update-$stamp.exe")
+Copy-Item .\target\release\observatory.exe $companionExe -Force
+
+& $companionExe --config-dir $companionDir service install
+& $companionExe --config-dir $companionDir run
+& $companionExe --config-dir $companionDir doctor
+```
+
+`service install` is intentionally repeated after replacing the binary: it refreshes the task command and cadence, reads the task back, and immediately reports the new build's capabilities. The first run after a parser-generation change replays retained source files and can take longer than a normal hourly run.
+
+## macOS install, update, and run
+
+Use the same config directory for every command. An update must reuse the existing directory; it must not pair a second install.
+
+For a tagged Homebrew release:
+
+```bash
+brew update
+brew upgrade joshgreenwell/tap/observatory
+
+companion_dir="$HOME/.config/personal-hub/companion"
+observatory --config-dir "$companion_dir" service install
+observatory --config-dir "$companion_dir" run
+observatory --config-dir "$companion_dir" doctor
+```
+
+If Homebrew reports that the formula is not installed, use `brew install joshgreenwell/tap/observatory`. Only a new, unpaired Mac then needs `connect` and `setup` from the installation steps above.
+
+To install the current unreleased checkout instead of the last tagged release:
+
+```bash
+cd /path/to/ai-kits/kit-board/companion
+cargo test --workspace
+cargo install --path crates/observatory --locked --force
+
+companion_exe="$HOME/.cargo/bin/observatory"
+companion_dir="$HOME/.config/personal-hub/companion"
+"$companion_exe" --config-dir "$companion_dir" service install
+"$companion_exe" --config-dir "$companion_dir" run
+"$companion_exe" --config-dir "$companion_dir" doctor
+```
+
+The LaunchAgent installed by `service install` pins both that executable and `--config-dir`. Keep the checkout update (`git pull`, merge, or branch switch) separate from the install command so local changes are reviewed before the binary is replaced. The first upgraded run may be slow while newer parsers replay retained Claude and Codex histories; wait for its JSON result and require `"ok": true`, no retained outbox, a non-pending schedule, and no unexplained `failed` or `partial` state from an enabled execution adapter before considering the update complete.
+
 The supported local footprint is the installed `observatory` binary, one companion config/state directory, the detailed adapter/analyzer and protected usage-publisher credential when enabled, and the provider-owned `.codex` / `.claude` stores that are the source data. The companion config directory contains its JSON config, SQLite checkpoint/receipt state, lock, inbox, logs, safety backups, and detailed-report retry state; these are one managed runtime tree, not separate installs.
 
 The directory boundary must be verified per machine: `%LOCALAPPDATA%\PersonalObservatory` is the CLI's Windows **default v2** directory. Do not delete a directory by its name. This Windows install uses the explicit profile-root directory above.

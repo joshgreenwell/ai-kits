@@ -1,18 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Badge } from '@/components/ui/badge';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { EmptyState, Stat, StatGroup } from '@/components/kit';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DataTable, EmptyState, Stat, StatGroup, type Column } from '@/components/kit';
 import { UsageSeriesChart, modelColors, type ChartCategory, type ChartSeries } from '@/components/usage-series-chart';
 import type { PricingRow } from '@/lib/usage-pricing';
 import type { UsageQueryResult } from '@/lib/usage-query';
 import { compactTokens, exactTokens, intervalLabel, percent } from '@/lib/usage-view';
 
 type View = 'graph' | 'table';
-const MAX_TABLE_HEIGHT = 'max-h-[28rem]';
+const MAX_TABLE_HEIGHT = 'max-h-[28rem] overflow-auto';
 
 function useViewPreference(key: string) {
   const [view, setViewState] = useState<View>('graph');
@@ -27,18 +27,6 @@ function useViewPreference(key: string) {
     try { window.localStorage.setItem(key, next); } catch { /* per-viewer convenience only */ }
   };
   return [view, setView] as const;
-}
-
-function ViewSwitch({ label, value, onChange }: { label: string; value: View; onChange: (view: View) => void }) {
-  return (
-    <div className="border-border bg-muted flex rounded-md border p-0.5" role="group" aria-label={`${label} view`}>
-      {(['graph', 'table'] as const).map(view => (
-        <Button key={view} type="button" variant={value === view ? 'secondary' : 'ghost'} size="xs" aria-pressed={value === view} onClick={() => onChange(view)}>
-          {view === 'graph' ? 'Graph' : 'Table'}
-        </Button>
-      ))}
-    </div>
-  );
 }
 
 export function formatUsd(value: number) {
@@ -60,72 +48,71 @@ function calendarDates(observed: string[]) {
   return dates;
 }
 
+function Disclosure({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Collapsible>
+      <CollapsibleTrigger asChild>
+        <Button type="button" variant="ghost" size="xs" className="text-muted-foreground hover:text-foreground h-auto px-0 font-mono text-[11px]">
+          {title}
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-3">{children}</CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 export function CostModelTable({ rows }: { rows: PricingRow[] }) {
   if (!rows.length) return <EmptyState title="No request pricing evidence" description="Hourly totals remain visible, but this scope has no request records with pricing dimensions." />;
+  const columns: Column<PricingRow>[] = [
+    { id: 'model', header: 'Model', sortValue: row => row.model, cell: row => <span className="font-mono text-xs">{modelLabel(row.model)}</span> },
+    { id: 'calls', header: 'Calls', numeric: true, sortValue: row => row.calls, cell: row => exactTokens(row.calls) },
+    { id: 'tokens', header: 'Tokens', numeric: true, sortValue: row => row.total_tokens, cell: row => exactTokens(row.total_tokens) },
+    { id: 'priced', header: 'Priced', numeric: true, sortValue: row => row.priced_tokens, cell: row => priceCoverage(row) },
+    { id: 'estimate', header: 'Estimate', numeric: true, sortValue: row => row.estimated_cost_usd, cell: row => <span className="font-semibold">{formatUsd(row.estimated_cost_usd)}</span> },
+  ];
   return (
-    <div className={`border-border overflow-auto rounded-lg border ${MAX_TABLE_HEIGHT}`}>
-      <Table>
-        <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="bg-card uppercase">Model</TableHead><TableHead className="bg-card text-right uppercase">Calls</TableHead><TableHead className="bg-card text-right uppercase">Tokens</TableHead><TableHead className="bg-card text-right uppercase">Priced</TableHead><TableHead className="bg-card text-right uppercase">Estimate</TableHead></TableRow></TableHeader>
-        <TableBody>
-          {rows.map(row => (
-            <TableRow key={row.model} className="even:bg-foreground/[0.03] border-b-0">
-              <TableCell className="font-mono text-xs">{modelLabel(row.model)}</TableCell>
-              <TableCell className="text-right font-mono text-xs tabular-nums">{exactTokens(row.calls)}</TableCell>
-              <TableCell className="text-right font-mono text-xs tabular-nums">{exactTokens(row.total_tokens)}</TableCell>
-              <TableCell className="text-right font-mono text-xs tabular-nums">{priceCoverage(row)}</TableCell>
-              <TableCell className="text-right font-mono text-xs font-semibold tabular-nums">{formatUsd(row.estimated_cost_usd)}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className={`border-border rounded-lg border ${MAX_TABLE_HEIGHT}`}>
+      <DataTable columns={columns} rows={rows} getRowId={row => row.model} defaultSort={{ id: 'estimate', dir: 'desc' }} />
     </div>
   );
 }
 
 function CostPeriodTable({ rows }: { rows: UsageQueryResult['cost']['series'] }) {
   if (!rows.length) return null;
+  const columns: Column<UsageQueryResult['cost']['series'][number] & { id: string }>[] = [
+    { id: 'date', header: 'Source price date', sortValue: row => row.rate_date ?? '', cell: row => <span className="font-mono text-xs">{row.rate_date ? dateLabel(row.rate_date) : 'Unknown date'}</span> },
+    { id: 'model', header: 'Model', sortValue: row => row.model, cell: row => <span className="font-mono text-xs">{modelLabel(row.model)}</span> },
+    { id: 'tokens', header: 'Tokens', numeric: true, sortValue: row => row.total_tokens, cell: row => exactTokens(row.total_tokens) },
+    { id: 'unpriced', header: 'Unpriced', numeric: true, sortValue: row => row.unpriced_tokens, cell: row => exactTokens(row.unpriced_tokens) },
+    { id: 'estimate', header: 'Estimate', numeric: true, sortValue: row => row.estimated_cost_usd, cell: row => formatUsd(row.estimated_cost_usd) },
+  ];
+  const data = rows.map((row, index) => ({ ...row, id: `${row.rate_date}:${row.model}:${index}` }));
   return (
-    <details>
-      <summary className="text-muted-foreground hover:text-foreground cursor-pointer font-mono text-[11px]">View daily model values</summary>
-      <div className={`border-border mt-3 overflow-auto rounded-lg border ${MAX_TABLE_HEIGHT}`}>
-        <Table>
-          <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="bg-card uppercase">Source price date</TableHead><TableHead className="bg-card uppercase">Model</TableHead><TableHead className="bg-card text-right uppercase">Tokens</TableHead><TableHead className="bg-card text-right uppercase">Unpriced</TableHead><TableHead className="bg-card text-right uppercase">Estimate</TableHead></TableRow></TableHeader>
-          <TableBody>{rows.map((row, index) => (
-            <TableRow key={`${row.rate_date}:${row.model}:${index}`} className="even:bg-foreground/[0.03] border-b-0">
-              <TableCell className="font-mono text-xs">{row.rate_date ? dateLabel(row.rate_date) : 'Unknown date'}</TableCell>
-              <TableCell className="font-mono text-xs">{modelLabel(row.model)}</TableCell>
-              <TableCell className="text-right font-mono text-xs tabular-nums">{exactTokens(row.total_tokens)}</TableCell>
-              <TableCell className="text-right font-mono text-xs tabular-nums">{exactTokens(row.unpriced_tokens)}</TableCell>
-              <TableCell className="text-right font-mono text-xs tabular-nums">{formatUsd(row.estimated_cost_usd)}</TableCell>
-            </TableRow>
-          ))}</TableBody>
-        </Table>
+    <Disclosure title="View daily model values">
+      <div className={`border-border rounded-lg border ${MAX_TABLE_HEIGHT}`}>
+        <DataTable columns={columns} rows={data} getRowId={row => row.id} defaultSort={{ id: 'date', dir: 'asc' }} />
       </div>
-    </details>
+    </Disclosure>
   );
 }
 
 function CostDimensionTable({ rows }: { rows: PricingRow[] }) {
   if (!rows.length) return null;
+  const data = rows.map((row, index) => ({ ...row, id: `${row.model}:${row.reasoning_effort}:${row.service_tier}:${index}` }));
+  const columns: Column<typeof data[number]>[] = [
+    { id: 'model', header: 'Model', sortValue: row => row.model, cell: row => <span className="font-mono text-xs">{modelLabel(row.model)}</span> },
+    { id: 'effort', header: 'Effort', sortValue: row => row.reasoning_effort, cell: row => row.reasoning_effort === 'unknown' ? 'Unknown' : row.reasoning_effort },
+    { id: 'tier', header: 'Service tier', sortValue: row => row.service_tier, cell: row => tierLabel(row.service_tier) },
+    { id: 'calls', header: 'Calls', numeric: true, sortValue: row => row.calls, cell: row => exactTokens(row.calls) },
+    { id: 'tokens', header: 'Tokens', numeric: true, sortValue: row => row.total_tokens, cell: row => exactTokens(row.total_tokens) },
+    { id: 'estimate', header: 'Estimate', numeric: true, sortValue: row => row.estimated_cost_usd, cell: row => formatUsd(row.estimated_cost_usd) },
+  ];
   return (
-    <details>
-      <summary className="text-muted-foreground hover:text-foreground cursor-pointer font-mono text-[11px]">View effort and service-tier detail</summary>
-      <div className={`border-border mt-3 overflow-auto rounded-lg border ${MAX_TABLE_HEIGHT}`}>
-        <Table>
-          <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="bg-card uppercase">Model</TableHead><TableHead className="bg-card uppercase">Effort</TableHead><TableHead className="bg-card uppercase">Service tier</TableHead><TableHead className="bg-card text-right uppercase">Calls</TableHead><TableHead className="bg-card text-right uppercase">Tokens</TableHead><TableHead className="bg-card text-right uppercase">Estimate</TableHead></TableRow></TableHeader>
-          <TableBody>{rows.map((row, index) => (
-            <TableRow key={`${row.model}:${row.reasoning_effort}:${row.service_tier}:${index}`} className="even:bg-foreground/[0.03] border-b-0">
-              <TableCell className="font-mono text-xs">{modelLabel(row.model)}</TableCell>
-              <TableCell className="text-muted-foreground text-xs">{row.reasoning_effort === 'unknown' ? 'Unknown' : row.reasoning_effort}</TableCell>
-              <TableCell className="text-muted-foreground text-xs">{tierLabel(row.service_tier)}</TableCell>
-              <TableCell className="text-right font-mono text-xs tabular-nums">{exactTokens(row.calls)}</TableCell>
-              <TableCell className="text-right font-mono text-xs tabular-nums">{exactTokens(row.total_tokens)}</TableCell>
-              <TableCell className="text-right font-mono text-xs tabular-nums">{formatUsd(row.estimated_cost_usd)}</TableCell>
-            </TableRow>
-          ))}</TableBody>
-        </Table>
+    <Disclosure title="View effort and service-tier detail">
+      <div className={`border-border rounded-lg border ${MAX_TABLE_HEIGHT}`}>
+        <DataTable columns={columns} rows={data} getRowId={row => row.id} defaultSort={{ id: 'estimate', dir: 'desc' }} />
       </div>
-    </details>
+    </Disclosure>
   );
 }
 
@@ -146,79 +133,90 @@ export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colo
 
   return (
     <Card aria-label="API-equivalent cost estimate">
-      <CardHeader>
-        <CardTitle className="text-base">API-equivalent cost estimate</CardTitle>
-        <CardDescription>Public list-price estimate for request detail in this selected scope. It is not subscription spend, credits, an invoice, or an actual bill.</CardDescription>
-        <CardAction><ViewSwitch label="API-equivalent cost" value={view} onChange={setView} /></CardAction>
-      </CardHeader>
-      <StatGroup className="border-border border-y">
-        <Stat label="Estimated API equivalent" value={formatUsd(cost.estimated_cost_usd)} caption="USD · observed request pricing inputs only" />
-        <Stat label="Priced tokens" value={exactTokens(cost.priced_tokens)} caption={`${percent(cost.priced_token_coverage)} of tokens carrying price inputs`} />
-        <Stat label="Unpriced tokens" value={exactTokens(cost.unpriced_tokens)} caption={unpricedReasons.length ? unpricedReasons.map(([reason, tokens]) => `${reason.replaceAll('_', ' ')} ${compactTokens(tokens)}`).join(' · ') : 'none in pricing inputs'} />
-        <Stat label="Input evidence" value={percent(result.pricing_inputs.coverage.headline ? result.pricing_inputs.coverage.classified / result.pricing_inputs.coverage.headline : null)} caption={`${exactTokens(result.pricing_inputs.coverage.classified)} of ${exactTokens(result.pricing_inputs.coverage.headline)} headline tokens carry a model in request detail`} />
-      </StatGroup>
-      <CardContent className="grid gap-4">
-        {view === 'graph' ? (
-          series.length && categories.length ? <UsageSeriesChart categories={categories} series={series} unit="estimated USD" formatValue={formatUsd} formatAxis={formatUsd} />
-            : <EmptyState title="No cost series for this scope" description="The headline token total is still valid. Cost needs request records with a source price date and model." />
-        ) : <CostModelTable rows={cost.by_model} />}
-        {view === 'table' ? <><CostPeriodTable rows={cost.series} /><CostDimensionTable rows={cost.by_model_effort_service_tier} /></> : null}
-        <p className="text-muted-foreground text-xs leading-relaxed">Cost lines use each request&apos;s source price date in America/Chicago. A missing date is a gap in request pricing evidence, not a zero-cost day. Hiding a line or switching this view does not change the selected scope or the token headline.</p>
-        <details className="border-border rounded-lg border p-4">
-          <summary className="cursor-pointer text-sm font-semibold">Catalog, coverage, and assumptions</summary>
-          <div className="text-muted-foreground mt-3 grid gap-3 text-xs leading-relaxed">
-            <p>Catalog {cost.pricing_catalog.version}. Rates are per {exactTokens(cost.pricing_catalog.unit_tokens)} tokens. {result.pricing_inputs.coverage.note}</p>
-            <p>{exactTokens(cost.missing_service_tier_calls_assumed_standard)} calls assumed Standard service tier · {exactTokens(cost.assumed_cache_write_ttl_calls)} calls assumed a 5-minute cache-write TTL · {exactTokens(cost.priority_at_standard_calls)} Anthropic priority calls priced at Standard and flagged.</p>
-            <ul className="grid gap-1">{cost.assumptions.map(assumption => <li key={assumption}>• {assumption}</li>)}</ul>
-            <div className="flex flex-wrap gap-2">{cost.pricing_catalog.sources.map(source => <Button key={`${source.label}:${source.url}`} variant="outline" size="xs" asChild><a href={source.url} target="_blank" rel="noreferrer">{source.label}</a></Button>)}</div>
-          </div>
-        </details>
-      </CardContent>
+      <Tabs value={view} onValueChange={next => { if (next === 'graph' || next === 'table') setView(next); }}>
+        <CardHeader>
+          <CardTitle className="text-base">API-equivalent cost estimate</CardTitle>
+          <CardDescription>Public list-price estimate for request detail in this selected scope. It is not subscription spend, credits, an invoice, or an actual bill.</CardDescription>
+          <CardAction>
+            <TabsList aria-label="API-equivalent cost view">
+              <TabsTrigger value="graph">Graph</TabsTrigger>
+              <TabsTrigger value="table">Table</TabsTrigger>
+            </TabsList>
+          </CardAction>
+        </CardHeader>
+        <StatGroup className="border-border border-y">
+          <Stat label="Estimated API equivalent" value={formatUsd(cost.estimated_cost_usd)} caption="USD · observed request pricing inputs only" />
+          <Stat label="Priced tokens" value={exactTokens(cost.priced_tokens)} caption={`${percent(cost.priced_token_coverage)} of tokens carrying price inputs`} />
+          <Stat label="Unpriced tokens" value={exactTokens(cost.unpriced_tokens)} caption={unpricedReasons.length ? unpricedReasons.map(([reason, tokens]) => `${reason.replaceAll('_', ' ')} ${compactTokens(tokens)}`).join(' · ') : 'none in pricing inputs'} />
+          <Stat label="Input evidence" value={percent(result.pricing_inputs.coverage.headline ? result.pricing_inputs.coverage.classified / result.pricing_inputs.coverage.headline : null)} caption={`${exactTokens(result.pricing_inputs.coverage.classified)} of ${exactTokens(result.pricing_inputs.coverage.headline)} headline tokens carry a model in request detail`} />
+        </StatGroup>
+        <CardContent className="grid gap-4">
+          <TabsContent value="graph">
+            {series.length && categories.length
+              ? <UsageSeriesChart categories={categories} series={series} unit="estimated USD" formatValue={formatUsd} formatAxis={formatUsd} />
+              : <EmptyState title="No cost series for this scope" description="The headline token total is still valid. Cost needs request records with a source price date and model." />}
+          </TabsContent>
+          <TabsContent value="table" className="grid gap-4">
+            <CostModelTable rows={cost.by_model} />
+            <CostPeriodTable rows={cost.series} />
+            <CostDimensionTable rows={cost.by_model_effort_service_tier} />
+          </TabsContent>
+          <p className="text-muted-foreground text-xs leading-relaxed">Cost lines use each request&apos;s source price date in America/Chicago. A missing date is a gap in request pricing evidence, not a zero-cost day. Hiding a line or switching this view does not change the selected scope or the token headline.</p>
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="w-full justify-start">Catalog, coverage, and assumptions</Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="text-muted-foreground mt-3 grid gap-3 text-xs leading-relaxed">
+              <p>Catalog {cost.pricing_catalog.version}. Rates are per {exactTokens(cost.pricing_catalog.unit_tokens)} tokens. {result.pricing_inputs.coverage.note}</p>
+              <p>{exactTokens(cost.missing_service_tier_calls_assumed_standard)} calls assumed Standard service tier · {exactTokens(cost.assumed_cache_write_ttl_calls)} calls assumed a 5-minute cache-write TTL · {exactTokens(cost.priority_at_standard_calls)} Anthropic priority calls priced at Standard and flagged.</p>
+              <ul className="grid gap-1">{cost.assumptions.map(assumption => <li key={assumption}>• {assumption}</li>)}</ul>
+              <div className="flex flex-wrap gap-2">{cost.pricing_catalog.sources.map(source => <Button key={`${source.label}:${source.url}`} variant="outline" size="xs" asChild><a href={source.url} target="_blank" rel="noreferrer">{source.label}</a></Button>)}</div>
+            </CollapsibleContent>
+          </Collapsible>
+        </CardContent>
+      </Tabs>
     </Card>
   );
 }
 
 export function ModelSummaryTable({ result, colors }: { result: UsageQueryResult; colors: Map<string, string> }) {
   if (!result.by_model.length) return <EmptyState title="No model attribution in this scope" description="The selected total may include historical snapshots or activity that did not record a model." />;
+  const columns: Column<UsageQueryResult['by_model'][number]>[] = [
+    { id: 'model', header: 'Model', sortValue: row => row.model, cell: row => (
+      <span className="inline-flex items-center gap-2 font-mono text-xs"><i aria-hidden className="block size-2 rounded-full" style={{ background: colors.get(row.model) }} />{modelLabel(row.model)}</span>
+    ) },
+    { id: 'calls', header: 'Calls', numeric: true, sortValue: row => row.calls, cell: row => exactTokens(row.calls) },
+    { id: 'tokens', header: 'Tokens', numeric: true, sortValue: row => row.total_tokens, cell: row => exactTokens(row.total_tokens) },
+    { id: 'share', header: 'Share', numeric: true, sortValue: row => row.share, cell: row => percent(row.share) },
+    { id: 'composition', header: 'Fresh / cached / write / output', numeric: true, sortValue: row => row.composition.input_fresh, cell: row => (
+      <span className="text-muted-foreground text-[11px]">{compactTokens(row.composition.input_fresh)} / {compactTokens(row.composition.input_cached)} / {compactTokens(row.composition.input_cache_write)} / {compactTokens(row.composition.output)}</span>
+    ) },
+  ];
   return (
-    <div className={`border-border overflow-auto rounded-lg border ${MAX_TABLE_HEIGHT}`}>
-      <Table>
-        <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="bg-card uppercase">Model</TableHead><TableHead className="bg-card text-right uppercase">Calls</TableHead><TableHead className="bg-card text-right uppercase">Tokens</TableHead><TableHead className="bg-card text-right uppercase">Share</TableHead><TableHead className="bg-card text-right uppercase">Fresh / cached / write / output</TableHead></TableRow></TableHeader>
-        <TableBody>{result.by_model.map(row => (
-          <TableRow key={row.model} className="even:bg-foreground/[0.03] border-b-0">
-            <TableCell className="font-mono text-xs"><span className="inline-flex items-center gap-2"><i aria-hidden className="block size-2 rounded-full" style={{ background: colors.get(row.model) }} />{modelLabel(row.model)}</span></TableCell>
-            <TableCell className="text-right font-mono text-xs tabular-nums">{exactTokens(row.calls)}</TableCell>
-            <TableCell className="text-right font-mono text-xs tabular-nums">{exactTokens(row.total_tokens)}</TableCell>
-            <TableCell className="text-right font-mono text-xs tabular-nums">{percent(row.share)}</TableCell>
-            <TableCell className="text-muted-foreground text-right font-mono text-[11px] tabular-nums">{compactTokens(row.composition.input_fresh)} / {compactTokens(row.composition.input_cached)} / {compactTokens(row.composition.input_cache_write)} / {compactTokens(row.composition.output)}</TableCell>
-          </TableRow>
-        ))}</TableBody>
-      </Table>
+    <div className={`border-border rounded-lg border ${MAX_TABLE_HEIGHT}`}>
+      <DataTable columns={columns} rows={result.by_model} getRowId={row => row.model} defaultSort={{ id: 'tokens', dir: 'desc' }} />
     </div>
   );
 }
 
 function ModelPeriodTable({ result }: { result: UsageQueryResult }) {
-  const rows = result.model_series.flatMap(model => model.points.map(point => ({ model: model.model, ...point })))
+  const rows = result.model_series.flatMap(model => model.points.map(point => ({ model: model.model, ...point, id: `${point.start}:${model.model}` })))
     .sort((a, b) => a.start.localeCompare(b.start) || a.model.localeCompare(b.model));
   if (!rows.length) return null;
+  const columns: Column<typeof rows[number]>[] = [
+    { id: 'interval', header: 'Interval', sortValue: row => row.start, cell: row => (
+      <span className="font-mono text-xs">{intervalLabel({ ...row, end: result.series.points.find(point => point.start === row.start)?.end ?? row.start, state: result.series.points.find(point => point.start === row.start)?.state ?? 'observed' }, result.scope.range.timezone, result.series.resolution)}</span>
+    ) },
+    { id: 'model', header: 'Model', sortValue: row => row.model, cell: row => <span className="font-mono text-xs">{modelLabel(row.model)}</span> },
+    { id: 'calls', header: 'Calls', numeric: true, sortValue: row => row.calls, cell: row => exactTokens(row.calls) },
+    { id: 'tokens', header: 'Tokens', numeric: true, sortValue: row => row.total_tokens, cell: row => exactTokens(row.total_tokens) },
+  ];
   return (
-    <details>
-      <summary className="text-muted-foreground hover:text-foreground cursor-pointer font-mono text-[11px]">View interval model values</summary>
-      <div className={`border-border mt-3 overflow-auto rounded-lg border ${MAX_TABLE_HEIGHT}`}>
-        <Table>
-          <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="bg-card uppercase">Interval</TableHead><TableHead className="bg-card uppercase">Model</TableHead><TableHead className="bg-card text-right uppercase">Calls</TableHead><TableHead className="bg-card text-right uppercase">Tokens</TableHead></TableRow></TableHeader>
-          <TableBody>{rows.map(row => (
-            <TableRow key={`${row.start}:${row.model}`} className="even:bg-foreground/[0.03] border-b-0">
-              <TableCell className="font-mono text-xs">{intervalLabel({ ...row, end: result.series.points.find(point => point.start === row.start)?.end ?? row.start, state: result.series.points.find(point => point.start === row.start)?.state ?? 'observed' }, result.scope.range.timezone, result.series.resolution)}</TableCell>
-              <TableCell className="font-mono text-xs">{modelLabel(row.model)}</TableCell>
-              <TableCell className="text-right font-mono text-xs tabular-nums">{exactTokens(row.calls)}</TableCell>
-              <TableCell className="text-right font-mono text-xs tabular-nums">{exactTokens(row.total_tokens)}</TableCell>
-            </TableRow>
-          ))}</TableBody>
-        </Table>
+    <Disclosure title="View interval model values">
+      <div className={`border-border rounded-lg border ${MAX_TABLE_HEIGHT}`}>
+        <DataTable columns={columns} rows={rows} getRowId={row => row.id} defaultSort={{ id: 'interval', dir: 'asc' }} />
       </div>
-    </details>
+    </Disclosure>
   );
 }
 
@@ -246,23 +244,34 @@ export function TokensByModelCard({ result, colors }: { result: UsageQueryResult
 
   return (
     <Card aria-label="Tokens by model">
-      <CardHeader>
-        <CardTitle className="text-base">Tokens by model</CardTitle>
-        <CardDescription>Which recorded models contributed to the selected token scope. Model colors match the API-equivalent cost card.</CardDescription>
-        <CardAction><ViewSwitch label="Tokens by model" value={view} onChange={setView} /></CardAction>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        {view === 'graph' ? (
-          series.length ? <UsageSeriesChart categories={categories} series={series} unit="tokens" formatValue={value => `${exactTokens(value)} tokens`} formatAxis={compactTokens} />
-            : <EmptyState title="No model series in this scope" description="The selected token total remains visible above, but these records do not carry a model breakdown." />
-        ) : <ModelSummaryTable result={result} colors={colors} />}
-        {view === 'table' ? <ModelPeriodTable result={result} /> : null}
-        <p className="text-muted-foreground text-xs leading-relaxed">
-          {exactTokens(attributed)} of {exactTokens(result.headline.total_tokens)} headline tokens are attributed to a recorded model.
-          {unattributed > 0 ? ` ${exactTokens(unattributed)} tokens remain outside this breakdown, including snapshots without model detail.` : ' The model rows reconcile to the headline.'}
-          {' '}A missing point means model detail is unavailable for that interval; it is not drawn as zero. Hiding a line or switching views never changes the headline total.
-        </p>
-      </CardContent>
+      <Tabs value={view} onValueChange={next => { if (next === 'graph' || next === 'table') setView(next); }}>
+        <CardHeader>
+          <CardTitle className="text-base">Tokens by model</CardTitle>
+          <CardDescription>Which recorded models contributed to the selected token scope. Model colors match the API-equivalent cost card.</CardDescription>
+          <CardAction>
+            <TabsList aria-label="Tokens by model view">
+              <TabsTrigger value="graph">Graph</TabsTrigger>
+              <TabsTrigger value="table">Table</TabsTrigger>
+            </TabsList>
+          </CardAction>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <TabsContent value="graph">
+            {series.length
+              ? <UsageSeriesChart categories={categories} series={series} unit="tokens" formatValue={value => `${exactTokens(value)} tokens`} formatAxis={compactTokens} />
+              : <EmptyState title="No model series in this scope" description="The selected token total remains visible above, but these records do not carry a model breakdown." />}
+          </TabsContent>
+          <TabsContent value="table" className="grid gap-4">
+            <ModelSummaryTable result={result} colors={colors} />
+            <ModelPeriodTable result={result} />
+          </TabsContent>
+          <p className="text-muted-foreground text-xs leading-relaxed">
+            {exactTokens(attributed)} of {exactTokens(result.headline.total_tokens)} headline tokens are attributed to a recorded model.
+            {unattributed > 0 ? ` ${exactTokens(unattributed)} tokens remain outside this breakdown, including snapshots without model detail.` : ' The model rows reconcile to the headline.'}
+            {' '}A missing point means model detail is unavailable for that interval; it is not drawn as zero. Hiding a line or switching views never changes the headline total.
+          </p>
+        </CardContent>
+      </Tabs>
     </Card>
   );
 }
