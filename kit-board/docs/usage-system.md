@@ -4,6 +4,8 @@ Current-state audit: September 13, 2026, approximately 18:29–18:32 UTC (1:29�
 
 Recovery update, 22:32 UTC: the Windows detailed-report credential path was repaired through a reviewed isolated release. The exact preserved September artifact and subsequent snapshots received authenticated receipts; a Task Scheduler invocation exited `0`, and the latest Windows September report is selected. The dated tables below remain the pre-recovery audit baseline. See the [USG-002 evidence](usage-evidence/usg-002-2026-09-13.md) for the changed state and remaining Mac/history limits.
 
+Windows companion update, September 15 at 17:52–18:03 UTC: the installed executable was rebuilt from the current checkout and replaced with a preserved rollback copy; pairing, state, and the August 1 backfill pin were retained. The server accepted the build capability report, Task Scheduler read back installed at the desired 60-minute cadence with the explicit config directory pinned, two manual runs uploaded successfully with no rejected or retained rows, and the detailed Codex report published fresh receipts. The richer parser-generation replay is not complete: the first two passes reached the five-minute scan deadline after 11 and 16 Codex files (`partial_read`), while the concurrent Claude execution adapter timed out on the SQLite writer (`state_error`); later scheduled runs resume from committed per-file checkpoints. The binary still reports `2.0.0` because these changes are unreleased, so the version string alone cannot distinguish it from the older build. The two failing v1 Windows tasks remain present and were not removed. See [V2 collection](usage-collection.md#update-an-existing-windows-install) for Windows rollback and Mac update commands.
+
 ## Start here
 
 The Observatory is partway through replacing its usage collectors. **V2 local collection works for Claude Code and Codex. V1 local jobs still exist, the Claude browser reader is still v1, and monthly reporting is a separate pipeline with gaps. Cursor collection is not implemented.**
@@ -75,7 +77,7 @@ Production had 34 stored monthly revisions at audit time. July and August histor
 
 ### Usage & pace — `/usage/live` (now Tokens `/usage` and Allowances `/usage/allowances`)
 
-USG-015 split this view: hourly activity sits above the monthly report under the Tokens subtab and the allowance sections form the Allowances subtab; `/usage/live` redirects to Allowances. The behaviour below is unchanged.
+USG-015 split this view and USG-017 replaced its Tokens half: `/usage` now opens on the filtered overview (`GET /api/usage-query`) with the monthly analyzer reports beneath as their own section, and the allowance sections form the Allowances subtab; `/usage/live` redirects to Allowances. The allowance behaviour below is unchanged.
 
 Reads `/api/usage-live`: canonical hourly totals from `token_bucket_revisions`, allowance history through `allowance_percent_view`, and retained report baselines. It currently looks back 35 days; data outside the view's horizon is not deleted.
 

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { MachineReporters } from "@/components/machine-reporters";
 import { PageHeader } from "@/components/page-header";
-import { TokenActivity } from "@/components/token-activity";
+import { TokensOverviewLive } from "@/components/tokens-overview";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -268,7 +268,23 @@ function aggregateCostDimensions(rows: StoredReport[]) {
   return [...values.values()].sort((a, b) => b.estimated_cost_usd - a.estimated_cost_usd || b.total_tokens - a.total_tokens);
 }
 
-export default function Home() {
+/** The Tokens landing page (USG-017): the filtered overview first, the monthly analyzer reports beneath it on their own ledger. */
+export default function TokensPage() {
+  return (
+    <Workspace>
+      <PageHeader
+        eyebrow="Usage · tokens"
+        title="Tokens"
+        description="Observed model activity from the collected ledgers for the selected period, accounts, and projects. Allowance percentages stay on their own tab; the monthly analyzer reports follow below on their own snapshots."
+      />
+      <TokensOverviewLive />
+      <MonthlyReports />
+    </Workspace>
+  );
+}
+
+/** The monthly analyzer reports: machine and month snapshots with their own selectors, unchanged in substance since USG-015. */
+function MonthlyReports() {
   const [reports, setReports] = useState<StoredReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -369,41 +385,49 @@ export default function Home() {
   const maxDay = Math.max(...days.map((day) => day.tokens), 1);
   const selectedLabel = activeMonth ? formatMonth(activeMonth) : "No reports";
 
+  const sectionHeading = (
+    <div className="border-border grid gap-1.5 border-t pt-8">
+      <p className="text-muted-foreground font-mono text-[11px] tracking-wide">Monthly analyzer reports · {selectedLabel}</p>
+      <h2 className="text-xl font-bold tracking-tight">Monthly AI intelligence</h2>
+      <p className="text-muted-foreground max-w-[72ch] text-sm leading-relaxed">Machine and month snapshots from the detailed analyzers, on their own ledger and selectors; they are not added to the overview above.</p>
+    </div>
+  );
   if (loading)
     return (
-      <Workspace>
+      <section className="grid gap-6" aria-label="Monthly analyzer reports">
+        {sectionHeading}
         <EmptyState title="Loading report history…" description="Reading the uploaded monthly analyses." />
-      </Workspace>
+      </section>
     );
   if (error && !reports.length)
     return (
-      <Workspace>
+      <section className="grid gap-6" aria-label="Monthly analyzer reports">
+        {sectionHeading}
         <Alert variant="destructive">
           <AlertTitle>Connection issue</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
-      </Workspace>
+      </section>
     );
   if (!reports.length)
     return (
-      <Workspace>
-        <TokenActivity />
+      <section className="grid gap-6" aria-label="Monthly analyzer reports">
+        {sectionHeading}
         <EmptyState
           title="Ready for the first monthly upload"
-          description="The database is connected. Run the token skill with its upload configuration to populate this dashboard."
+          description="The database is connected. Run the token skill with its upload configuration to populate this section."
         />
-      </Workspace>
+      </section>
     );
 
   const composedTotal = rawTotal || 1;
 
   return (
-    <Workspace>
-      <PageHeader
-        eyebrow={`Usage · tokens · ${selectedLabel}`}
-        title="Monthly AI intelligence"
-        description={`${partialMonth ? "Month to date · full report detail" : "Full monthly report"} · ${hourlyMachines ? `${hourlyMachines} of ${visibleRows.length} selected machine reports refresh hourly` : "Scheduled and manual report snapshots"}.${partialMonth ? " Prior-month percentage comparisons resume after this month closes." : ""}`}
-        actions={
+    <section className="grid gap-8" aria-label="Monthly analyzer reports">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        {sectionHeading}
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-muted-foreground w-full font-mono text-[11px]">{`${partialMonth ? "Month to date · full report detail" : "Full monthly report"} · ${hourlyMachines ? `${hourlyMachines} of ${visibleRows.length} selected machine reports refresh hourly` : "Scheduled and manual report snapshots"}.${partialMonth ? " Prior-month percentage comparisons resume after this month closes." : ""}`}</p>
           <>
             <MachineReporters machines={monthRows} />
             <Select value={activeMonth} onValueChange={(month) => { setSelectedMonth(month); setSelectedMachine("all"); }}>
@@ -415,10 +439,8 @@ export default function Home() {
               </SelectContent>
             </Select>
           </>
-        }
-      />
-
-      <TokenActivity />
+        </div>
+      </div>
 
       {error && (
         <Alert variant="destructive" role="alert">
@@ -884,6 +906,6 @@ export default function Home() {
       <footer className="text-muted-foreground border-border border-t pt-4 font-mono text-[11px]">
         Token Observatory · local analysis · authenticated uploads · historical comparison
       </footer>
-    </Workspace>
+    </section>
   );
 }

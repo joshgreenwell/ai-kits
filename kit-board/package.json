@@ -11,7 +11,7 @@
     "build": "next build",
     "start": "next start --port 3100",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test tests/*.test.ts tests/*.test.tsx",
     "test:db": "node scripts/test-db.mjs",
     "test:routing:db": "node scripts/test-db.mjs",
     "usage-schema": "node --import tsx scripts/build-usage-schema.mjs",

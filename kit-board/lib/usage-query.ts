@@ -74,7 +74,10 @@ export type Coverage = { applicable: number; complete: number; headline: number;
 export type UsageQueryResult = {
   as_of: string;
   scope: { range: { preset: Preset; start: string; end: string; timezone: string; anchored_to_now: boolean; resolution: Resolution };
-    accounts: { id: string; provider: string; label: string }[]; filters: Omit<UsageQuery, 'preset' | 'start' | 'end' | 'timezone' | 'resolution'>;
+    accounts: { id: string; provider: string; label: string }[];
+    /** Every non-browser collector source, the machine filter's vocabulary. */
+    machines: { id: string; account_id: string; machine_label: string; mode: string }[];
+    filters: Omit<UsageQuery, 'preset' | 'start' | 'end' | 'timezone' | 'resolution'>;
     /** Filters that only request detail can answer; when any is set the headline is the covered request detail. */
     detail_filters: string[] };
   headline: { total_tokens: number; calls: number; conversations: number | null; composition: Composition; basis: 'buckets' | 'requests';
@@ -637,7 +640,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     return clone({
       as_of: new Date(now).toISOString(),
       scope: { range: { preset: range.preset, start: new Date(range.start).toISOString(), end: new Date(range.end).toISOString(), timezone: tz, anchored_to_now: range.anchored_to_now, resolution: q.resolution },
-        accounts: selected, filters: { accounts: q.accounts, providers: q.providers, models: q.models, efforts: q.efforts, machines: q.machines, surfaces: q.surfaces, projects: q.projects, agent_scope: q.agent_scope, agents: q.agents },
+        accounts: selected, machines: m.sources.filter(s => s.mode !== 'browser'), filters: { accounts: q.accounts, providers: q.providers, models: q.models, efforts: q.efforts, machines: q.machines, surfaces: q.surfaces, projects: q.projects, agent_scope: q.agent_scope, agents: q.agents },
         detail_filters: detailFilters },
       headline: { ...headline, last_observation: lastObservation ? new Date(lastObservation).toISOString() : null },
       series: { resolution: q.resolution, points, excludes_snapshot_tokens: snapshotSeriesExcluded },
