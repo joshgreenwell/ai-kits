@@ -24,6 +24,8 @@ function createDatabase() {
     return Reflect.apply(current(), undefined, [first, ...values]);
   }) as ReturnType<typeof postgres>;
   sql.json = (...args) => current().json(...args);
+  // Positional-parameter text queries take the same gate as tagged templates; values are still bound, never inlined.
+  sql.unsafe = ((...args: Parameters<ReturnType<typeof postgres>['unsafe']>) => queue.run(() => Reflect.apply(current().unsafe, current(), args))) as typeof sql.unsafe;
   sql.begin = ((...args: Parameters<ReturnType<typeof postgres>['begin']>) => queue.run(() => Reflect.apply(current().begin, undefined, args))) as typeof sql.begin;
   sql.end = options => queue.run(async () => { const old = client; client = undefined; if (old) await old.end(options); });
   return sql;

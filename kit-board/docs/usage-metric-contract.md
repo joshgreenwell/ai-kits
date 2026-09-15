@@ -159,7 +159,7 @@ An individual-plan execution stream and an organization API stream may be added 
 
 ### 4.3 Monthly detailed snapshots
 
-First map report subject/machine/provider to the same logical account, product, and execution population used by continuous sources. For an active month choose the newest nonfailed revision. For a closed month prefer a complete/final revision over a later partial revision, then use produced and received time. Preserve methodology/catalog versions.
+First map report subject/machine/provider to the same logical account, product, and execution population used by continuous sources; that crosswalk is operator configuration in `usage_report_subjects` (subject, account, and the source zone its calendar days used), never an edit to the envelope. For an active month choose the newest nonfailed revision. For a closed month prefer a complete/final revision over a later partial revision, then use produced and received time. Preserve methodology/catalog versions.
 
 Monthly snapshots are historical fallback at their recorded resolution. Use a snapshot only where finer canonical execution coverage does not cover the same crosswalked subject and period. A supported daily row may fill an uncovered whole day; never subtract an overlapping partial month or allocate it proportionally. Do not combine a snapshot with buckets or requests for the same subject-period, and do not use it for a filter the snapshot cannot support. A monthly or daily row never becomes invented hourly/request detail.
 
