@@ -65,6 +65,11 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     await request('r1', 'a1', '2026-09-02T14:11:00Z', 'm1', [100, 0, 0, 50], { reasoning_effort: 'high', ...main, ...onProject, client_version: 'later' });
     await request('r2', 'a1', '2026-09-02T14:20:00Z', 'm1', [10, 0, 0, 10], { ...child, ...onProject });
     await request('r3', 'a2', '2026-09-03T14:05:00Z', 'm2', [30, 0, 0, 10], { reasoning_effort: 'low', surface: 'desktop', project_basis: 'none', channel: 'app_server' });
+    // Codex requests outside September: the long-context boundary on the OpenAI threshold and a rate-period boundary event.
+    const onCodex = { account_id: codex, binding_id: codexBinding, provider: 'codex', adapter: 'codex_execution', product: 'codex_cli', service_tier: 'standard' };
+    await request('c1', 'b2', '2026-08-31T14:30:00Z', 'gpt-5.6-sol', [272_000, 0, 0, 0], onCodex);
+    await request('c2', 'b2', '2026-08-31T14:35:00Z', 'gpt-5.6-sol', [272_001, 0, 0, 0], onCodex);
+    await request('c3', 'b3', '2026-07-30T03:00:00Z', 'gpt-5.6-sol', [100_000, 0, 0, 0], { ...onCodex, service_tier: 'priority' });
     // A lower-ranked, later revision of r3 that could not read the model: never canonical, so never a match for Unknown.
     await request('r3', 'a2', '2026-09-03T14:06:00Z', null as unknown as string, [30, 0, 0, 10], { reasoning_effort: 'low', surface: 'desktop', project_basis: 'none' });
 
@@ -87,13 +92,18 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
       outcome: 'succeeded', basis: 'exact', observed_at: '2026-09-02T14:12:00Z', parser_version: '2.0.0', content_hash: sha(randomUUID()) })}`;
 
     // Monthly snapshots: July for two subjects, September partial for the mapped one.
-    const snapshot = (subjectKey: string, month: string, status: string, total: number, calls: number, daily: { date: string; total_tokens: number; calls: number }[], produced: string) =>
+    // The analyzer's stored estimate for the complete July revision: ten calls under the heavy class, so the stored class is provably kept.
+    const storedJuly = { kind: 'inference_equivalent_scenario_estimate', methodology_version: '2026-08-20.1', confidence: 'low',
+      basis: { model_calls: 10, raw_tokens: 1000, average_raw_tokens_per_call: 100, planning_workload_class: 'reasoning_heavy', planning_wh_per_call: 4.32 },
+      energy_kwh: { efficient_production_floor: 0.0024, planning: 0.0432, long_context_upper: 0.33 }, direct_water_liters: { efficient_production_floor: 0.0026, planning: 0.01296, long_context_upper: 0.627 },
+      operational_co2_kg: { clean_energy_floor: 0.0003, planning_us_grid: 0.0170208, long_context_us_grid: 0.13002 } };
+    const snapshot = (subjectKey: string, month: string, status: string, total: number, calls: number, daily: { date: string; total_tokens: number; calls: number }[], produced: string, extra: Record<string, unknown> = {}) =>
       sql`INSERT INTO personal_hub.report_revisions (id, kind, period_key, subject_key, producer_id, idempotency_key, title, produced_at, status, schema_version, coverage, payload, content_hash)
         VALUES (${randomUUID()}, 'usage', ${month}, ${subjectKey}, 'fixture', ${sha(randomUUID())}, ${`${subjectKey} · ${month}`}, ${produced}, ${status}, 1, '{}'::jsonb,
           ${sql.json({ machine_id: subjectKey, machine_name: 'Legacy box', report: { generated_at_local: produced, current: { month, totals: { total_tokens: total, calls, threads: 2 },
-            exclusive_composition: { cached_input_tokens: 100, uncached_input_tokens: total - 300, reasoning_output_tokens: 50, nonreasoning_output_tokens: 150, unclassified_total_only_tokens: 0 }, daily } } })}, ${sha(randomUUID())})`;
+            exclusive_composition: { cached_input_tokens: 100, uncached_input_tokens: total - 300, reasoning_output_tokens: 50, nonreasoning_output_tokens: 150, unclassified_total_only_tokens: 0 }, daily, ...extra } } })}, ${sha(randomUUID())})`;
     await snapshot(subject, '2026-07', 'partial', 900, 9, [{ date: '2026-07-10', total_tokens: 600, calls: 6 }], '2026-07-20T12:00:00Z');
-    await snapshot(subject, '2026-07', 'complete', 1000, 10, [{ date: '2026-07-10', total_tokens: 600, calls: 6 }, { date: '2026-07-20', total_tokens: 400, calls: 4 }], '2026-08-01T12:00:00Z');
+    await snapshot(subject, '2026-07', 'complete', 1000, 10, [{ date: '2026-07-10', total_tokens: 600, calls: 6 }, { date: '2026-07-20', total_tokens: 400, calls: 4 }], '2026-08-01T12:00:00Z', { environmental_estimate: storedJuly });
     await snapshot(otherSubject, '2026-07', 'complete', 500, 5, [], '2026-08-01T12:00:00Z');
     await snapshot(subject, '2026-09', 'partial', 300, 3, [{ date: '2026-09-05', total_tokens: 300, calls: 3 }], '2026-09-10T12:00:00Z');
     await layer.updateReportSubject({ subject_key: subject, account_id: claude, source_timezone: 'America/Chicago' });
@@ -127,7 +137,9 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     assert.deepEqual(all.knowledge.rows.map(r => [r.label, r.accesses, r.distinct_invocations, r.distinct_sessions, r.by_access_kind.read]), [['Fixture vault', 1, 1, 1, 1]]);
     assert.deepEqual(all.pricing_inputs.rows.map(r => [r.model, r.reasoning_effort, r.total_tokens]), [['m1', 'high', 150], ['m2', 'low', 40], ['m1', null, 20]]);
     assert.deepEqual([all.pricing_inputs.coverage.eligible, all.pricing_inputs.coverage.classified], [210, 210]);
-    assert.deepEqual(all.environmental_inputs.cohorts.map(c => [c.account_id, c.month, c.calls, c.raw_tokens, c.basis]), [[claude, '2026-09', 5, 215, 'buckets'], [codex, '2026-09', 4, 400, 'buckets']]);
+    assert.deepEqual(all.environmental_inputs.cohorts.map(c => [c.account_id, c.month, c.selected.calls, c.selected.raw_tokens, c.population.calls, c.basis, c.month_closed]).sort(), [[claude, '2026-09', 5, 215, 5, 'buckets', false], [codex, '2026-09', 4, 400, 4, 'buckets', false]]);
+    assert.deepEqual([all.cost.unpriced_reasons, all.cost.estimated_cost_usd, all.cost.pricing_catalog.versions.openai], [{ model_not_in_catalog: 210 }, 0, '2026-09-13'], 'fixture models are unpriced with their reason, never free');
+    assert.deepEqual([all.environment.basis.model_calls, all.environment.energy_kwh.planning, all.environment.coverage.calls_headline, all.environment.methodology_versions], [9, 0.00306, 9, ['2026-08-20.1']]);
     assert.deepEqual(all.historical.snapshots.map(s => [s.subject_key, s.month, s.status, s.merged, s.reason]), [[subject, '2026-09', 'partial', 'none', 'hourly_ledger_covers_month']]);
 
     // 2. A project filter narrows the headline to request detail and discloses what buckets alone cannot examine.
@@ -138,6 +150,7 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     assert.equal(project.series.points.find(p => p.start === '2026-09-02T05:00:00.000Z')?.total_tokens, 170);
     assert.deepEqual(project.projects.rows.map(r => [r.state, r.total_tokens, r.share]), [['project', 170, 1]]);
     assert.deepEqual([project.agents.summary.main_tokens, project.agents.summary.subagent_tokens, project.agents.summary.unattributed_tokens], [150, 20, 0]);
+    assert.deepEqual([project.environment.basis.model_calls, project.environment.basis.cohorts[0].population.calls, project.environment.energy_kwh.planning], [2, 5, 0.00068], 'a filter sums selected calls under the whole cohort class');
     assert.equal(project.tools.invocations, 2, 'tools follow their calling requests through the project filter');
     assert.equal((await query({ projects: 'no_project' })).headline.total_tokens, 40);
     assert.equal((await query({ projects: `${projectId},no_project` })).headline.total_tokens, 210, 'values within one dimension are ORed');
@@ -174,9 +187,21 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     assert.deepEqual(july.historical.snapshots.map(s => [s.subject_key, s.status, s.merged, s.reason, s.merged_tokens]), [[subject, 'complete', 'days', null, 1000], [otherSubject, 'complete', 'none', 'subject_not_mapped', 0]],
       'the complete revision wins for a closed month and an unmapped subject is listed, not counted');
     assert.deepEqual(july.series.points.filter(p => p.total_tokens > 0).map(p => [p.start, p.total_tokens, p.sources]), [['2026-07-10T05:00:00.000Z', 600, ['snapshot']], ['2026-07-20T05:00:00.000Z', 400, ['snapshot']]]);
-    assert.deepEqual(july.environmental_inputs.cohorts.map(c => [c.account_id, c.month, c.calls, c.basis]), [[claude, '2026-07', 10, 'snapshot']]);
+    assert.deepEqual(july.environmental_inputs.cohorts.map(c => [c.account_id, c.month, c.subject_key, c.selected.calls, c.population.calls, c.basis, c.stored?.methodology_version, c.stored?.planning_workload_class]),
+      [[claude, '2026-07', subject, 10, 10, 'snapshot', '2026-08-20.1', 'reasoning_heavy']], 'the stored estimate is parsed from the envelope');
+    assert.deepEqual([july.environment.basis.model_calls, july.environment.basis.cohorts[0].classification.source, july.environment.basis.cohorts[0].classification.workload_class, july.environment.energy_kwh.planning],
+      [10, 'stored', 'high_context_per_call', 0.0432], 'a wholly selected legacy month carries the analyzer\'s numbers');
+    // Two subjects mapped to one account in one month stay two cohorts and both count.
+    await layer.updateReportSubject({ subject_key: otherSubject, account_id: claude, source_timezone: null });
+    const twoSubjects = await query({ preset: 'custom', start: '2026-07-01T05:00:00Z', end: '2026-08-01T05:00:00Z' });
+    assert.deepEqual([twoSubjects.headline.total_tokens, twoSubjects.headline.calls, twoSubjects.environment.basis.model_calls, twoSubjects.environment.coverage.calls_without_class], [1500, 15, 15, 0]);
+    assert.deepEqual(twoSubjects.environmental_inputs.cohorts.map(c => [c.subject_key, c.selected.calls]).sort(), [[subject, 10], [otherSubject, 5]].sort());
+    assert.equal(twoSubjects.environment.energy_kwh.planning, 0.0449, 'the stored heavy month plus five computed light calls');
+    await layer.updateReportSubject({ subject_key: otherSubject, account_id: null, source_timezone: null });
     const half = await query({ preset: 'custom', start: '2026-07-15T05:00:00Z', end: '2026-08-01T05:00:00Z' });
     assert.deepEqual([half.headline.total_tokens, half.historical.snapshots[0].merged, half.historical.snapshots[0].merged_tokens], [400, 'days', 400], 'a partial month places whole source days only');
+    assert.deepEqual([half.environment.basis.cohorts[0].classification.source, half.environment.basis.cohorts[0].classification.workload_class, half.environment.energy_kwh.planning, half.environment.basis.cohorts[0].methodology_version],
+      ['stored_class', 'high_context_per_call', 0.01728, '2026-08-20.1'], 'a partly selected legacy month keeps its stored class for its selected calls');
     await layer.updateReportSubject({ subject_key: subject, account_id: claude, source_timezone: null });
     const wholeOnly = await query({ preset: 'custom', start: '2026-07-01T05:00:00Z', end: '2026-08-01T05:00:00Z' });
     assert.deepEqual([wholeOnly.headline.total_tokens, wholeOnly.historical.snapshots[0].merged, wholeOnly.series.excludes_snapshot_tokens], [1000, 'month', 1000], 'without a source zone the month is a whole-period fact');
@@ -188,7 +213,15 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     assert.deepEqual([halfUnknownZone.headline.total_tokens, halfUnknownZone.historical.snapshots[0].reason], [0, 'source_timezone_unknown_whole_month_only']);
     assert.equal((await query({ preset: 'custom', start: '2026-07-01T05:00:00Z', end: '2026-08-01T05:00:00Z', models: 'm1' })).historical.snapshots[0].reason, 'filters_unsupported_by_snapshot');
 
-    // 6. Presets anchor to now and mark the interval still being observed.
+    // 6. Pricing inputs carry the context band from each request against the provider threshold and a rate date pinned to the display default zone.
+    const august = await query({ preset: 'custom', start: '2026-08-31T05:00:00Z', end: '2026-09-01T05:00:00Z', accounts: codex });
+    assert.deepEqual(august.pricing_inputs.rows.map(r => [r.provider, r.model, r.context_band, r.rate_date, r.total_tokens]), [['codex', 'gpt-5.6-sol', 'long', '2026-08-31', 272_001], ['codex', 'gpt-5.6-sol', 'short', '2026-08-31', 272_000]]);
+    assert.deepEqual([august.cost.estimated_cost_usd, august.cost.by_model[0].long_context_calls, august.cost.unpriced_tokens], [4.08001, 1, 0], 'exactly the threshold is short, one over is long');
+    const boundary = await query({ preset: 'custom', start: '2026-07-29T00:00:00Z', end: '2026-08-01T00:00:00Z', accounts: codex, timezone: 'UTC' });
+    assert.deepEqual([boundary.pricing_inputs.rows[0].rate_date, boundary.cost.by_model_effort_service_tier[0].pricing_service_tiers, boundary.cost.estimated_cost_usd], ['2026-07-29', ['priority'], 1.25],
+      'a 03:00Z event on July 30 is July 29 in America/Chicago whatever the display zone, so it prices in the launch Priority period');
+
+    // 7. Presets anchor to now and mark the interval still being observed.
     const mtd = await query({ preset: 'month_to_date', start: '', end: '' });
     assert.deepEqual([mtd.scope.range.start, mtd.scope.range.end, mtd.scope.range.anchored_to_now, mtd.headline.total_tokens], ['2026-09-01T05:00:00.000Z', '2026-09-14T20:30:00.000Z', true, 615]);
     assert.equal(mtd.series.points.at(-1)?.state, 'partial');

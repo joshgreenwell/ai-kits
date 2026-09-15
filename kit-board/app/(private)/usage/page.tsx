@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import environmentalFactors from "./environmental-factors.json";
+import { environmentalFactors, legacyEstimateForReport } from "@/lib/environmental-estimate";
 
 interface UsageRow { key: string; total_tokens: number; calls?: number }
 interface CostRow extends UsageRow {
@@ -176,65 +176,8 @@ function formatMonth(month: string) {
 }
 
 function fallbackEnvironmentalEstimate(row: StoredReport): EnvironmentalEstimate {
-  const factors = environmentalFactors;
-  const calls = row.model_calls;
-  const averagePerCall = calls ? row.raw_tokens / calls : 0;
-  const planningClass = averagePerCall >= factors.planning_context_threshold_tokens_per_call ? "reasoning_heavy" : "frontier_typical";
-  const planningWhPerCall = factors.energy_wh_per_call[planningClass];
-  const energy = {
-    efficient_production_floor: calls * factors.energy_wh_per_call.efficient_production_floor / 1000,
-    planning: calls * planningWhPerCall / 1000,
-    long_context_upper: calls * factors.energy_wh_per_call.long_context_upper / 1000,
-  };
-  const water = {
-    efficient_production_floor: calls * factors.direct_water.efficient_production_ml_per_call / 1000,
-    planning: energy.planning * factors.direct_water.planning_wue_liters_per_kwh,
-    long_context_upper: energy.long_context_upper * factors.direct_water.upper_wue_liters_per_kwh,
-  };
-  const carbon = {
-    clean_energy_floor: calls * factors.operational_carbon.clean_energy_kg_per_call,
-    planning_us_grid: energy.planning * factors.operational_carbon.us_grid_kg_per_kwh,
-    long_context_us_grid: energy.long_context_upper * factors.operational_carbon.us_grid_kg_per_kwh,
-  };
-  const comparisons = factors.comparisons;
-  return {
-    kind: "inference_equivalent_scenario_estimate",
-    methodology_version: factors.methodology_version,
-    confidence: "low",
-    basis: {
-      model_calls: calls,
-      raw_tokens: row.raw_tokens,
-      fresh_non_cached_tokens: row.fresh_tokens,
-      cached_input_tokens: row.cached_input_tokens,
-      average_raw_tokens_per_call: averagePerCall,
-      planning_workload_class: planningClass,
-      planning_wh_per_call: planningWhPerCall,
-      long_context_upper_wh_per_call: factors.energy_wh_per_call.long_context_upper,
-    },
-    energy_kwh: energy,
-    direct_water_liters: water,
-    operational_co2_kg: carbon,
-    comparisons_at_planning_scenario: {
-      average_showers: water.planning / comparisons.average_shower_liters,
-      us_home_days_of_electricity: energy.planning / comparisons.us_home_kwh_per_day,
-      smartphone_full_charges: energy.planning / comparisons.smartphone_charge_kwh,
-      urban_tree_seedlings_grown_10_years: carbon.planning_us_grid / comparisons.urban_tree_seedling_kg_co2_over_10_years,
-      average_gasoline_vehicle_miles: carbon.planning_us_grid / comparisons.average_gasoline_vehicle_kg_co2e_per_mile,
-    },
-    reduction_if_calls_drop_10_percent: {
-      calls_avoided: calls * 0.1,
-      energy_kwh_avoided: energy.planning * 0.1,
-      direct_water_liters_avoided: water.planning * 0.1,
-      operational_co2_kg_avoided: carbon.planning_us_grid * 0.1,
-    },
-    compensation_planning: {
-      operational_co2_kg_to_cover: carbon.long_context_us_grid,
-      note: "If compensating, use at least the upper operational scenario and a verified durable-removal method. Tree equivalents are illustrations, not offset certificates.",
-    },
-    scope: factors.scope,
-    assumptions: factors.assumptions,
-    sources: factors.sources,
-  };
+  // The shared method (lib/environmental-estimate.ts) reproduces the analyzer's estimate for a report that predates it.
+  return legacyEstimateForReport({ model_calls: row.model_calls, raw_tokens: row.raw_tokens, fresh_non_cached_tokens: row.fresh_tokens, cached_input_tokens: row.cached_input_tokens });
 }
 
 function aggregateEnvironmental(rows: StoredReport[]) {

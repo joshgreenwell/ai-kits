@@ -5,6 +5,8 @@ import {
   DISPLAY_TIMEZONE, HOUR, PRESETS, RESOLUTIONS, isSupportedTimeZone, localMonthKey, monthBounds, monthsWithin,
   periodsWithin, resolveRange, zonedInstant, type Preset, type Resolution, type ResolvedRange,
 } from './usage-periods';
+import { catalogThresholds, contextBandFor, priceUsage, type ApiEquivalentEstimate, type PricingInputRow } from './usage-pricing';
+import { estimateEnvironment, type CohortInput, type EnvironmentalEstimate, type StoredEstimate } from './environmental-estimate';
 
 /**
  * One filtered usage query layer (USG-012). Every Tokens card reads the same selected scope from
@@ -82,8 +84,8 @@ export type UsageQueryResult = {
   series: { resolution: Resolution; points: SeriesPoint[]; excludes_snapshot_tokens: number };
   by_model: { model: string; total_tokens: number; calls: number; composition: Composition; share: number | null; basis: 'buckets' | 'requests' }[];
   model_series: { model: string; points: { start: string; total_tokens: number; calls: number }[] }[];
-  pricing_inputs: { rows: { model: string | null; reasoning_effort: string | null; service_tier: string | null; speed: string | null; context_window_tokens: number | null;
-      cache_write_ttl: string | null; token_state: string | null; calls: number; composition: Composition; total_tokens: number }[];
+  pricing_inputs: { rows: { provider: string | null; model: string | null; reasoning_effort: string | null; service_tier: string | null; speed: string | null; context_window_tokens: number | null;
+      cache_write_ttl: string | null; token_state: string | null; context_band: 'short' | 'long'; rate_date: string | null; calls: number; composition: Composition; total_tokens: number }[];
     coverage: Coverage; note: string };
   projects: { rows: { state: 'project' | 'unassigned' | 'no_project' | 'unknown'; project_id: string | null; label: string | null; total_tokens: number; calls: number; conversations: number; share: number | null }[];
     coverage: Coverage; registry: Coverage };
@@ -94,7 +96,9 @@ export type UsageQueryResult = {
     by_outcome: Record<string, number>; caller_coverage: Coverage; outcome_coverage: Coverage; unsupported_filters: string[] };
   knowledge: { rows: { source_id: string | null; label: string | null; state: string; accesses: number; distinct_invocations: number; distinct_sessions: number; distinct_agents: number;
       by_access_kind: Record<string, number>; earlier_configuration_accesses: number }[]; distinct_invocations: number; note: string };
-  environmental_inputs: { cohorts: { account_id: string; provider: string; month: string; calls: number; raw_tokens: number; average_raw_tokens_per_call: number | null; basis: 'buckets' | 'snapshot' }[]; coverage: Coverage; note: string };
+  environmental_inputs: { cohorts: CohortInput[]; coverage: Coverage; note: string };
+  /** The API-equivalent estimate over the pricing inputs and the environmental estimate over the cohorts (USG-013). */
+  cost: ApiEquivalentEstimate; environment: EnvironmentalEstimate;
   historical: { snapshots: { subject_key: string; machine_name: string | null; month: string; status: string; produced_at: string | null; account_id: string | null; source_timezone: string | null;
       total_tokens: number; calls: number; threads: number | null; daily_rows: number; merged: 'month' | 'days' | 'none'; reason: string | null; merged_tokens: number; merged_calls: number;
       methodology_version: string | null; pricing_catalog: string | null; estimated_cost_usd: number | null }[]; note: string };
@@ -115,6 +119,18 @@ type Meta = {
   coverage: Map<string, { from: number | null; through: number | null }>;
 };
 
+/** The analyzer's stored estimate for a merged legacy month, when the envelope carries one. */
+function storedEstimate(value: unknown): StoredEstimate | null {
+  const e = value as Row | null;
+  if (!e || typeof e !== 'object' || typeof e.methodology_version !== 'string' || !e.energy_kwh || !e.direct_water_liters || !e.operational_co2_kg) return null;
+  const basis = (e.basis ?? {}) as Row;
+  const triple = (v: unknown, keys: string[]) => Object.fromEntries(keys.map(k => [k, num((v as Row)[k])]));
+  return { methodology_version: e.methodology_version, planning_workload_class: (basis.planning_workload_class as string | null) ?? null,
+    planning_wh_per_call: basis.planning_wh_per_call === undefined || basis.planning_wh_per_call === null ? null : num(basis.planning_wh_per_call),
+    energy_kwh: triple(e.energy_kwh, ['efficient_production_floor', 'planning', 'long_context_upper']) as StoredEstimate['energy_kwh'],
+    direct_water_liters: triple(e.direct_water_liters, ['efficient_production_floor', 'planning', 'long_context_upper']) as StoredEstimate['direct_water_liters'],
+    operational_co2_kg: triple(e.operational_co2_kg, ['clean_energy_floor', 'planning_us_grid', 'long_context_us_grid']) as StoredEstimate['operational_co2_kg'] };
+}
 const emptyComposition = (): Composition => ({ input_fresh: 0, input_cached: 0, input_cache_write: 0, output: 0, reasoning: null, unclassified: 0 });
 const addComposition = (into: Composition, row: Row, prefix = '') => {
   into.input_fresh += num(row[`${prefix}input_fresh`]); into.input_cached += num(row[`${prefix}input_cached`]);
@@ -196,7 +212,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       ...(q.machines.length ? [`source_id = ANY(${p.add(q.machines)}::uuid[])`] : []),
     ];
     const text = `ranked AS (
-      SELECT r.id, r.account_id, r.semantic_key, r.session_hash, r.model_actual, r.activity_at, r.observed_at, r.surface, r.reasoning_effort, r.service_tier, r.speed,
+      SELECT r.id, r.account_id, r.provider, r.semantic_key, r.session_hash, r.model_actual, r.activity_at, r.observed_at, r.surface, r.reasoning_effort, r.service_tier, r.speed,
         r.context_window_tokens, r.cache_write_ttl, r.token_state, r.outcome,
         r.input_fresh_tokens, r.input_cached_tokens, r.input_cache_write_tokens, r.output_tokens, r.reasoning_tokens, r.unclassified_tokens, r.observed_total_tokens,
         r.agent_key, r.agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.agent_identity_basis,
@@ -285,9 +301,9 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const rp = new Params();
     const cte = requestCte(rp, q, accounts, range);
     const requestPeriodRows = accounts.length ? await db.unsafe(`WITH ${cte.text}
-      SELECT r.matches, r.model_actual AS model, ${periodExpr('r.activity_at', q.resolution, rp, tz)} AS period_start, ${compositionSelect()},
+      SELECT r.matches, r.account_id, r.model_actual AS model, ${periodExpr('r.activity_at', q.resolution, rp, tz)} AS period_start, ${compositionSelect()},
         max(r.observed_at) AS last_observed
-      FROM requests r GROUP BY 1, 2, 3 ORDER BY 3, 2`, rp.values) : [];
+      FROM requests r GROUP BY 1, 2, 3, 4 ORDER BY 4, 3`, rp.values) : [];
     const pp = new Params(); const pcte = requestCte(pp, q, accounts, range);
     const projectRows = accounts.length ? await db.unsafe(`WITH ${pcte.text}
       SELECT coalesce(r.project_state, 'unknown') AS state, r.project_id, r.project_label, ${compositionSelect()}
@@ -300,9 +316,15 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         ${compositionSelect()}
       FROM requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY total_tokens DESC NULLS LAST`, ap.values) : [];
     const cp = new Params(); const ccte = requestCte(cp, q, accounts, range);
+    // Context band and rate date are what the catalog prices by; both come from each request, not from a group average.
+    // Each request is compared against both catalogs' thresholds here; the band is chosen once the model's catalog is known.
+    const thresholds = catalogThresholds();
+    const loggedInput = 'coalesce(r.input_fresh_tokens, 0) + coalesce(r.input_cached_tokens, 0) + coalesce(r.input_cache_write_tokens, 0)';
     const pricingRows = accounts.length ? await db.unsafe(`WITH ${ccte.text}
-      SELECT r.model_actual AS model, r.reasoning_effort, r.service_tier, r.speed, r.context_window_tokens, r.cache_write_ttl, r.token_state, ${compositionSelect()}
-      FROM requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY total_tokens DESC NULLS LAST`, cp.values) : [];
+      SELECT r.provider, r.model_actual AS model, r.reasoning_effort, r.service_tier, r.speed, r.context_window_tokens, r.cache_write_ttl, r.token_state,
+        (${loggedInput} > ${cp.add(thresholds.openai)}::bigint) AS over_openai, (${loggedInput} > ${cp.add(thresholds.anthropic)}::bigint) AS over_anthropic,
+        to_char(r.activity_at AT TIME ZONE ${cp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date, ${compositionSelect()}
+      FROM requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ORDER BY total_tokens DESC NULLS LAST`, cp.values) : [];
 
     // 3. Tools, callers, and outcomes: one invocation identity counts once; the newest result names its outcome.
     const tp = new Params(); const tcte = requestCte(tp, q, accounts, range);
@@ -379,6 +401,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         (rv.payload#>>'{report,current,totals,threads}')::float8 AS threads,
         coalesce(rv.payload#>'{report,current,daily}', '[]'::jsonb) AS daily, rv.payload#>'{report,current,exclusive_composition}' AS composition,
         rv.payload#>>'{report,current,environmental_estimate,methodology_version}' AS methodology_version,
+        rv.payload#>'{report,current,environmental_estimate}' AS environmental,
         rv.payload#>>'{report,current,api_equivalent_cost,pricing_catalog,version}' AS pricing_catalog,
         (rv.payload#>>'{report,current,api_equivalent_cost,estimated_cost_usd}')::float8 AS estimated_cost_usd,
         sub.account_id, sub.source_timezone
@@ -386,13 +409,26 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       WHERE rv.kind = 'usage' AND rv.status <> 'failed' AND rv.period_key = ANY($1::text[])
       ORDER BY rv.period_key, rv.subject_key, CASE WHEN rv.period_key = ANY($2::text[]) AND rv.status = 'complete' THEN 0 ELSE 1 END, rv.produced_at DESC, rv.received_at DESC`,
       [months, closedMonths]);
-    // Which (account, source month) pairs the hourly ledger covers at all, over the whole months, not just the range.
+    // The whole-month cohort population per account: what the environmental class is inferred from, unfiltered,
+    // and which (account, source month) pairs the hourly ledger covers at all.
     const mp = new Params();
-    const monthCoverage = accounts.length && months.length ? await db.unsafe(`SELECT t.account_id, to_char(t.hour AT TIME ZONE ${mp.add(tz)}, 'YYYY-MM') AS month
-      FROM personal_hub.token_bucket_revisions t WHERE t.account_id = ANY(${mp.add(accounts)}::text[])
-        AND t.hour >= ${mp.add(new Date(monthBounds(months[0], tz).start).toISOString())}::timestamptz AND t.hour < ${mp.add(new Date(monthBounds(months.at(-1)!, tz).end).toISOString())}::timestamptz
-      GROUP BY 1, 2`, mp.values) : [];
-    const coveredMonths = new Set(monthCoverage.map(r => `${r.account_id}|${r.month}`));
+    const mtz = `${mp.add(tz)}::text`;
+    const monthRows = accounts.length && months.length ? await db.unsafe(`WITH canonical AS (
+        SELECT DISTINCT ON (t.account_id, t.session_hash, t.hour, t.model) t.account_id, t.hour, t.calls, t.total_tokens
+        FROM personal_hub.token_bucket_revisions t WHERE t.account_id = ANY(${mp.add(accounts)}::text[])
+          AND t.hour >= ${mp.add(new Date(monthBounds(months[0], tz).start).toISOString())}::timestamptz AND t.hour < ${mp.add(new Date(monthBounds(months.at(-1)!, tz).end).toISOString())}::timestamptz
+        ORDER BY t.account_id, t.session_hash, t.hour, t.model, t.calls DESC, t.total_tokens DESC, t.observed_at DESC, t.received_at DESC, t.id DESC)
+      SELECT account_id, to_char(hour AT TIME ZONE ${mtz}, 'YYYY-MM') AS month, sum(calls)::float8 AS calls, sum(total_tokens)::float8 AS raw_tokens
+      FROM canonical GROUP BY 1, 2`, mp.values) : [];
+    const cohortPopulation = new Map(monthRows.map(r => [`${r.account_id}|${r.month}`, { calls: num(r.calls), raw_tokens: num(r.raw_tokens) }]));
+    const coveredMonths = new Set(cohortPopulation.keys());
+    const selectedByCohort = new Map<string, { calls: number; raw_tokens: number }>();
+    const addSelected = (accountId: string, month: string, calls: number, tokens: number) => {
+      const entry = selectedByCohort.get(`${accountId}|${month}`) ?? { calls: 0, raw_tokens: 0 };
+      entry.calls += calls; entry.raw_tokens += tokens; selectedByCohort.set(`${accountId}|${month}`, entry);
+    };
+    // Legacy cohorts stay per report subject, so two subjects mapped to one account never overwrite each other.
+    const snapshotCohorts = new Map<string, { account_id: string; month: string; subject_key: string; population: { calls: number; raw_tokens: number }; selected: { calls: number; raw_tokens: number }; stored: StoredEstimate | null }>();
 
     // ---- Assemble. Points are keyed by their aligned interval start, which is what the rows group under.
     const pointIndex = new Map(periods.map((period, index) => [period.aligned, index]));
@@ -404,7 +440,6 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const headline = empty();
     const byModel = new Map<string, { total_tokens: number; calls: number; composition: Composition; basis: 'buckets' | 'requests' }>();
     const modelSeries = new Map<string, Map<number, { total_tokens: number; calls: number }>>();
-    const cohorts = new Map<string, { account_id: string; provider: string; month: string; calls: number; raw_tokens: number; basis: 'buckets' | 'snapshot' }>();
     let lastObservation: number | null = null;
     const observe = (value: unknown) => { const instant = value ? new Date(value as string).getTime() : NaN; if (Number.isFinite(instant)) lastObservation = Math.max(lastObservation ?? 0, instant); };
     const bucketTotals = { tokens: 0, calls: 0 };
@@ -412,11 +447,8 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       const start = new Date(row.period_start as string).getTime();
       const index = pointIndex.get(start);
       bucketTotals.tokens += num(row.total_tokens); bucketTotals.calls += num(row.calls);
-      const month = localMonthKey(new Date(row.day_start as string).getTime(), tz);
-      const cohortKey = `${row.account_id}|${month}`;
-      const cohort = cohorts.get(cohortKey) ?? { account_id: row.account_id as string, provider: byId.get(row.account_id as string)?.provider ?? UNKNOWN, month, calls: 0, raw_tokens: 0, basis: 'buckets' as const };
-      cohort.calls += num(row.calls); cohort.raw_tokens += num(row.total_tokens); cohorts.set(cohortKey, cohort);
       if (useRequests) continue;   // request rows drive the headline; buckets still bound the population below
+      addSelected(row.account_id as string, localMonthKey(new Date(row.day_start as string).getTime(), tz), num(row.calls), num(row.total_tokens));
       observe(row.last_observed);
       headline.total_tokens += num(row.total_tokens); headline.calls += num(row.calls); addComposition(headline.composition, row);
       const model = byModel.get(row.model as string) ?? { total_tokens: 0, calls: 0, composition: emptyComposition(), basis: 'buckets' as const };
@@ -437,6 +469,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       if (!useRequests) continue;
       observe(row.last_observed);
       headline.total_tokens += num(row.total_tokens); headline.calls += num(row.calls); addComposition(headline.composition, row);
+      addSelected(row.account_id as string, localMonthKey(new Date(row.period_start as string).getTime(), tz), num(row.calls), num(row.total_tokens));
       const key = (row.model as string | null) ?? UNKNOWN;
       const model = byModel.get(key) ?? { total_tokens: 0, calls: 0, composition: emptyComposition(), basis: 'requests' as const };
       model.total_tokens += num(row.total_tokens); model.calls += num(row.calls); addComposition(model.composition, row); byModel.set(key, model);
@@ -486,8 +519,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           headline.composition.reasoning = (headline.composition.reasoning ?? 0) + num(composition.reasoning_output_tokens);
           headline.composition.unclassified += num(composition.unclassified_total_only_tokens);
         }
-        const cohortKey = `${accountId}|${month}`;
-        cohorts.set(cohortKey, { account_id: accountId, provider: byId.get(accountId)?.provider ?? UNKNOWN, month, calls: entry.calls, raw_tokens: entry.total_tokens, basis: 'snapshot' });
+        snapshotCohorts.set(`${accountId}|${month}|${entry.subject_key}`, { account_id: accountId, month, subject_key: entry.subject_key, population: { calls: entry.calls, raw_tokens: entry.total_tokens }, selected: { calls: entry.calls, raw_tokens: entry.total_tokens }, stored: storedEstimate(row.environmental) });
         if (entry.source_timezone === tz && q.resolution === 'day') {
           for (const day of daily) {
             const [y, mo, d] = day.date.split('-').map(Number);
@@ -509,7 +541,10 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           const point = points[index]; point.total_tokens += num(day.total_tokens); point.calls += num(day.calls); point.state = 'observed'; mark(index, 'snapshot');
         }
         if (entry.merged === 'none') entry.reason = 'no_whole_source_day_in_range';
-        else headline.composition.unclassified += entry.merged_tokens;
+        else {
+          headline.composition.unclassified += entry.merged_tokens;
+          snapshotCohorts.set(`${accountId}|${month}|${entry.subject_key}`, { account_id: accountId, month, subject_key: entry.subject_key, population: { calls: entry.calls, raw_tokens: entry.total_tokens }, selected: { calls: entry.merged_calls, raw_tokens: entry.merged_tokens }, stored: storedEstimate(row.environmental) });
+        }
       } else entry.reason = !entry.source_timezone ? 'source_timezone_unknown_whole_month_only' : entry.source_timezone !== tz ? 'source_timezone_differs_from_display' : 'hourly_resolution_unsupported';
       snapshots.push(entry);
     }
@@ -532,9 +567,17 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const requestEligible = useRequests ? requestTotals.matching.tokens : bucketTotals.tokens;
     const requestCovered = useRequests ? requestTotals.matching.tokens : requestTotals.all.tokens;
     const detailNote = 'Request detail covers the canonical tokens linked to accepted request records; buckets remain the headline until a collection slice is declared complete and reconciled.';
-    const pricing = pricingRows.map(row => ({ model: (row.model as string | null) ?? null, reasoning_effort: (row.reasoning_effort as string | null) ?? null, service_tier: (row.service_tier as string | null) ?? null,
+    const pricing = pricingRows.map(row => ({ provider: (row.provider as string | null) ?? null, model: (row.model as string | null) ?? null, reasoning_effort: (row.reasoning_effort as string | null) ?? null, service_tier: (row.service_tier as string | null) ?? null,
       speed: (row.speed as string | null) ?? null, context_window_tokens: row.context_window_tokens === null ? null : num(row.context_window_tokens), cache_write_ttl: (row.cache_write_ttl as string | null) ?? null,
-      token_state: (row.token_state as string | null) ?? null, calls: num(row.calls), total_tokens: num(row.total_tokens), composition: (() => { const c = emptyComposition(); addComposition(c, row); return c; })() }));
+      token_state: (row.token_state as string | null) ?? null,
+      context_band: contextBandFor((row.provider as string | null) ?? null, (row.model as string | null) ?? null, { openai: row.over_openai === true, anthropic: row.over_anthropic === true }),
+      rate_date: (row.rate_date as string | null) ?? null,
+      calls: num(row.calls), total_tokens: num(row.total_tokens), composition: (() => { const c = emptyComposition(); addComposition(c, row); return c; })() }));
+    const pricingInputs: PricingInputRow[] = pricing.map(row => ({ provider: row.provider, model: row.model, reasoning_effort: row.reasoning_effort, service_tier: row.service_tier, speed: row.speed,
+      context_window_tokens: row.context_window_tokens, cache_write_ttl: row.cache_write_ttl, token_state: row.token_state, context_band: row.context_band, rate_date: row.rate_date, calls: row.calls,
+      input_fresh: row.composition.input_fresh, input_cached: row.composition.input_cached, input_cache_write: row.composition.input_cache_write, output: row.composition.output,
+      reasoning: row.composition.reasoning, unclassified: row.composition.unclassified, total_tokens: row.total_tokens }));
+    const cost = priceUsage(pricingInputs);
     const pricedEligible = pricing.reduce((n, row) => n + row.total_tokens, 0);
     const pricedWithEvidence = pricing.filter(row => row.model !== null).reduce((n, row) => n + row.total_tokens, 0);
 
@@ -574,8 +617,21 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       accesses: num(row.accesses), distinct_invocations: num(row.distinct_invocations), distinct_sessions: num(row.distinct_sessions), distinct_agents: num(row.distinct_agents),
       by_access_kind: { read: num(row.kind_read), search: num(row.kind_search), write: num(row.kind_write), unknown: num(row.kind_unknown) }, earlier_configuration_accesses: num(row.earlier_configuration_accesses) }));
 
-    const cohortRows = [...cohorts.values()].map(c => ({ ...c, average_raw_tokens_per_call: c.calls > 0 ? c.raw_tokens / c.calls : null })).sort((a, b) => a.month.localeCompare(b.month) || a.account_id.localeCompare(b.account_id));
-    if (useRequests) unsupported.push('Environmental cohorts stay at account and source month; a detail filter does not reclassify the cohort, so filtered calls are reported against the unfiltered cohort inputs.');
+    // Cohorts: every (account, source month) with selected calls, classified from its whole population.
+    const cohortInputs: CohortInput[] = [];
+    for (const [key, selected] of selectedByCohort) {
+      const [accountId, month] = key.split('|');
+      const population = cohortPopulation.get(key);
+      if (!population || selected.calls === 0) continue;
+      cohortInputs.push({ account_id: accountId, provider: byId.get(accountId)?.provider ?? UNKNOWN, month, basis: 'buckets', subject_key: null, population, selected, month_closed: monthBounds(month, tz).end <= now, stored: null });
+    }
+    for (const snapshot of snapshotCohorts.values()) {
+      if (snapshot.selected.calls === 0) continue;
+      cohortInputs.push({ account_id: snapshot.account_id, provider: byId.get(snapshot.account_id)?.provider ?? UNKNOWN, month: snapshot.month, basis: 'snapshot', subject_key: snapshot.subject_key,
+        population: snapshot.population, selected: snapshot.selected, month_closed: monthBounds(snapshot.month, tz).end <= now, stored: snapshot.stored });
+    }
+    if (useRequests) unsupported.push('Environmental cohorts stay at account and source month; a detail filter sums the selected calls under the cohort\'s class and never reclassifies it.');
+    const environment = estimateEnvironment(cohortInputs, { headlineCalls: headline.calls });
     if (q.resolution === 'hour' && snapshots.length) unsupported.push('Monthly snapshots cannot be placed on an hourly series.');
 
     return clone({
@@ -599,8 +655,9 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         outcome_coverage: coverage('invocations', toolTotal, toolTotal, withOutcome, 'Reported invocations with a supported outcome.'), unsupported_filters: toolUnsupported },
       knowledge: { rows: knowledge, distinct_invocations: num(knowledgeTotal.distinct_invocations),
         note: 'Per-source access counts overlap when one invocation touches several sources; distinct_invocations is the unduplicated total. Only rows classified under each install\'s current configuration count.' },
-      environmental_inputs: { cohorts: cohortRows, coverage: coverage('calls', headline.calls, cohortRows.reduce((n, c) => n + c.calls, 0), cohortRows.reduce((n, c) => n + c.calls, 0), 'Cohorts are account and source calendar month over canonical calls; classification and factors belong to the environmental calculation.'),
+      environmental_inputs: { cohorts: cohortInputs, coverage: coverage('calls', headline.calls, environment.coverage.calls_estimated + environment.coverage.calls_without_class, environment.coverage.calls_estimated, 'Cohorts are account and source calendar month; the class comes from the whole month and the selected calls are summed under it.'),
         note: 'Average raw tokens per call is the cohort input the reused method classifies; nothing here converts allowance movement or dollars into calls.' },
+      cost, environment,
       historical: { snapshots, note: 'A snapshot merges only for a mapped account whose hourly ledger has nothing in that month, as a whole month, or by whole source days when its zone is known; otherwise it is listed and not counted.' },
       request_detail: { covered_tokens: requestCovered, covered_calls: useRequests ? requestTotals.matching.calls : requestTotals.all.calls,
         coverage: coverage('tokens', useRequests ? headlineTokens : bucketTotals.tokens, requestEligible, requestCovered, detailNote) },
