@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { TokensOverview } from '@/components/tokens-overview';
+import { CostModelTable, ModelSummaryTable } from '@/components/usage-insight-cards';
+import { UsageSeriesChart } from '@/components/usage-series-chart';
 import type { UsageQueryResult } from '@/lib/usage-query';
 import { DEFAULT_FILTERS, compositionView, seriesSummary } from '@/lib/usage-view';
 
@@ -10,6 +12,12 @@ const point = (start: string, end: string, tokens: number, calls: number, state:
   ({ start, end, total_tokens: tokens, calls, composition: composition(tokens, 0, 0, 0, null), state, sources });
 const coverage = (headline: number, eligible: number, classified: number, unit: 'tokens' | 'calls' | 'invocations' = 'tokens') =>
   ({ unit, headline, eligible, classified, applicable: headline ? eligible / headline : 0, complete: eligible ? classified / eligible : 0, note: '' });
+const priced = (overrides: Partial<UsageQueryResult['cost']['by_model'][number]> = {}): UsageQueryResult['cost']['by_model'][number] => ({
+  model: 'm1', reasoning_effort: '*', service_tier: '*', catalog: 'openai', calls: 7, total_tokens: 1_400, input_tokens: 1_000, cached_input_tokens: 200, cache_write_input_tokens: 100,
+  output_tokens: 400, reasoning_output_tokens: 150, input_cost_usd: 0.5, cached_input_cost_usd: 0.1, cache_write_input_cost_usd: 0.15, reasoning_output_cost_usd: 0.25,
+  other_output_cost_usd: 0.25, estimated_cost_usd: 1.25, priced_tokens: 1_200, unpriced_tokens: 200, unpriced_reasons: { legacy_total_only: 200 },
+  long_context_calls: 0, assumed_standard_calls: 2, assumed_cache_write_ttl_calls: 0, priority_at_standard_calls: 0, pricing_service_tiers: ['standard'], rate_versions: ['fixture-v1'], ...overrides,
+});
 
 /** A synthetic query result the way the layer returns it: two accounts, one project, a merged snapshot, one uncovered day, one partial day. */
 function synthetic(): UsageQueryResult {
@@ -31,21 +39,28 @@ function synthetic(): UsageQueryResult {
       snapshot_tokens: 600, snapshot_calls: 2, last_observation: '2026-09-05T20:00:00.000Z' },
     series: { resolution: 'day', points, excludes_snapshot_tokens: 0 },
     by_model: [{ model: 'm1', total_tokens: 1_400, calls: 7, composition: composition(1_400, 0, 0, 0, null), share: 0.7, basis: 'buckets' }],
-    model_series: [], pricing_inputs: { rows: [], coverage: empty, note: '' },
+    model_series: [{ model: 'm1', points: [{ start: points[0].start, total_tokens: 1_000, calls: 4 }, { start: points[4].start, total_tokens: 400, calls: 3 }] }],
+    pricing_inputs: { rows: [], coverage: coverage(2_000, 1_400, 1_400), note: 'fixture pricing coverage' },
     projects: { rows: [], coverage: empty, registry: empty },
     agents: { rows: [], summary: { main_tokens: 0, subagent_tokens: 0, unattributed_tokens: 0, observed_children: 0, spawns: 0, by_class: {} }, coverage: empty },
     tools: { invocations: 0, by_tool: [], by_caller: [], by_outcome: {}, caller_coverage: coverage(0, 0, 0, 'invocations'), outcome_coverage: coverage(0, 0, 0, 'invocations'), unsupported_filters: [] },
     knowledge: { rows: [], distinct_invocations: 0, note: '' },
     environmental_inputs: { cohorts: [], coverage: coverage(9, 9, 9, 'calls'), note: '' },
-    cost: { kind: 'api_equivalent_estimate', currency: 'USD', estimated_cost_usd: 0, priced_tokens: 0, unpriced_tokens: 0, priced_token_coverage: 0,
-      component_costs_usd: { input_cost_usd: 0, cached_input_cost_usd: 0, cache_write_input_cost_usd: 0, reasoning_output_cost_usd: 0, other_output_cost_usd: 0 },
-      missing_service_tier_calls_assumed_standard: 0, assumed_cache_write_ttl_calls: 0, priority_at_standard_calls: 0, unpriced_reasons: {}, by_model: [], by_reasoning_effort: [], by_service_tier: [], by_model_effort_service_tier: [],
-      pricing_catalog: { version: '', versions: { openai: '', anthropic: '' }, unit_tokens: 1_000_000, long_context_threshold_tokens: { openai: 272000, anthropic: 200000 }, sources: [], provenance: { openai: null, anthropic: null } }, assumptions: [] },
+    cost: { kind: 'api_equivalent_estimate', currency: 'USD', estimated_cost_usd: 1.25, priced_tokens: 1_200, unpriced_tokens: 200, priced_token_coverage: 1_200 / 1_400,
+      component_costs_usd: { input_cost_usd: 0.5, cached_input_cost_usd: 0.1, cache_write_input_cost_usd: 0.15, reasoning_output_cost_usd: 0.25, other_output_cost_usd: 0.25 },
+      missing_service_tier_calls_assumed_standard: 2, assumed_cache_write_ttl_calls: 0, priority_at_standard_calls: 0, unpriced_reasons: { legacy_total_only: 200 },
+      by_model: [priced()], by_reasoning_effort: [priced({ model: '*', reasoning_effort: 'high' })], by_service_tier: [priced({ model: '*', service_tier: 'assumed_standard' })],
+      by_model_effort_service_tier: [priced({ reasoning_effort: 'high', service_tier: 'assumed_standard' })],
+      series: [
+        { ...priced({ calls: 4, total_tokens: 1_000, priced_tokens: 900, unpriced_tokens: 100, estimated_cost_usd: 0.8 }), rate_date: '2026-09-01' },
+        { ...priced({ calls: 3, total_tokens: 400, priced_tokens: 300, unpriced_tokens: 100, estimated_cost_usd: 0.45 }), rate_date: '2026-09-05' },
+      ],
+      pricing_catalog: { version: 'fixture-v1', versions: { openai: 'fixture-v1', anthropic: 'fixture-v1' }, unit_tokens: 1_000_000, long_context_threshold_tokens: { openai: 272000, anthropic: 200000 }, sources: [{ label: 'Fixture catalog', url: 'https://example.test/catalog' }], provenance: { openai: 'fixture', anthropic: null } }, assumptions: ['Fixture pricing assumption.'] },
     environment: { kind: 'inference_equivalent_scenario_estimate', methodology_version: '2026-08-20.1', methodology_versions: ['2026-08-20.1'], confidence: 'low',
       basis: { model_calls: 9, raw_tokens: 2_000, average_raw_tokens_per_call: 222, cohorts: [], classification_unit: '', long_context_upper_wh_per_call: 33, planning_context_threshold_tokens_per_call: 50_000 },
-      energy_kwh: { efficient_production_floor: 0, planning: 0, long_context_upper: 0 }, direct_water_liters: { efficient_production_floor: 0, planning: 0, long_context_upper: 0 }, operational_co2_kg: { clean_energy_floor: 0, planning_us_grid: 0, long_context_us_grid: 0 },
+      energy_kwh: { efficient_production_floor: 0.00216, planning: 0.00306, long_context_upper: 0.297 }, direct_water_liters: { efficient_production_floor: 0.00234, planning: 0.000918, long_context_upper: 0.5643 }, operational_co2_kg: { clean_energy_floor: 0.00027, planning_us_grid: 0.001206, long_context_us_grid: 0.117018 },
       scenarios: [], comparisons_at_planning_scenario: { average_showers: 0, us_home_days_of_electricity: 0, smartphone_full_charges: 0, urban_tree_seedlings_grown_10_years: 0, average_gasoline_vehicle_miles: 0 },
-      reduction_if_calls_drop_10_percent: { calls_avoided: 0, energy_kwh_avoided: 0, direct_water_liters_avoided: 0, operational_co2_kg_avoided: 0 }, compensation_planning: { operational_co2_kg_to_cover: 0, note: '' },
+      reduction_if_calls_drop_10_percent: { calls_avoided: 0.9, energy_kwh_avoided: 0.000306, direct_water_liters_avoided: 0.000092, operational_co2_kg_avoided: 0.000121 }, compensation_planning: { operational_co2_kg_to_cover: 0.117018, note: '' },
       coverage: { calls_estimated: 9, calls_headline: 9, calls_without_class: 0, cohorts_provisional: 0, cohorts_stored: 0, note: '' }, scope: '', assumptions: [], sources: [] },
     historical: { snapshots: [
       { subject_key: 'legacy-box', machine_name: 'Legacy box', month: '2026-09', status: 'partial', produced_at: null, account_id: 'claude-a', source_timezone: 'America/Chicago', total_tokens: 600, calls: 2, threads: null, daily_rows: 1, merged: 'days', reason: null, merged_tokens: 600, merged_calls: 2, methodology_version: '2026-08-20.1', pricing_catalog: null, estimated_cost_usd: null },
@@ -87,7 +102,18 @@ test('the rendered headline, composition, and series agree with the query result
   assert.match(body, /1 stored monthly snapshot in this range is listed and not counted: subject not mapped/);
   assert.match(body, /Monthly snapshots cannot be placed on an hourly series/); assert.match(body, /straddling a range edge/);
   assert.match(body, /Request detail 25% 500 of 2,000 headline tokens carry request records/);
-  assert.match(body, /Next in this order.*API-equivalent cost estimate \(USG-018\), Tokens by model \(USG-018\), Environmental impact \(USG-020\), Project and agent breakdowns \(USG-021\), Tool calls and knowledge sources \(USG-022\)/);
+  assert.match(body, /API-equivalent cost estimate Public list-price estimate/);
+  assert.match(body, /Tokens by model Which recorded models contributed/);
+  assert.match(body, /Environmental impact Inference-equivalent scenarios/);
+  assert.match(body, /Actions you can take/);
+  assert.match(body, /Estimated API equivalent \$1\.25/);
+  assert.match(html, /aria-label="m1, Sep 1, 2026: \$0\.80, 1,000 tokens · 4 calls · 100 unpriced tokens"/, 'cost graph exposes exact model/day evidence');
+  assert.match(html, /aria-label="m1, Tue, Sep 1: 1,000 tokens, 4 calls"/, 'model graph exposes exact interval values');
+  assert.match(body, /Electricity · planning 3\.06 Wh/); assert.match(body, /Direct water · planning 0\.918 mL/); assert.match(body, /Operational carbon · planning 1\.206 g CO₂e/);
+  assert.match(body, /Avoid about 0\.9 comparable calls/);
+  assert.match(html, /href="https:\/\/climeworks\.com\/actnow"/); assert.match(html, /href="https:\/\/store\.b-e-f\.org\/household\/"/); assert.match(html, /href="https:\/\/donate\.rewiringamerica\.org\/campaign\/641970\/donate"/);
+  assert.match(body, /none changes the footprint displayed above/);
+  assert.match(body, /Next in this order.*Project and agent breakdowns \(USG-021\), Tool calls and knowledge sources \(USG-022\)/);
   assert.match(body, /All accounts and projects/, 'the landing view shows no active chips');
   assert.match(body, /America\/Chicago/, 'one display zone is named');
 });
@@ -121,4 +147,20 @@ test('an inconsistent composition withholds shares and a hourly series labels ho
   const inFlight = text(render({ result: hourly, filters: { ...DEFAULT_FILTERS, resolution: 'day', timezone: 'UTC' }, loading: true }));
   assert.match(inFlight, /updating…/); assert.match(inFlight, /Hourly totals in America\/Chicago/, 'the last good result keeps its own resolution and zone while new filters load');
   assert.match(renderToStaticMarkup(<TokensOverview filters={{ ...DEFAULT_FILTERS, resolution: 'hour' }} onFiltersChange={() => {}} result={hourly} vocabulary={vocabulary} error={null} stale={false} loading={false} onRetry={() => {}} now={0} />), /Sat, Sep 5 · 09:00 to 10:00: 100 tokens/);
+});
+
+test('cost/model tables preserve exact values and a large legend starts readable', () => {
+  const result = synthetic();
+  const colors = new Map([['m1', 'var(--chart-1)']]);
+  const cost = text(renderToStaticMarkup(<CostModelTable rows={result.cost.by_model} />));
+  assert.match(cost, /m1 7 1,400 86% \$1\.25/);
+  const models = text(renderToStaticMarkup(<ModelSummaryTable result={result} colors={colors} />));
+  assert.match(models, /m1 7 1,400 70% 1\.4K \/ 0 \/ 0 \/ 0/);
+
+  const legend = renderToStaticMarkup(<UsageSeriesChart categories={[{ key: 'd', label: 'Day', shortLabel: 'D' }]}
+    series={Array.from({ length: 6 }, (_, index) => ({ key: `m${index}`, label: `Model ${index}`, color: `var(--chart-${index % 5 + 1})`, values: [index + 1] }))}
+    unit="tokens" formatValue={value => `${value} tokens`} formatAxis={String} />);
+  assert.match(legend, /Top 5 shown initially/);
+  assert.match(legend, /aria-pressed="false"[^>]*>.*Model 5/s, 'the sixth line remains discoverable in the legend without crowding the initial graph');
+  assert.match(legend, /Show all/);
 });

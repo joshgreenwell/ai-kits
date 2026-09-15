@@ -41,12 +41,15 @@ export type PricingRow = {
   long_context_calls: number; assumed_standard_calls: number; assumed_cache_write_ttl_calls: number; priority_at_standard_calls: number;
   pricing_service_tiers: string[]; rate_versions: string[];
 };
+export type PricingSeriesRow = PricingRow & { rate_date: string | null };
 export type ApiEquivalentEstimate = {
   kind: 'api_equivalent_estimate'; currency: 'USD'; estimated_cost_usd: number; priced_tokens: number; unpriced_tokens: number; priced_token_coverage: number;
   component_costs_usd: { input_cost_usd: number; cached_input_cost_usd: number; cache_write_input_cost_usd: number; reasoning_output_cost_usd: number; other_output_cost_usd: number };
   missing_service_tier_calls_assumed_standard: number; assumed_cache_write_ttl_calls: number; priority_at_standard_calls: number;
   unpriced_reasons: Partial<Record<UnpricedReason, number>>;
   by_model: PricingRow[]; by_reasoning_effort: PricingRow[]; by_service_tier: PricingRow[]; by_model_effort_service_tier: PricingRow[];
+  /** Daily source-price dates by model. Missing dates are gaps in request pricing evidence, not zero-cost days. */
+  series: PricingSeriesRow[];
   pricing_catalog: { version: string; versions: Record<CatalogKey, string>; unit_tokens: number; long_context_threshold_tokens: Record<CatalogKey, number>; sources: { label: string; url: string }[]; provenance: Record<CatalogKey, string | null> };
   assumptions: string[];
 };
@@ -207,18 +210,35 @@ const ANTHROPIC_ASSUMPTIONS = [
   'Dated Claude model ids (a trailing -YYYYMMDD) price as their undated model.',
 ];
 
-/** Prices grouped request detail and returns the analyzer-shaped estimate with its catalog provenance. */
-export function priceUsage(inputs: PricingInputRow[], catalog: PricingCatalog = pricingCatalog): ApiEquivalentEstimate {
+function pricedDimensionRows(inputs: PricingInputRow[], catalog: PricingCatalog) {
   const dimensions = new Map<string, PricingRow>();
   for (const input of inputs) {
     const model = input.model ?? 'unknown', effort = input.reasoning_effort ?? 'unknown', tier = input.service_tier ?? 'assumed_standard';
     const found = input.model === null ? null : findModel(catalog, input.provider, input.model);
-    const key = `${model}|${effort}|${tier}`;
+    const key = `${model}\0${effort}\0${tier}`;
     const row = dimensions.get(key) ?? emptyRow(model, effort, tier, found?.key ?? null);
     priceInto(row, input, catalog);
     dimensions.set(key, row);
   }
-  const rows = [...dimensions.values()].map(finish).sort((a, b) => b.estimated_cost_usd - a.estimated_cost_usd || b.total_tokens - a.total_tokens);
+  return [...dimensions.values()].map(finish).sort((a, b) => b.estimated_cost_usd - a.estimated_cost_usd || b.total_tokens - a.total_tokens);
+}
+
+function priceSeries(inputs: PricingInputRow[], catalog: PricingCatalog): PricingSeriesRow[] {
+  const groups = new Map<string, { rateDate: string | null; rows: PricingInputRow[] }>();
+  for (const input of inputs) {
+    const model = input.model ?? 'unknown';
+    const key = `${input.rate_date ?? 'unknown'}\0${model}`;
+    const group = groups.get(key) ?? { rateDate: input.rate_date, rows: [] };
+    group.rows.push(input);
+    groups.set(key, group);
+  }
+  return [...groups.values()].flatMap(group => aggregate(pricedDimensionRows(group.rows, catalog), 'model').map(row => ({ ...row, rate_date: group.rateDate })))
+    .sort((a, b) => (a.rate_date ?? '').localeCompare(b.rate_date ?? '') || a.model.localeCompare(b.model));
+}
+
+/** Prices grouped request detail and returns the analyzer-shaped estimate with its catalog provenance. */
+export function priceUsage(inputs: PricingInputRow[], catalog: PricingCatalog = pricingCatalog): ApiEquivalentEstimate {
+  const rows = pricedDimensionRows(inputs, catalog);
   const sum = (field: typeof SUM_FIELDS[number]) => rows.reduce((total, row) => total + row[field], 0);
   const unpricedReasons: Partial<Record<UnpricedReason, number>> = {};
   for (const row of rows) for (const [reason, tokens] of Object.entries(row.unpriced_reasons)) unpricedReasons[reason as UnpricedReason] = (unpricedReasons[reason as UnpricedReason] ?? 0) + tokens!;
@@ -231,6 +251,7 @@ export function priceUsage(inputs: PricingInputRow[], catalog: PricingCatalog = 
     missing_service_tier_calls_assumed_standard: sum('assumed_standard_calls'), assumed_cache_write_ttl_calls: sum('assumed_cache_write_ttl_calls'), priority_at_standard_calls: sum('priority_at_standard_calls'),
     unpriced_reasons: unpricedReasons,
     by_model: aggregate(rows, 'model'), by_reasoning_effort: aggregate(rows, 'reasoning_effort'), by_service_tier: aggregate(rows, 'service_tier'), by_model_effort_service_tier: rows,
+    series: priceSeries(inputs, catalog),
     pricing_catalog: {
       version: `openai ${catalog.openai.catalog_version}; anthropic ${catalog.anthropic.catalog_version}`,
       versions: { openai: catalog.openai.catalog_version, anthropic: catalog.anthropic.catalog_version },

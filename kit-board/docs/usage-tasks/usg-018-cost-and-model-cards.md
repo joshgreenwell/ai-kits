@@ -2,7 +2,7 @@
 
 [Backlog index](README.md) · [Direction](../usage-direction.md)
 
-Status: Planned
+Status: Done
 Priority: P1
 Scope: Core
 Stage: 4. Interface
@@ -40,4 +40,10 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+Completed September 15, 2026.
+
+- `components/usage-insight-cards.tsx` adds the API-equivalent cost and tokens-by-model cards immediately after the overall activity chart. Each defaults to a graph, remembers its own graph/table preference in local storage, exposes exact period/model tables, and leaves the selected headline untouched when a line is hidden or a view changes.
+- `components/usage-series-chart.tsx` supplies the shared model-color map, minimal axes, readable top-five default, toggleable complete legend, Show all recovery, gap-preserving lines, and exact values on hover, focus, arrow keys, and tap. The same model color is used by both cards.
+- `lib/usage-pricing.ts` now returns daily per-model cost series using each request's existing America/Chicago source price date. Missing dates remain gaps, and every series row retains priced/unpriced tokens, calls, dimensions, rate versions, and cost components. The aggregate estimate and catalog rules are unchanged.
+- The cost card labels the figure as API-equivalent rather than spend or billing, reports input and catalog pricing coverage, preserves unpriced reasons, and expands to the catalog version, sources, and assumptions. Its tables expose model totals plus recorded effort and applicable/assumed service tier, including Unknown.
+- Focused checks: `node --import tsx --test tests/usage-pricing.test.ts tests/environmental-estimate.test.ts tests/tokens-overview.test.tsx` (15 passed) and `npm run typecheck` passed. Full `npm test` passed 125 tests with six database-gated tests skipped, and `npm run build` completed all 29 static pages and the production route manifest. The database-backed query test asserts the new cost-series reconciliation when `TEST_DATABASE_URL` is available. An authenticated local browser check stopped at the expected login boundary because no verification credential/helper was available; no production database or deployment was changed.

@@ -2,7 +2,7 @@
 
 Created: 2026-09-13
 
-**34 filesystem tasks: 26 core delivery tasks, seven follow-ups, and one optional task awaiting a decision.** USG-001, USG-003, USG-004, USG-005, USG-006, USG-007, USG-008, USG-009, USG-011, USG-012, USG-013, USG-014, USG-015, USG-017, and USG-023 are complete, and USG-002 is in progress; the remaining tasks are unstarted unless their files say otherwise. Creating and maintaining this backlog does not itself run collection, change settings, schedule work, or authorize a deployment.
+**34 filesystem tasks: 26 core delivery tasks, seven follow-ups, and one optional task awaiting a decision.** USG-001, USG-003, USG-004, USG-005, USG-006, USG-007, USG-008, USG-009, USG-011, USG-012, USG-013, USG-014, USG-015, USG-017, USG-018, USG-019, USG-020, and USG-023 are complete, and USG-002 is in progress; the remaining tasks are unstarted unless their files say otherwise. Creating and maintaining this backlog does not itself run collection, change settings, schedule work, or authorize a deployment.
 
 Planning and tracking for this work live in these files. Do not use Jira. The USG identifiers are local backlog IDs, not Linear issue IDs. If the user later chooses Linear, carry these scopes and acceptance criteria across and record the mapping rather than creating duplicate sources of truth.
 
@@ -74,7 +74,7 @@ Every implementation task inherits these requirements:
 | [USG-011: Reconcile historical usage and preserve history when sources are disabled](usg-011-reconcile-historical-ledgers.md) | P0 | [USG-002](usg-002-preserve-history-and-recover-publication.md), [USG-003](usg-003-extend-detail-contract-and-storage.md) | Done |
 | [USG-012: Build one filtered usage query layer with explicit coverage](usg-012-unified-filtered-usage-queries.md) | P0 | [USG-004](usg-004-collect-request-and-pricing-evidence.md), [USG-005](usg-005-collect-agent-lineage.md), [USG-006](usg-006-collect-tool-invocations.md), [USG-007](usg-007-map-project-identities.md), [USG-008](usg-008-collect-knowledge-source-access.md), [USG-011](usg-011-reconcile-historical-ledgers.md) | Done |
 | [USG-013: Reuse pricing and environmental calculations on the unified data](usg-013-reuse-cost-and-environment-calculations.md) | P0 | [USG-001](usg-001-metric-and-source-contract.md), [USG-012](usg-012-unified-filtered-usage-queries.md) | Done |
-| [USG-019: Research concrete environmental reduction and compensation recommendations](usg-019-environmental-action-recommendations.md) | P1 | [USG-001](usg-001-metric-and-source-contract.md) | Planned |
+| [USG-019: Research concrete environmental reduction and compensation recommendations](usg-019-environmental-action-recommendations.md) | P1 | [USG-001](usg-001-metric-and-source-contract.md) | Done |
 
 ## 4. Interface
 
@@ -83,8 +83,8 @@ Every implementation task inherits these requirements:
 | [USG-015: Move configuration into global Settings and establish two Usage subtabs](usg-015-global-settings-and-navigation.md) | P1 | [USG-007](usg-007-map-project-identities.md), [USG-008](usg-008-collect-knowledge-source-access.md), [USG-014](usg-014-truthful-settings-and-collection-health.md) | Done |
 | [USG-016: Build shared filters, chart interactions, and table preferences](usg-016-shared-filters-and-interactive-charts.md) | P1 | [USG-001](usg-001-metric-and-source-contract.md) | Planned |
 | [USG-017: Build the Tokens overview, composition bar, and activity chart](usg-017-tokens-overview-and-daily-volume.md) | P1 | [USG-012](usg-012-unified-filtered-usage-queries.md), [USG-015](usg-015-global-settings-and-navigation.md), [USG-016](usg-016-shared-filters-and-interactive-charts.md) | Done |
-| [USG-018: Add interactive API-cost and tokens-by-model cards](usg-018-cost-and-model-cards.md) | P1 | [USG-013](usg-013-reuse-cost-and-environment-calculations.md), [USG-017](usg-017-tokens-overview-and-daily-volume.md) | Planned |
-| [USG-020: Build environmental impact using existing estimates and actionable recommendations](usg-020-environmental-impact-section.md) | P1 | [USG-013](usg-013-reuse-cost-and-environment-calculations.md), [USG-017](usg-017-tokens-overview-and-daily-volume.md), [USG-019](usg-019-environmental-action-recommendations.md) | Planned |
+| [USG-018: Add interactive API-cost and tokens-by-model cards](usg-018-cost-and-model-cards.md) | P1 | [USG-013](usg-013-reuse-cost-and-environment-calculations.md), [USG-017](usg-017-tokens-overview-and-daily-volume.md) | Done |
+| [USG-020: Build environmental impact using existing estimates and actionable recommendations](usg-020-environmental-impact-section.md) | P1 | [USG-013](usg-013-reuse-cost-and-environment-calculations.md), [USG-017](usg-017-tokens-overview-and-daily-volume.md), [USG-019](usg-019-environmental-action-recommendations.md) | Done |
 | [USG-021: Build project and agent breakdown cards with drill-down](usg-021-project-and-agent-breakdowns.md) | P1 | [USG-005](usg-005-collect-agent-lineage.md), [USG-007](usg-007-map-project-identities.md), [USG-017](usg-017-tokens-overview-and-daily-volume.md) | Planned |
 | [USG-022: Build tool-call summaries and the multi-source knowledge breakdown](usg-022-tool-and-knowledge-cards.md) | P1 | [USG-006](usg-006-collect-tool-invocations.md), [USG-008](usg-008-collect-knowledge-source-access.md), [USG-017](usg-017-tokens-overview-and-daily-volume.md) | Planned |
 | [USG-023: Build account allowance accordions with per-window burn charts](usg-023-allowance-account-accordions.md) | P1 | [USG-009](usg-009-fix-allowance-identity-and-freshness.md), [USG-011](usg-011-reconcile-historical-ledgers.md), [USG-015](usg-015-global-settings-and-navigation.md), [USG-016](usg-016-shared-filters-and-interactive-charts.md) | Done |

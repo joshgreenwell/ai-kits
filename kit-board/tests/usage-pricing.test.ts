@@ -122,9 +122,14 @@ test('the Windows analyzer’s stored September dimension rows are reproduced', 
 });
 
 test('aggregations reconcile to the dimension rows and the catalog provenance travels with the estimate', () => {
-  const estimate = priceUsage([row({}), row({ reasoning_effort: 'low', service_tier: 'standard' }), row({ provider: 'claude', model: 'claude-opus-5', service_tier: 'standard', reasoning: 0 })]);
+  const estimate = priceUsage([row({}), row({ reasoning_effort: 'low', service_tier: 'standard' }), row({ provider: 'claude', model: 'claude-opus-5', service_tier: 'standard', reasoning: 0, rate_date: '2026-09-06' })]);
   const total = (rows: { estimated_cost_usd: number }[]) => Math.round(rows.reduce((n, r) => n + r.estimated_cost_usd, 0) * 1e6) / 1e6;
   assert.deepEqual([total(estimate.by_model), total(estimate.by_reasoning_effort), total(estimate.by_service_tier), total(estimate.by_model_effort_service_tier)], Array(4).fill(estimate.estimated_cost_usd));
+  assert.deepEqual(estimate.series.map(r => [r.rate_date, r.model, r.estimated_cost_usd, r.total_tokens]), [
+    ['2026-09-05', 'gpt-5.6-sol', 24, 2_200_000],
+    ['2026-09-06', 'claude-opus-5', 7.5, 1_100_000],
+  ], 'the graph series keeps source price dates and reconciles model rows within each day');
+  assert.equal(total(estimate.series), estimate.estimated_cost_usd);
   assert.equal(estimate.by_model.find(m => m.model === 'gpt-5.6-sol')?.calls, 2);
   assert.deepEqual(estimate.pricing_catalog.versions, { openai: '2026-09-13', anthropic: '2026-09-14' });
   assert.ok(estimate.pricing_catalog.sources.length >= 8 && estimate.pricing_catalog.provenance.openai?.includes('verbatim'));

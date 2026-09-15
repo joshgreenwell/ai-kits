@@ -8,7 +8,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EmptyState, Stat, StatGroup } from '@/components/kit';
+import { EnvironmentalImpact } from '@/components/environmental-impact';
 import { IntervalBars } from '@/components/usage-chart';
+import { UsageInsightCards } from '@/components/usage-insight-cards';
 import { UsageFilterBar, type FilterOption, type FilterVocabulary } from '@/components/usage-filter-bar';
 import { UsageStatusLine } from '@/components/usage-status-line';
 import { useLiveData } from '@/components/telemetry-shared';
@@ -18,7 +20,7 @@ import {
   STATE_LABELS, compactTokens, compositionView, exactTokens, intervalLabel, parseTokensFilters, percent, queryString, seriesSummary, serializeTokensFilters, whenIn, type TokensFilters,
 } from '@/lib/usage-view';
 
-/** The agreed Tokens card order; the cards after the activity chart arrive in their own tasks and share this filter bar. */
+/** The agreed Tokens card order; every delivered section below shares this filter bar and query result. */
 export const TOKENS_SECTIONS = [
   { key: 'filters', title: 'Filter bar', task: 'USG-017' }, { key: 'total', title: 'Total tokens and composition', task: 'USG-017' }, { key: 'activity', title: 'Tokens over time', task: 'USG-017' },
   { key: 'cost', title: 'API-equivalent cost estimate', task: 'USG-018' }, { key: 'models', title: 'Tokens by model', task: 'USG-018' }, { key: 'environment', title: 'Environmental impact', task: 'USG-020' },
@@ -161,6 +163,9 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
             </CardContent>
           </Card>
 
+          <UsageInsightCards result={result} />
+          <EnvironmentalImpact estimate={result.environment} />
+
           <Card aria-label="Coverage and sources">
             <CardHeader>
               <CardTitle className="text-base">What this scope covers</CardTitle>
@@ -187,7 +192,7 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
           </Card>
 
           <p className="text-muted-foreground text-xs leading-relaxed" data-testid="section-order">
-            Next in this order, sharing the filter bar above: {TOKENS_SECTIONS.filter(s => s.task !== 'USG-017').map(s => `${s.title} (${s.task})`).join(', ')}.
+            Next in this order, sharing the filter bar above: {TOKENS_SECTIONS.filter(s => s.task === 'USG-021' || s.task === 'USG-022').map(s => `${s.title} (${s.task})`).join(', ')}.
           </p>
         </>
       )}

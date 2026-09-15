@@ -217,6 +217,8 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     const august = await query({ preset: 'custom', start: '2026-08-31T05:00:00Z', end: '2026-09-01T05:00:00Z', accounts: codex });
     assert.deepEqual(august.pricing_inputs.rows.map(r => [r.provider, r.model, r.context_band, r.rate_date, r.total_tokens]), [['codex', 'gpt-5.6-sol', 'long', '2026-08-31', 272_001], ['codex', 'gpt-5.6-sol', 'short', '2026-08-31', 272_000]]);
     assert.deepEqual([august.cost.estimated_cost_usd, august.cost.by_model[0].long_context_calls, august.cost.unpriced_tokens], [4.08001, 1, 0], 'exactly the threshold is short, one over is long');
+    assert.deepEqual(august.cost.series.map(r => [r.rate_date, r.model, r.estimated_cost_usd, r.total_tokens]), [['2026-08-31', 'gpt-5.6-sol', 4.08001, 544_001]],
+      'the daily cost series reconciles its model and source price date');
     const boundary = await query({ preset: 'custom', start: '2026-07-29T00:00:00Z', end: '2026-08-01T00:00:00Z', accounts: codex, timezone: 'UTC' });
     assert.deepEqual([boundary.pricing_inputs.rows[0].rate_date, boundary.cost.by_model_effort_service_tier[0].pricing_service_tiers, boundary.cost.estimated_cost_usd], ['2026-07-29', ['priority'], 1.25],
       'a 03:00Z event on July 30 is July 29 in America/Chicago whatever the display zone, so it prices in the launch Priority period');

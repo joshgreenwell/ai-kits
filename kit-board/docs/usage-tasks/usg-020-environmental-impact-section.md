@@ -2,7 +2,7 @@
 
 [Backlog index](README.md) · [Direction](../usage-direction.md)
 
-Status: Planned
+Status: Done
 Priority: P1
 Scope: Core
 Stage: 4. Interface
@@ -39,4 +39,11 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+Completed September 15, 2026 after completing the USG-019 recommendation dependency.
+
+- `components/environmental-impact.tsx` renders the selected query result's planning electricity, direct-water, and operational-carbon quantities side by side, with alternative floor/upper scenarios and familiar comparisons. The section follows Tokens by model and stacks naturally on narrow screens.
+- The visible context states that these are inference-equivalent scenarios with unknown hardware, datacenter, grid, cooling, and water source, and that the range is neither a confidence interval nor a physical guarantee. Expandable detail retains methodology versions, cohort classification, scope, factors, assumptions, and primary sources.
+- Estimation coverage comes from the same filtered result. Calls without a class are named and excluded rather than filled with monthly or allowance data; provisional and stored cohorts remain visible.
+- Actions are visually and semantically separate from the footprint: the existing comparable-workload 10% reduction output, Climeworks future-delivery carbon removal, BEF Jordan River catchment-specific water restoration, and Rewiring America efficiency/electrification support. Link clicks, purchases, contributions, promised delivery, retirement, and completed removal are explicitly distinct and never mutate the estimate.
+- Research provenance is in [USG-019 evidence](../usage-evidence/usg-019-2026-09-15.md); concise product copy is in `lib/environmental-actions.ts`. No compensation-dollar calculator, automated transaction, action ledger, or neutrality claim was added.
+- Focused rendering/calculation checks and TypeScript passed as recorded in USG-018. The test fixture covers units and rounding, selected-scope values, the 10% output, recommendation destinations, and the unchanged card order. No production receipt or deployment is claimed.
