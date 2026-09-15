@@ -166,7 +166,10 @@ export function quotaOutlook(samples: HistoricalQuotaSample[], now = Date.now(),
   const cycles = quotaCycles(samples, now);
   const live = (cycle: QuotaCycle<HistoricalQuotaSample>) => cycle.samples.filter(sample => !sample.history_only);
   const withLive = cycles.filter(cycle => live(cycle).length > 0);
-  const active = [...withLive].reverse().find(cycle => !cycle.completed) ?? withLive.at(-1);
+  // The current reading is the newest live reading, so its cycle is the active one even when readers
+  // disagree on the reset boundary by more than the grouping tolerance.
+  const newestLiveAt = Math.max(...withLive.flatMap(cycle => live(cycle).map(sample => Date.parse(sample.observed_at))));
+  const active = withLive.find(cycle => live(cycle).some(sample => Date.parse(sample.observed_at) === newestLiveAt));
   if (!active) return null;
   const current = quotaPace(live(active), now, cadenceMinutes);
   if (!current) return null;

@@ -77,7 +77,7 @@ Production had 34 stored monthly revisions at audit time. July and August histor
 
 ### Usage & pace — `/usage/live` (now Tokens `/usage` and Allowances `/usage/allowances`)
 
-USG-015 split this view and USG-017 replaced its Tokens half: `/usage` now opens on the filtered overview (`GET /api/usage-query`) with the monthly analyzer reports beneath as their own section, and the allowance sections form the Allowances subtab; `/usage/live` redirects to Allowances. The allowance behaviour below is unchanged.
+USG-015 split this view, USG-017 replaced its Tokens half, and USG-023 rebuilt its Allowances half: `/usage` now opens on the filtered overview (`GET /api/usage-query`) with the monthly analyzer reports beneath as their own section, and `/usage/allowances` opens on one expandable card per account (every window side by side with remaining, reset countdown, outlook state, and observation time; expansion shows each window's burn history, projection, even-pace guide, and forecast explanation), with the model history beneath; `/usage/live` redirects to Allowances. The allowance rules below are unchanged: the current reading is the newest live reading of its own window, the persisted history range changes only the charts, and Spark windows start hidden.
 
 Reads `/api/usage-live`: canonical hourly totals from `token_bucket_revisions`, allowance history through `allowance_percent_view`, and retained report baselines. It currently looks back 35 days; data outside the view's horizon is not deleted.
 
