@@ -61,20 +61,27 @@ export function createTelemetryStore(getDatabase?: () => Sql) {
   // bad clock or a hand-written sample; the contract now rejects such records, and rows that arrived before
   // that rule are ignored here so they cannot pin a forecast card.
 
-  // v1 quota samples and v2 allowance readings share window keys through the compatibility view.
-  // Until the unified usage migration is applied the view does not exist (SQLSTATE 42P01); the v1
-  // samples alone keep the live page working across the deploy-then-migrate window. The view is the
-  // union both readers feed; the v2-only current reading lives in usage-store's loadDashboard.
+  // v1 quota samples and v2 allowance readings share window keys through the compatibility view, which
+  // keeps every producer's history and marks rows from a disabled source, binding, or install
+  // `history_only`: they feed cycle history and are never selected as the current reading. Across the
+  // deploy-then-migrate window the view may lack that column (SQLSTATE 42703: its rows already exclude
+  // disabled producers) or not exist at all (42P01: the v1 samples alone keep the page working).
   async function allowancePercentRows(db: Sql) {
     try {
-      return await db`SELECT id, account_id, source_id, window_key, label, observed_at, used_percent, resets_at, window_minutes, origin, reader, basis
+      return await db`SELECT id, account_id, source_id, window_key, label, observed_at, used_percent, resets_at, window_minutes, origin, reader, basis, history_only
         FROM personal_hub.allowance_percent_view
         WHERE observed_at >= now() - interval '35 days' AND resets_at <= observed_at + make_interval(mins => coalesce(window_minutes, 129600)) + interval '1 day' ORDER BY observed_at`;
     } catch (error) {
-      if ((error as { code?: string }).code !== '42P01') throw error;
+      const code = (error as { code?: string }).code;
+      if (code === '42703') {
+        return await db`SELECT id, account_id, source_id, window_key, label, observed_at, used_percent, resets_at, window_minutes, origin, reader, basis, false AS history_only
+          FROM personal_hub.allowance_percent_view
+          WHERE observed_at >= now() - interval '35 days' AND resets_at <= observed_at + make_interval(mins => coalesce(window_minutes, 129600)) + interval '1 day' ORDER BY observed_at`;
+      }
+      if (code !== '42P01') throw error;
       return await db`SELECT q.id, q.account_id, q.source_id, q.window_key, q.label, q.observed_at, q.used_percent, q.resets_at, q.window_minutes,
-          'quota_samples'::text AS origin, 'v1'::text AS reader, 'reported'::text AS basis
-        FROM personal_hub.quota_samples q JOIN personal_hub.telemetry_sources s ON s.id = q.source_id AND NOT s.disabled
+          'quota_samples'::text AS origin, 'v1'::text AS reader, 'reported'::text AS basis, s.disabled AS history_only
+        FROM personal_hub.quota_samples q JOIN personal_hub.telemetry_sources s ON s.id = q.source_id
         WHERE q.observed_at >= now() - interval '35 days' AND q.resets_at <= q.observed_at + make_interval(mins => coalesce(q.window_minutes, 129600)) + interval '1 day' ORDER BY q.observed_at`;
     }
   }
@@ -94,11 +101,12 @@ export function createTelemetryStore(getDatabase?: () => Sql) {
       // including when a session was copied to another machine. Never sum revisions.
       // A retired or paused connection stops uploading; its measured history stays on the dashboard.
       // The retired v1 scripts and the companion published the same buckets, so hiding one copy
-      // would erase weeks of work rather than a duplicate.
+      // would erase weeks of work rather than a duplicate. The rule is stated once in the
+      // token_bucket_canonical view; it is inlined here so the horizon filter runs before selection.
       db`WITH canonical AS (SELECT DISTINCT ON (t.account_id, t.session_hash, t.hour, t.model) t.*
         FROM personal_hub.token_bucket_revisions t
         WHERE t.hour >= now() - interval '35 days'
-        ORDER BY t.account_id, t.session_hash, t.hour, t.model, t.calls DESC, t.total_tokens DESC, t.observed_at DESC, t.received_at DESC)
+        ORDER BY t.account_id, t.session_hash, t.hour, t.model, t.calls DESC, t.total_tokens DESC, t.observed_at DESC, t.received_at DESC, t.id DESC)
         SELECT account_id, hour, model, sum(input_tokens)::float8 AS input_tokens, sum(cached_tokens)::float8 AS cached_tokens,
           sum(cache_write_tokens)::float8 AS cache_write_tokens, sum(output_tokens)::float8 AS output_tokens,
           sum(total_tokens)::float8 AS total_tokens, sum(calls)::float8 AS calls

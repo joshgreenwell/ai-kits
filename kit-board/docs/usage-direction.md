@@ -134,7 +134,7 @@ These values express environmental cost in physical units. API-equivalent dollar
 
 #### Reuse the current calculation first
 
-The baseline is [environmental-factors.json](<../app/(private)/usage/environmental-factors.json>), methodology `2026-08-20.1`, and the existing environmental estimate/fallback in the [Tokens page source](<../app/(private)/usage/page.tsx>). This direction records those existing assumptions; it does not claim to have revalidated their applicability to every provider or workload.
+The baseline is [environmental-factors.json](<../lib/environmental-factors.json>), methodology `2026-08-20.1`, and the existing environmental estimate/fallback in the [Tokens page source](<../app/(private)/usage/page.tsx>). This direction records those existing assumptions; it does not claim to have revalidated their applicability to every provider or workload.
 
 | Existing calculation | Initial requirement |
 | --- | --- |

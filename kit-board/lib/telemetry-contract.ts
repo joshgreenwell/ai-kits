@@ -41,12 +41,15 @@ const HOUR = 3_600_000;
 const RESET_TOLERANCE = 2 * 60_000;
 const MAX_QUOTA_GAP = 3 * HOUR;
 
-export type QuotaCycle = {
+/** A read-model sample: `history_only` marks an observation whose producer is disabled (kept for history, never current). */
+export type HistoricalQuotaSample = QuotaSample & { history_only?: boolean };
+
+export type QuotaCycle<T extends QuotaSample = QuotaSample> = {
   key: string;
   resetAt: string;
   windowStartedAt: string;
   windowMinutes: number;
-  samples: QuotaSample[];
+  samples: T[];
   completed: boolean;
   discontinuous: boolean;
   measuredHours: number;
@@ -55,9 +58,9 @@ export type QuotaCycle = {
 };
 
 /** Group quota readings into reset-bounded cycles while tolerating small reset timestamp jitter. */
-export function quotaCycles(samples: QuotaSample[], now = Date.now()): QuotaCycle[] {
+export function quotaCycles<T extends QuotaSample>(samples: T[], now = Date.now()): QuotaCycle<T>[] {
   const ordered = [...samples].sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
-  const groups: { anchor: number; reset: number; windowMinutes: number; samples: QuotaSample[] }[] = [];
+  const groups: { anchor: number; reset: number; windowMinutes: number; samples: T[] }[] = [];
   for (const sample of ordered) {
     const reset = Date.parse(sample.resets_at);
     const group = groups.findLast(candidate => candidate.windowMinutes === sample.window_minutes && Math.abs(candidate.anchor - reset) <= RESET_TOLERANCE);
@@ -153,12 +156,22 @@ export function quotaPace(samples: QuotaSample[], now = Date.now(), cadenceMinut
     lastsUntilReset: rate === null ? null : rate === 0 || (exhaustion ?? Infinity) >= reset };
 }
 
-/** Seed a new reset window with recent completed-cycle pace, then yield to live evidence. */
-export function quotaOutlook(samples: QuotaSample[], now = Date.now(), cadenceMinutes = DEFAULT_CADENCE_MINUTES) {
+/**
+ * Seed a new reset window with recent completed-cycle pace, then yield to live evidence. Every sample
+ * shapes the cycle history, but the current reading and its pace come only from samples whose producer
+ * is still enabled: a disabled source's later observation is history, never revived capacity, and an
+ * account with history alone has no outlook.
+ */
+export function quotaOutlook(samples: HistoricalQuotaSample[], now = Date.now(), cadenceMinutes = DEFAULT_CADENCE_MINUTES) {
   const cycles = quotaCycles(samples, now);
-  const active = [...cycles].reverse().find(cycle => !cycle.completed) ?? cycles.at(-1);
+  const live = (cycle: QuotaCycle<HistoricalQuotaSample>) => cycle.samples.filter(sample => !sample.history_only);
+  const withLive = cycles.filter(cycle => live(cycle).length > 0);
+  // The current reading is the newest live reading, so its cycle is the active one even when readers
+  // disagree on the reset boundary by more than the grouping tolerance.
+  const newestLiveAt = Math.max(...withLive.flatMap(cycle => live(cycle).map(sample => Date.parse(sample.observed_at))));
+  const active = withLive.find(cycle => live(cycle).some(sample => Date.parse(sample.observed_at) === newestLiveAt));
   if (!active) return null;
-  const current = quotaPace(active.samples, now, cadenceMinutes);
+  const current = quotaPace(live(active), now, cadenceMinutes);
   if (!current) return null;
 
   const comparable = cycles

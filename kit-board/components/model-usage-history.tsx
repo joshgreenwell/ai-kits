@@ -1,75 +1,143 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { EmptyState, SparkBars, Stat, StatGroup } from '@/components/kit';
+import { useEffect, useMemo, useState } from 'react';
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
+import { Button } from '@/components/ui/button';
+import { Card, CardAction, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
+import { EmptyState, Stat, StatGroup } from '@/components/kit';
+import { UsageSeriesChart, modelColors, type ChartCategory, type ChartSeries } from '@/components/usage-series-chart';
 import { Choice, type LiveData, when } from '@/components/telemetry-shared';
+import { fetchPrivateJson } from '@/lib/fetch-private-json';
 import { quotaCycles, quotaOutlook } from '@/lib/telemetry-contract';
 import { meterLabel } from '@/lib/allowance-meters';
+import type { UsageQueryResult } from '@/lib/usage-query';
 
 type Outlook = NonNullable<ReturnType<typeof quotaOutlook>>;
 type WindowView = { account: LiveData['accounts'][number]; pace: Outlook };
-type ModelSeries = { model: string; calls: number; activeHours: number; share: number; dailyShare: number[] };
+type ModelSeries = { model: string; calls: number; activeHours: number; share: number; dailyShare: number[]; dailyCalls: number[] };
 
 const DAY = 86_400_000;
 const HISTORY_DAYS = 30;
-const MAX_LINES = 6;
-const LINE_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--muted-foreground)'];
+/** Highest effort keeps the model's own colour; each step down the ladder is mixed toward the card. */
+const EFFORT_LADDER = ['minimal', 'low', 'medium', 'high', 'max'];
+const effortRank = (effort: string) => {
+  const index = EFFORT_LADDER.indexOf(effort);
+  return index < 0 ? EFFORT_LADDER.length : index;
+};
 
 function dayKey(at: string | number) {
   const timestamp = typeof at === 'number' ? at : Date.parse(at);
   return new Date(Math.floor(timestamp / DAY) * DAY).toISOString();
 }
 
-function shortDay(at: string) {
-  return new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-}
+const shortDay = (at: string) => new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+const longDay = (at: string) => `${new Date(at).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })} UTC`;
+
+const burnConfig = { points: { label: 'Allowance burn', color: 'var(--primary)' } } satisfies ChartConfig;
 
 /**
- * One chart, one line per model: each model's share of that day's collected calls.
- * Lines share the axis so a shift from one model to another reads as a crossing,
- * which a stack of separate bar strips never shows.
+ * Allowance points burned on each day, on the vendored shadcn/Recharts primitive: hovering, tapping, or
+ * arrowing through the bars gives the exact day and its points. Recharts draws nothing until it has
+ * measured its container, so the same readings are mirrored into the DOM for assistive tech.
  */
-function ModelLines({ days, models }: { days: string[]; models: ModelSeries[] }) {
-  const width = 360, height = 170, left = 30, right = 8, top = 12, bottom = 20;
-  const x = (index: number) => left + (days.length > 1 ? index / (days.length - 1) : 0) * (width - left - right);
-  const y = (value: number) => top + (1 - Math.max(0, Math.min(100, value)) / 100) * (height - top - bottom);
-  const label = models.map(m => `${m.model} ${m.dailyShare.at(-1)?.toFixed(0) ?? 0}% today`).join('; ');
+function BurnBars({ days, values }: { days: string[]; values: number[] }) {
+  const data = days.map((day, index) => ({ day, shortLabel: shortDay(day), label: longDay(day), points: values[index] ?? 0 }));
   return (
-    <div className="grid gap-2">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" className="w-full" aria-label={`Daily share of calls per model over ${days.length} days: ${label}`}>
-        {[0, 50, 100].map(value => (
-          <g key={value}>
-            <line x1={left} x2={width - right} y1={y(value)} y2={y(value)} stroke="var(--border)" strokeDasharray={value === 100 ? undefined : '4 3'} />
-            <text x={left - 4} y={y(value) + 4} textAnchor="end" fill="var(--muted-foreground)" fontSize="10" fontFamily="var(--font-mono)">{value}%</text>
-          </g>
-        ))}
-        {models.map((model, index) => {
-          const color = LINE_COLORS[index % LINE_COLORS.length];
-          const points = model.dailyShare.map((value, day) => `${x(day).toFixed(1)},${y(value).toFixed(1)}`).join(' ');
-          const last = model.dailyShare.length - 1;
-          return (
-            <g key={model.model}>
-              <polyline points={points} fill="none" stroke={color} strokeWidth={index === 0 ? 2 : 1.5} strokeLinejoin="round" strokeLinecap="round" opacity={index >= 5 ? 0.6 : 1}>
-                <title>{model.model}</title>
-              </polyline>
-              <circle cx={x(last)} cy={y(model.dailyShare[last] ?? 0)} r="3" fill={color} />
-            </g>
-          );
-        })}
-      </svg>
-      <div className="text-muted-foreground flex justify-between font-mono text-[10px]">
-        <span>{shortDay(days[0])}</span>
-        <span>share of the day’s calls</span>
-        <span>Today</span>
+    <div className="grid gap-1" data-slot="allowance-burn-bars">
+      <ChartContainer config={burnConfig} className="aspect-auto h-[180px] w-full" aria-label={`Allowance points burned on each of ${days.length} days`}>
+        <BarChart accessibilityLayer data={data} margin={{ left: 4, right: 8, top: 8, bottom: 0 }} barCategoryGap={1}>
+          <CartesianGrid vertical={false} />
+          <XAxis dataKey="shortLabel" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" minTickGap={28} />
+          <YAxis tickLine={false} axisLine={false} width={44} tickMargin={4} tickFormatter={value => `${Number(value).toFixed(0)} pts`} />
+          <ChartTooltip
+            cursor={{ fill: 'var(--muted)', fillOpacity: 0.6 }}
+            content={
+              <ChartTooltipContent
+                hideIndicator
+                labelFormatter={(_, payload) => String((payload?.[0]?.payload as { label?: string } | undefined)?.label ?? '')}
+                formatter={value => (
+                  <div className="flex flex-1 items-center justify-between gap-4">
+                    <span className="text-muted-foreground">Allowance burn</span>
+                    <span className="text-foreground font-mono font-medium tabular-nums">{Number(value).toFixed(1)} pts</span>
+                  </div>
+                )}
+              />
+            }
+          />
+          <Bar dataKey="points" fill="var(--color-points)" fillOpacity={0.7} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+        </BarChart>
+      </ChartContainer>
+      <div className="sr-only">
+        {data.map(row => <span key={row.day} role="img" aria-label={`${row.label}: ${row.points.toFixed(1)} allowance points`} />)}
       </div>
     </div>
   );
 }
 
+/**
+ * Effort lives on request detail only: the hourly ledger records which model answered, never how hard it
+ * was asked to think. The split therefore reads a different population from the rest of this card, and is
+ * fetched only while it is being shown.
+ */
+function useEffortSeries(accountId: string | undefined, enabled: boolean) {
+  const [effort, setEffort] = useState<UsageQueryResult['effort_series'] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (!enabled || !accountId) { setEffort(null); setError(null); setLoading(false); return; }
+    const controller = new AbortController();
+    setLoading(true); setError(null);
+    fetchPrivateJson<UsageQueryResult>(`/api/usage-query?preset=last_30_days&timezone=UTC&resolution=day&accounts=${encodeURIComponent(accountId)}`, controller.signal)
+      .then(result => { if (!controller.signal.aborted) setEffort(result.effort_series); })
+      .catch(() => { if (!controller.signal.aborted) setError('Effort detail is temporarily unavailable. Hide and show the split to retry.'); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [accountId, enabled]);
+  return { effort, error, loading };
+}
+
+/** One line per model and effort, each day's value being that pair's share of the day's request-detail calls. */
+function effortChartSeries(rows: UsageQueryResult['effort_series']['rows'], days: string[]): ChartSeries[] {
+  const index = new Map(days.map((day, position) => [day, position]));
+  const callsByDay = days.map(() => 0);
+  const counted = rows.map(row => {
+    const calls = days.map(() => 0);
+    for (const point of row.points) {
+      const position = index.get(dayKey(point.start));
+      if (position === undefined) continue;
+      calls[position] += point.calls;
+      callsByDay[position] += point.calls;
+    }
+    return { ...row, calls, total: calls.reduce((sum, value) => sum + value, 0) };
+  }).filter(row => row.total > 0);
+
+  const colors = modelColors(counted.map(row => row.model));
+  const ladder = new Map<string, string[]>();
+  for (const row of counted) {
+    const efforts = ladder.get(row.model) ?? [];
+    if (!efforts.includes(row.effort)) efforts.push(row.effort);
+    ladder.set(row.model, efforts);
+  }
+  for (const efforts of ladder.values()) efforts.sort((a, b) => effortRank(a) - effortRank(b) || a.localeCompare(b));
+
+  return counted.map(row => {
+    const efforts = ladder.get(row.model)!;
+    const step = efforts.length - 1 - efforts.indexOf(row.effort);
+    const base = colors.get(row.model) ?? 'var(--muted-foreground)';
+    return {
+      key: `${row.model} ${row.effort}`,
+      label: `${row.model} · ${row.effort}`,
+      color: step === 0 ? base : `color-mix(in oklab, ${base} ${Math.max(40, 100 - step * 22)}%, var(--card))`,
+      values: row.calls.map((calls, position) => (callsByDay[position] ? (calls / callsByDay[position]) * 100 : 0)),
+      details: row.calls.map(calls => `${calls.toLocaleString()} ${calls === 1 ? 'call' : 'calls'}`),
+    };
+  }).sort((a, b) => b.values.reduce((sum, value) => sum + value, 0) - a.values.reduce((sum, value) => sum + value, 0));
+}
+
 export function ModelUsageHistory({ data, windows, now }: { data: LiveData; windows: WindowView[]; now: number }) {
   const [selectedWindowId, setSelectedWindowId] = useState('');
+  const [splitByEffort, setSplitByEffort] = useState(false);
   const options = windows.map(window => ({
     id: `${window.account.id}:${window.pace.window_key}`,
     // The same canonical meter title the cards use, so a reader switch never renames a choice.
@@ -79,6 +147,7 @@ export function ModelUsageHistory({ data, windows, now }: { data: LiveData; wind
   const selected = options.find(option => option.id === selectedWindowId) ?? options[0];
   const selectedAccountId = selected?.window.account.id;
   const selectedWindowKey = selected?.window.pace.window_key;
+  const { effort, error: effortError, loading: effortLoading } = useEffortSeries(selectedAccountId, splitByEffort);
 
   const history = useMemo(() => {
     if (!selectedAccountId || !selectedWindowKey) return null;
@@ -118,6 +187,7 @@ export function ModelUsageHistory({ data, windows, now }: { data: LiveData; wind
       calls: values.calls,
       activeHours: values.activeHours.size,
       share: totalCalls ? values.calls / totalCalls * 100 : 0,
+      dailyCalls: days.map(day => values.daily.get(day) ?? 0),
       dailyShare: days.map(day => {
         const dailyTotal = callsByDay.get(day) ?? 0;
         return dailyTotal ? (values.daily.get(day) ?? 0) / dailyTotal * 100 : 0;
@@ -134,6 +204,20 @@ export function ModelUsageHistory({ data, windows, now }: { data: LiveData; wind
     };
   }, [data, now, selectedAccountId, selectedWindowKey]);
 
+  const categories: ChartCategory[] = useMemo(() => (history ?? { days: [] }).days.map(day => ({ key: day, label: longDay(day), shortLabel: shortDay(day) })), [history]);
+  const modelSeries: ChartSeries[] = useMemo(() => {
+    if (!history) return [];
+    const colors = modelColors(history.models.map(model => model.model));
+    return history.models.map(model => ({
+      key: model.model,
+      label: model.model,
+      color: colors.get(model.model) ?? 'var(--muted-foreground)',
+      values: model.dailyShare,
+      details: model.dailyCalls.map(calls => `${calls.toLocaleString()} ${calls === 1 ? 'call' : 'calls'}`),
+    }));
+  }, [history]);
+  const splitSeries = useMemo(() => (effort && history ? effortChartSeries(effort.rows, history.days) : []), [effort, history]);
+
   if (!selected || !history) {
     return (
       <EmptyState
@@ -143,8 +227,7 @@ export function ModelUsageHistory({ data, windows, now }: { data: LiveData; wind
     );
   }
 
-  const charted = history.models.slice(0, MAX_LINES);
-  const others = history.models.slice(MAX_LINES);
+  const showingSplit = splitByEffort && splitSeries.length > 0;
   return (
     <Card className="gap-0 overflow-hidden py-0">
       <CardHeader className="p-4">
@@ -162,65 +245,69 @@ export function ModelUsageHistory({ data, windows, now }: { data: LiveData; wind
         </CardAction>
       </CardHeader>
 
-      <StatGroup className="border-border border-y">
+      <StatGroup className="border-border border-t">
         <Stat label="Observed burn" value={`${history.allowancePoints.toFixed(1)} pts`} caption="positive allowance changes in view" />
         <Stat label="Reset cycles" value={history.cycles.length.toLocaleString()} caption="current and completed cycles represented" />
         <Stat label="Models active" value={history.models.length.toLocaleString()} caption={`${history.totalCalls.toLocaleString()} collected calls`} />
       </StatGroup>
 
-      <CardContent className="grid gap-5 p-4">
-        <div className="grid gap-2 rounded-lg border p-4">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-semibold">Allowance burn by day</h3>
-              <p className="text-muted-foreground text-xs">Positive provider-observed changes; reset drops are cycle boundaries, not negative burn.</p>
-            </div>
-            <span className="text-muted-foreground font-mono text-[10px]">Last reading {when(history.latestQuotaAt)}</span>
+      {/* Full-bleed sections divided by a single rule, the way every other data card here is built: a
+          rounded ring inside a rounded card reads as a second, nested container. */}
+      <div className="border-border grid gap-3 border-t p-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold">Allowance burn by day</h3>
+            <p className="text-muted-foreground text-xs">Positive provider-observed changes; reset drops are cycle boundaries, not negative burn.</p>
           </div>
-          <SparkBars
-            values={history.allowance}
-            markIndex={history.allowance.length - 1}
-            axis={[shortDay(history.days[0]), `${Math.max(...history.allowance).toFixed(1)} pts peak`, 'Today']}
-            formatValue={value => `${value.toFixed(1)} pts`}
-          />
+          <span className="text-muted-foreground font-mono text-[10px]">Last reading {when(history.latestQuotaAt)}</span>
+        </div>
+        <BurnBars days={history.days} values={history.allowance} />
+      </div>
+
+      <div className="border-border grid gap-3 border-t p-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold">Model share by day</h3>
+            <p className="text-muted-foreground text-xs">
+              {!splitByEffort
+                ? 'One line per model. Use the keys below the chart to take a model out of the picture or bring it back.'
+                : showingSplit
+                  ? 'One line per model and reasoning effort, as a share of the day’s request-detail calls — a smaller population than the collected calls above.'
+                  : 'Splitting by reasoning effort needs request detail, which this account has not collected yet.'}
+            </p>
+          </div>
+          <Button type="button" variant="outline" size="sm" aria-pressed={splitByEffort} onClick={() => setSplitByEffort(value => !value)}>
+            {effortLoading ? 'Loading effort…' : splitByEffort ? 'Hide effort' : 'Show effort'}
+          </Button>
         </div>
 
-        {history.models.length ? (
-          <div className="grid gap-3 rounded-lg border p-4">
-            <div>
-              <h3 className="text-sm font-semibold">Model share by day</h3>
-              <p className="text-muted-foreground text-xs">One line per model; the top {charted.length} by calls in view{others.length ? `, ${others.length} more listed below` : ''}.</p>
-            </div>
-            <ModelLines days={history.days} models={charted} />
-            <ul className="grid gap-1.5 sm:grid-cols-2">
-              {charted.map((model, index) => (
-                <li key={model.model} className="flex min-w-0 items-center gap-2 text-sm">
-                  <i aria-hidden className="block h-0.5 w-4 shrink-0 rounded" style={{ background: LINE_COLORS[index % LINE_COLORS.length] }} />
-                  <span className="truncate font-mono text-xs" title={model.model}>{model.model}</span>
-                  <Badge variant="soft">{model.share.toFixed(1)}%</Badge>
-                  <span className="text-muted-foreground font-mono text-[10px]">{model.activeHours}h active</span>
-                </li>
-              ))}
-              {others.map(model => (
-                <li key={model.model} className="text-muted-foreground flex min-w-0 items-center gap-2 text-sm">
-                  <i aria-hidden className="block h-0.5 w-4 shrink-0 rounded bg-border" />
-                  <span className="truncate font-mono text-xs" title={model.model}>{model.model}</span>
-                  <Badge variant="outline">{model.share.toFixed(1)}%</Badge>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : (
+        {effortError && splitByEffort ? <p className="text-warning text-xs">{effortError}</p> : null}
+
+        {!history.models.length ? (
           <EmptyState
             title="No local model calls in this range"
             description="Allowance history is available, but this account has no model-attributed local calls in the same 30-day view."
           />
+        ) : splitByEffort && !showingSplit && !effortLoading && !effortError ? (
+          <EmptyState
+            title="No effort detail for this account"
+            description={`Reasoning effort is recorded on request detail, which the hourly ledger behind the lines above does not carry. ${effort ? `Request detail covers ${(effort.coverage.applicable * 100).toFixed(0)}% of the tokens in this range, and none of it reports an effort yet.` : ''} The split appears once a collector posts request records for this account.`}
+          />
+        ) : (
+          <UsageSeriesChart
+            key={showingSplit ? 'effort' : 'model'}
+            categories={categories}
+            series={showingSplit ? splitSeries : modelSeries}
+            unit="Share of the day’s calls"
+            formatValue={value => `${value.toFixed(1)}%`}
+            formatAxis={value => `${Math.round(value)}%`}
+          />
         )}
+      </div>
 
-        <p className="text-muted-foreground text-xs leading-relaxed">
-          Model lines describe activity observed alongside this account&apos;s allowance window. They do not claim that a model consumed the same share of allowance; pooled provider limits cannot be divided reliably with the data collected today.
-        </p>
-      </CardContent>
+      <p className="text-muted-foreground border-border border-t p-3 text-xs leading-relaxed">
+        Model lines describe activity observed alongside this account&apos;s allowance window. They do not claim that a model consumed the same share of allowance; pooled provider limits cannot be divided reliably with the data collected today.
+      </p>
     </Card>
   );
 }

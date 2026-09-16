@@ -39,7 +39,11 @@ cargo install --path crates/observatory --locked
 
 Upgrades are the package manager's job. The companion has no self-update code; the Observatory
 shows "update available" when an install's reported version is behind
-`companion.latest_version`.
+`companion.latest_version`. A tagged install updates with `brew upgrade
+joshgreenwell/tap/observatory` or `scoop update observatory`. After either upgrade, run
+`observatory --config-dir <the-existing-directory> service install`, `run`, and `doctor`; do not
+reconnect a working install. For the current unreleased checkout and platform-specific rollback
+steps, use [the operating guide](../docs/usage-collection.md#update-an-existing-windows-install).
 
 ## Commands
 

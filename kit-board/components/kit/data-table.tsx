@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { ArrowDownIcon, ArrowUpIcon, ChevronsUpDownIcon } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import {
   Table,
   TableBody,
@@ -29,15 +30,14 @@ export type Column<T> = {
 type SortState = { id: string; dir: "asc" | "desc" } | null
 
 /**
- * The ledger.
+ * The ledger: a shadcn table, not a lookalike of one.
  *
- * Density comes from spacing, not from stripping structure: 6px rows, zebra
- * fill instead of a rule under every line, a sticky header, and units in the
- * header rather than repeated in every cell.
- *
- * Rows are keyboard navigable with a roving tabindex - arrows move, Home and
- * End jump, Enter or Space selects - because a table you can only reach with a
- * mouse is not usable for the people who live in this screen.
+ * The primitives in components/ui/table carry the whole appearance - the rule
+ * under each row, the hover fill, the header weight - so a ledger here and a
+ * table anywhere else in the app cannot drift apart. What this adds on top is
+ * only behaviour: a sticky header, sortable columns whose control is an
+ * ordinary ghost button, and a roving tabindex so rows are reachable with
+ * arrows, Home and End rather than with a mouse alone.
  */
 export function DataTable<T>({
   columns,
@@ -124,20 +124,19 @@ export function DataTable<T>({
                 <TableHead
                   key={col.id}
                   style={col.width ? { width: col.width } : undefined}
-                  className={cn(
-                    "bg-card sticky top-0 z-[1] uppercase tracking-wide",
-                    col.numeric && "text-right"
-                  )}
+                  className={cn("bg-card sticky top-0 z-[1]", col.numeric && "text-right")}
                   aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
                 >
                   {sortable ? (
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="xs"
                       onClick={() => toggleSort(col.id)}
                       className={cn(
-                        "focus-visible:ring-ring/50 -mx-1 inline-flex items-center gap-1 rounded-xs px-1 outline-none focus-visible:ring-[3px]",
+                        "-mx-2 font-semibold",
                         col.numeric && "flex-row-reverse",
-                        active ? "text-primary" : "hover:text-foreground"
+                        active ? "text-foreground" : "text-muted-foreground"
                       )}
                     >
                       {col.header}
@@ -148,9 +147,9 @@ export function DataTable<T>({
                           <ArrowDownIcon className="size-3" />
                         )
                       ) : (
-                        <ChevronsUpDownIcon className="size-3 opacity-40" />
+                        <ChevronsUpDownIcon className="size-3 opacity-50" />
                       )}
-                    </button>
+                    </Button>
                   ) : (
                     col.header
                   )}
@@ -172,10 +171,7 @@ export function DataTable<T>({
                 data-state={selected ? "selected" : undefined}
                 onFocus={() => setFocusIndex(i)}
                 onClick={() => onSelect?.(row)}
-                className={cn(
-                  "even:bg-foreground/[0.03] border-b-0",
-                  onSelect && "cursor-pointer"
-                )}
+                className={cn(onSelect && "cursor-pointer")}
               >
                 {columns.map((col) => (
                   <TableCell

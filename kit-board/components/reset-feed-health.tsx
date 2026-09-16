@@ -64,7 +64,7 @@ export function ResetFeedHealth() {
           <CardTitle className="text-base">Feed health &amp; provenance</CardTitle>
           <CardDescription>
             Daily cloud check, and a cached check when the reset calendar opens. No AI calls. The
-            calendar and record live under <Link href="/usage/resets" className="underline underline-offset-4">Usage → Reset calendar</Link>.
+            calendar and record live under <Link href="/usage/allowances#reset-calendar" className="underline underline-offset-4">Usage → Reset calendar</Link>.
           </CardDescription>
         </CardHeader>
         {feeds === null ? (

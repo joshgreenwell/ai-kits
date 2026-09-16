@@ -34,7 +34,7 @@ Apply the common completion requirements in the [backlog index](README.md). This
 ## Starting points
 
 - [docs/usage-direction.md](<../../docs/usage-direction.md>)
-- [app/(private)/usage/environmental-factors.json](<../../app/(private)/usage/environmental-factors.json>)
+- [lib/environmental-factors.json](<../../lib/environmental-factors.json>)
 
 ## Execution record
 

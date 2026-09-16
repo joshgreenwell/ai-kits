@@ -43,6 +43,66 @@ For a **new** install, after issuing a code in Connections:
 
 Do not re-pair a working install for troubleshooting. After changing cadence in Settings, apply it to Task Scheduler with `& $companionExe --config-dir $companionDir service install`. Normal `run` fetches collection settings but does not rewrite the OS schedule. Inspect the next scheduled run and the detailed-report result separately.
 
+### Update an existing Windows install
+
+An update keeps `companion.json`, the install key, SQLite checkpoints, receipts, inbox, and detailed-report state. Do **not** run `connect` or delete the config directory. For a tagged release installed through Scoop, use `scoop update observatory`, then run the three commands below with the path returned by `scoop which observatory`.
+
+Until a tagged release exists, build the current checkout and replace the executable already named by Task Scheduler. First confirm the companion task is not running and preserve the old binary as a rollback copy:
+
+```powershell
+cd C:\path\to\ai-kits\kit-board\companion
+cargo test --workspace
+cargo build --release --locked
+
+$companionDir = Join-Path $env:USERPROFILE '.config\personal-hub\companion'
+$companionExe = Join-Path $env:LOCALAPPDATA 'Programs\observatory\observatory.exe'
+$backupDir = Join-Path (Split-Path $companionExe) 'backups'
+New-Item -ItemType Directory -Force $backupDir | Out-Null
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+Copy-Item $companionExe (Join-Path $backupDir "observatory-before-update-$stamp.exe")
+Copy-Item .\target\release\observatory.exe $companionExe -Force
+
+& $companionExe --config-dir $companionDir service install
+& $companionExe --config-dir $companionDir run
+& $companionExe --config-dir $companionDir doctor
+```
+
+`service install` is intentionally repeated after replacing the binary: it refreshes the task command and cadence, reads the task back, and immediately reports the new build's capabilities. The first run after a parser-generation change replays retained source files and can take longer than a normal hourly run.
+
+## macOS install, update, and run
+
+Use the same config directory for every command. An update must reuse the existing directory; it must not pair a second install.
+
+For a tagged Homebrew release:
+
+```bash
+brew update
+brew upgrade joshgreenwell/tap/observatory
+
+companion_dir="$HOME/.config/personal-hub/companion"
+observatory --config-dir "$companion_dir" service install
+observatory --config-dir "$companion_dir" run
+observatory --config-dir "$companion_dir" doctor
+```
+
+If Homebrew reports that the formula is not installed, use `brew install joshgreenwell/tap/observatory`. Only a new, unpaired Mac then needs `connect` and `setup` from the installation steps above.
+
+To install the current unreleased checkout instead of the last tagged release:
+
+```bash
+cd /path/to/ai-kits/kit-board/companion
+cargo test --workspace
+cargo install --path crates/observatory --locked --force
+
+companion_exe="$HOME/.cargo/bin/observatory"
+companion_dir="$HOME/.config/personal-hub/companion"
+"$companion_exe" --config-dir "$companion_dir" service install
+"$companion_exe" --config-dir "$companion_dir" run
+"$companion_exe" --config-dir "$companion_dir" doctor
+```
+
+The LaunchAgent installed by `service install` pins both that executable and `--config-dir`. Keep the checkout update (`git pull`, merge, or branch switch) separate from the install command so local changes are reviewed before the binary is replaced. The first upgraded run may be slow while newer parsers replay retained Claude and Codex histories; wait for its JSON result and require `"ok": true`, no retained outbox, a non-pending schedule, and no unexplained `failed` or `partial` state from an enabled execution adapter before considering the update complete.
+
 The supported local footprint is the installed `observatory` binary, one companion config/state directory, the detailed adapter/analyzer and protected usage-publisher credential when enabled, and the provider-owned `.codex` / `.claude` stores that are the source data. The companion config directory contains its JSON config, SQLite checkpoint/receipt state, lock, inbox, logs, safety backups, and detailed-report retry state; these are one managed runtime tree, not separate installs.
 
 The directory boundary must be verified per machine: `%LOCALAPPDATA%\PersonalObservatory` is the CLI's Windows **default v2** directory. Do not delete a directory by its name. This Windows install uses the explicit profile-root directory above.
@@ -103,7 +163,7 @@ The Claude statusline reader moved out of `claude_execution` into the `claude_ac
 
 **Attainable refresh, per reader.** The statusline reader observes on every Claude Code render while a session is in use, writes on a changed value or every fifteen minutes, and uploads at the collection cadence. The Codex embedded reader observes on each rollout write and uploads at the cadence. The v1 browser reader runs an hourly alarm and reads through a signed-in `claude.ai` tab that must be open in that browser profile: usage it cannot parse posts an empty sample set, and with no such tab it posts nothing at all. `oauth_usage`, `app_server`, `web_backend`, and both Cursor readers are stubs reporting `not_implemented`; selecting one does not make it collect.
 
-**Freshness, selection, and meters.** One rule decides staleness everywhere: a reading is stale when its age exceeds `max(120, 2 × cadence_minutes + 15)` minutes, or when its own window has already reset. The companion's `no_recent_samples` uses the same formula. The current reading per account and meter is the newest `observed_at` among enabled bindings of live installs whose reader is one of `statusline`, `embedded`, or `web_backend`; an exact tie falls to that reader order, and an unrecognized reader never wins. That selection is the v2-only read model behind `/api/usage-v2`; the live page's cards read the compatibility view, which is the union of those readings with the v1 browser samples (reader `v1`). The producer's meter key, label, duration, unit, reset anchor, raw window id, and scope are stored untouched; card titles come from a canonical label per meter key, so a label difference between readers never renames a card. Between readers, `five_hour` and `seven_day` match; a model-scoped weekly window is `seven_day_<provider key>` from the statusline and `seven_day_<slug of the display name>` from the v1 browser normalizer, so the two can differ and then show as separate meters until USG-010 emits statusline-compatible keys; `extra_usage` is a browser-only meter.
+**Freshness, selection, and meters.** One rule decides staleness everywhere: a reading is stale when its age exceeds `max(120, 2 × cadence_minutes + 15)` minutes, or when its own window has already reset. The companion's `no_recent_samples` uses the same formula. The current reading per account and meter is the newest `observed_at` among enabled bindings of live installs whose reader is one of `statusline`, `embedded`, or `web_backend`; an exact tie falls to that reader order, and an unrecognized reader never wins. That selection is the v2-only read model behind `/api/usage-v2`; the live page's cards read the compatibility view, which is the union of those readings with the v1 browser samples (reader `v1`), keeps rows from a disabled source, binding, or install as `history_only` (cycle history, never the current reading), and shows a v1 sample that a v2 reading duplicates exactly once. The producer's meter key, label, duration, unit, reset anchor, raw window id, and scope are stored untouched; card titles come from a canonical label per meter key, so a label difference between readers never renames a card. Between readers, `five_hour` and `seven_day` match; a model-scoped weekly window is `seven_day_<provider key>` from the statusline and `seven_day_<slug of the display name>` from the v1 browser normalizer, so the two can differ and then show as separate meters until USG-010 emits statusline-compatible keys; `extra_usage` is a browser-only meter.
 
 **Receipts are not readings.** An install's and a source's `last_seen_at` mean the collector contacted the server, and a coverage-only envelope advances them. The meter's own freshness comes from the ledgers instead: Connections shows each binding's newest `last_observation.allowance` (with its reset and reader) and `last_received.allowance` beside "last contact", each browser source the same way, and each run's `accepted_by_type` counts accepted, duplicate, and rejected records per record type (plus `invalid` for records that failed to parse), merged key-wise across the envelopes of one run.
 
@@ -156,6 +216,6 @@ The experimental cloud/uncollected token-equivalent card and calibration control
 
 The active source allowlist, provider mappings, calendar behavior, normalization, failure handling, and verification evidence live in [reset feeds](reset-feeds.md). Keep that document authoritative instead of copying provider-specific instructions here. Current concurrent source changes select NextReset for Codex and retain Reset Radar for Claude; deployment of those changes was not verified by this usage audit.
 
-Checked-in Vercel configuration schedules a daily feed check at 13:15 UTC. Opening the reset calendar (`/usage/resets`) or Settings → Reset feeds can request a refresh, constrained by a shared 30-minute lease. The v2 companion does not implement hourly feed refresh; that old claim referred to the v1 collector's `--refresh-feeds` option.
+Checked-in Vercel configuration schedules a daily feed check at 13:15 UTC. Opening the reset calendar (`/usage/allowances#reset-calendar`) or Settings → Reset feeds can request a refresh, constrained by a shared 30-minute lease. The v2 companion does not implement hourly feed refresh; that old claim referred to the v1 collector's `--refresh-feeds` option.
 
 Feed fetching and normalization use no model calls. These are attributed public reset/announcement claims, never personal allowance observations, token counts, or permission to redeem a credit. Retained source snapshots are separate historical evidence.

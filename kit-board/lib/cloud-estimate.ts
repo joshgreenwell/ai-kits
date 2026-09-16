@@ -3,7 +3,7 @@ import type { QuotaSample } from './telemetry-contract';
 
 const HOUR = 3_600_000, DAY = 24 * HOUR;
 export const calibrationMethod = 'local-equivalent-v1-prorated-hours';
-export type EstimateQuota = QuotaSample & { id: string; account_id: string };
+export type EstimateQuota = QuotaSample & { id: string; account_id: string; history_only?: boolean };
 type Hour = { account_id: string; hour: string; total_tokens: number };
 type Source = { id: string; account_id: string; mode: string; disabled: boolean; last_seen_at: string | null;
   coverage: { since?: string; unavailable_roots?: number; malformed_lines?: number } | null };
@@ -92,7 +92,8 @@ export function calibrationPreview(data: EstimateData, accountId: string, startI
 export function cloudEstimate(data: EstimateData, accountId: string, calibrations: Calibration[], now = Date.now()) {
   const fail = (reason: string) => ({ ok: false as const, reason });
   if (!data.accounts.some(a => a.id === accountId && a.provider === 'claude')) return fail('Cloud estimates currently support Claude accounts.');
-  const quotas = data.quotas.filter(q => q.account_id === accountId && allModelWindow(q));
+  // History from a disabled producer never anchors an estimate; it stays visible on the charts only.
+  const quotas = data.quotas.filter(q => q.account_id === accountId && allModelWindow(q) && !q.history_only);
   if (!quotas.length) return fail('Waiting for Claude allowance readings. Pair the browser collector or use the local statusline hook.');
   const active = calibrations.filter(c => c.account_id === accountId && !c.revoked_at && c.method_version === calibrationMethod &&
     Date.parse(c.ended_at) >= now - 30 * DAY && c.tokens_per_point > 0 && Number.isFinite(c.tokens_per_point))

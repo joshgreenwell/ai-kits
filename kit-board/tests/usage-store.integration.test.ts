@@ -424,18 +424,25 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
       SELECT calls, total_tokens FROM canonical`;
     assert.equal(canonical.length, 1); assert.equal(Number(canonical[0].calls), 3);
 
-    // The compatibility view unions both ledgers and hides disabled sources and bindings.
+    // The compatibility view unions both ledgers, keeps every producer's history, and flags rows whose
+    // source, binding, or install is disabled as history_only instead of hiding them (USG-011).
     await sql`INSERT INTO personal_hub.quota_samples (id, account_id, source_id, content_hash, window_key, label, observed_at, used_percent, resets_at, window_minutes)
       VALUES (${randomUUID()}, ${account}, ${v1Source}, ${sha('q1')}, 'five_hour', 'Claude · 5h', '2026-09-02T03:00:00Z', 10, '2026-09-02T05:00:00Z', 300)`;
-    const view = async (id: string) => sql`SELECT origin, reader, used_percent, source_id FROM personal_hub.allowance_percent_view WHERE account_id = ${id} ORDER BY observed_at`;
-    assert.deepEqual((await view(account)).map(r => [r.origin, r.reader]), [['quota_samples', 'v1'], ['allowance_readings', 'web_backend']]);
-    assert.deepEqual((await view(codexAccount)).map(r => r.reader), ['embedded']);
+    const view = async (id: string) => sql`SELECT origin, reader, used_percent, source_id, history_only FROM personal_hub.allowance_percent_view WHERE account_id = ${id} ORDER BY observed_at`;
+    assert.deepEqual((await view(account)).map(r => [r.origin, r.reader, r.history_only]), [['quota_samples', 'v1', false], ['allowance_readings', 'web_backend', false]]);
+    assert.deepEqual((await view(codexAccount)).map(r => [r.reader, r.history_only]), [['embedded', false]]);
+    // A v1 sample that a v2 reading duplicates exactly (the two hooks read one inbox) is shown once, as the v2 reading.
+    await sql`INSERT INTO personal_hub.quota_samples (id, account_id, source_id, content_hash, window_key, label, observed_at, used_percent, resets_at, window_minutes)
+      VALUES (${randomUUID()}, ${account}, ${v1Source}, ${sha('q1-copy-of-web')}, 'five_hour', '5-hour allowance', ${browserReading.observed_at}, ${browserReading.value}, ${browserReading.resets_at}, 300)`;
+    assert.deepEqual((await view(account)).map(r => [r.origin, Number(r.used_percent)]), [['quota_samples', 10], ['allowance_readings', 30]], 'old and new copies of one observation never appear twice');
     await sql`UPDATE personal_hub.telemetry_sources SET disabled = true WHERE id = ${v1Source}`;
     await store.updateInstall({ id: browser.id, action: 'binding_disable', binding_id: browserBinding });
-    assert.equal((await view(account)).length, 0, 'disabled sources and bindings leave the view');
+    assert.deepEqual((await view(account)).map(r => [r.origin, r.history_only]), [['quota_samples', true], ['allowance_readings', true]],
+      'disabled sources and bindings stay in the view as history only');
     await store.updateInstall({ id: codex.binding.binding_id === codexId ? install.id : install.id, action: 'binding_disable', binding_id: codexId });
-    assert.equal((await view(codexAccount)).length, 0);
+    assert.deepEqual((await view(codexAccount)).map(r => r.history_only), [true]);
     await store.updateInstall({ id: install.id, action: 'binding_enable', binding_id: codexId });
+    assert.deepEqual((await view(codexAccount)).map(r => r.history_only), [false], 're-enabling a binding makes its readings current again');
 
     // Reads for the pages, and reconciliation as a labeled query.
     const list = await store.listInstalls();
@@ -552,7 +559,7 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
       ['five_hour', 'Claude · 5h', 'five_hour', 300, 35, 'embedded'],
     ], 'the Spark window is its own meter beside the primary window');
     const viewMeters = async (id: string) => (await sql`SELECT DISTINCT ON (window_key) window_key, label, window_minutes, used_percent FROM personal_hub.allowance_percent_view
-      WHERE account_id = ${id} ORDER BY window_key, observed_at DESC`).map(r => [r.window_key, r.label, Number(r.window_minutes), Number(r.used_percent)]);
+      WHERE account_id = ${id} AND NOT history_only ORDER BY window_key, observed_at DESC`).map(r => [r.window_key, r.label, Number(r.window_minutes), Number(r.used_percent)]);
     assert.deepEqual(await viewMeters(account), [['five_hour', 'Claude · 5h', 300, 20], ['seven_day', 'Claude · weekly', 10080, 47]], 'the compatibility view keeps overlapping windows apart');
     assert.deepEqual(await viewMeters(codexAccount), [['codex_spark:10080', 'Codex Spark · weekly', 10080, 12], ['five_hour', 'Claude · 5h', 300, 35]]);
 
@@ -715,6 +722,7 @@ maybe('the application role can append to every ledger but never update or delet
       VALUES (${randomUUID()}, ${writableResource}, ${writableSource}) RETURNING revision_order`;
     assert.ok(Number(appendedSourceMapping.revision_order) > 0, 'the application role can allocate knowledge-source mapping order');
     await app`SELECT count(*) FROM personal_hub.allowance_percent_view`;
+    await app`SELECT count(*) FROM personal_hub.token_bucket_canonical`;
     await app`SELECT count(*) FROM personal_hub.activity_request_project_resolution`;
     await app`SELECT count(*) FROM personal_hub.resource_access_source_resolution`;
     await app`SELECT count(*) FROM personal_hub.token_bucket_revisions`;

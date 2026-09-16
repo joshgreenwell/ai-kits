@@ -80,8 +80,8 @@ test('overlapping windows of one account are separate outlooks and the Spark win
     ['codex_spark:10080', 'Codex Spark · weekly', 10080, 6, '2026-09-13T00:00:00.000Z', 1, null, 'unavailable', true],
   ], 'one outlook per window with the producer label, length, reset anchor, and its own pace');
   assert.equal(outlooks.filter(o => !isSparkWindow(o)).length, 3, 'the Spark meter is the only one hidden by default');
-  // Without the grouping, one call over both Claude windows forecasts only the later-resetting window.
-  assert.equal(quotaOutlook(readings.filter(r => r.account === 'claude').map(r => r.sample), now)!.window_key, 'seven_day');
+  // Without the grouping, one call over both Claude windows forecasts only the cycle holding the newest reading (the earlier reset on a tie).
+  assert.equal(quotaOutlook(readings.filter(r => r.account === 'claude').map(r => r.sample), now)!.window_key, 'five_hour');
 });
 test('Spark visibility recognizes provider keys and human labels', () => {
   assert.equal(isSparkWindow({ window_key: 'codex_spark:weekly', label: 'Weekly' }), true);

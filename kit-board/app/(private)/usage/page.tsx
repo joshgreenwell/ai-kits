@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { MachineReporters } from "@/components/machine-reporters";
-import { PageHeader } from "@/components/page-header";
-import { TokenActivity } from "@/components/token-activity";
+import { TokensOverviewLive } from "@/components/tokens-overview";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -19,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import environmentalFactors from "./environmental-factors.json";
+import { environmentalFactors, legacyEstimateForReport } from "@/lib/environmental-estimate";
 
 interface UsageRow { key: string; total_tokens: number; calls?: number }
 interface CostRow extends UsageRow {
@@ -176,65 +175,8 @@ function formatMonth(month: string) {
 }
 
 function fallbackEnvironmentalEstimate(row: StoredReport): EnvironmentalEstimate {
-  const factors = environmentalFactors;
-  const calls = row.model_calls;
-  const averagePerCall = calls ? row.raw_tokens / calls : 0;
-  const planningClass = averagePerCall >= factors.planning_context_threshold_tokens_per_call ? "reasoning_heavy" : "frontier_typical";
-  const planningWhPerCall = factors.energy_wh_per_call[planningClass];
-  const energy = {
-    efficient_production_floor: calls * factors.energy_wh_per_call.efficient_production_floor / 1000,
-    planning: calls * planningWhPerCall / 1000,
-    long_context_upper: calls * factors.energy_wh_per_call.long_context_upper / 1000,
-  };
-  const water = {
-    efficient_production_floor: calls * factors.direct_water.efficient_production_ml_per_call / 1000,
-    planning: energy.planning * factors.direct_water.planning_wue_liters_per_kwh,
-    long_context_upper: energy.long_context_upper * factors.direct_water.upper_wue_liters_per_kwh,
-  };
-  const carbon = {
-    clean_energy_floor: calls * factors.operational_carbon.clean_energy_kg_per_call,
-    planning_us_grid: energy.planning * factors.operational_carbon.us_grid_kg_per_kwh,
-    long_context_us_grid: energy.long_context_upper * factors.operational_carbon.us_grid_kg_per_kwh,
-  };
-  const comparisons = factors.comparisons;
-  return {
-    kind: "inference_equivalent_scenario_estimate",
-    methodology_version: factors.methodology_version,
-    confidence: "low",
-    basis: {
-      model_calls: calls,
-      raw_tokens: row.raw_tokens,
-      fresh_non_cached_tokens: row.fresh_tokens,
-      cached_input_tokens: row.cached_input_tokens,
-      average_raw_tokens_per_call: averagePerCall,
-      planning_workload_class: planningClass,
-      planning_wh_per_call: planningWhPerCall,
-      long_context_upper_wh_per_call: factors.energy_wh_per_call.long_context_upper,
-    },
-    energy_kwh: energy,
-    direct_water_liters: water,
-    operational_co2_kg: carbon,
-    comparisons_at_planning_scenario: {
-      average_showers: water.planning / comparisons.average_shower_liters,
-      us_home_days_of_electricity: energy.planning / comparisons.us_home_kwh_per_day,
-      smartphone_full_charges: energy.planning / comparisons.smartphone_charge_kwh,
-      urban_tree_seedlings_grown_10_years: carbon.planning_us_grid / comparisons.urban_tree_seedling_kg_co2_over_10_years,
-      average_gasoline_vehicle_miles: carbon.planning_us_grid / comparisons.average_gasoline_vehicle_kg_co2e_per_mile,
-    },
-    reduction_if_calls_drop_10_percent: {
-      calls_avoided: calls * 0.1,
-      energy_kwh_avoided: energy.planning * 0.1,
-      direct_water_liters_avoided: water.planning * 0.1,
-      operational_co2_kg_avoided: carbon.planning_us_grid * 0.1,
-    },
-    compensation_planning: {
-      operational_co2_kg_to_cover: carbon.long_context_us_grid,
-      note: "If compensating, use at least the upper operational scenario and a verified durable-removal method. Tree equivalents are illustrations, not offset certificates.",
-    },
-    scope: factors.scope,
-    assumptions: factors.assumptions,
-    sources: factors.sources,
-  };
+  // The shared method (lib/environmental-estimate.ts) reproduces the analyzer's estimate for a report that predates it.
+  return legacyEstimateForReport({ model_calls: row.model_calls, raw_tokens: row.raw_tokens, fresh_non_cached_tokens: row.fresh_tokens, cached_input_tokens: row.cached_input_tokens });
 }
 
 function aggregateEnvironmental(rows: StoredReport[]) {
@@ -325,7 +267,18 @@ function aggregateCostDimensions(rows: StoredReport[]) {
   return [...values.values()].sort((a, b) => b.estimated_cost_usd - a.estimated_cost_usd || b.total_tokens - a.total_tokens);
 }
 
-export default function Home() {
+/** The Tokens landing page (USG-017): the filtered overview first, the monthly analyzer reports beneath it on their own ledger. */
+export default function TokensPage() {
+  return (
+    <Workspace>
+      <TokensOverviewLive />
+      <MonthlyReports />
+    </Workspace>
+  );
+}
+
+/** The monthly analyzer reports: machine and month snapshots with their own selectors, unchanged in substance since USG-015. */
+function MonthlyReports() {
   const [reports, setReports] = useState<StoredReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -426,41 +379,49 @@ export default function Home() {
   const maxDay = Math.max(...days.map((day) => day.tokens), 1);
   const selectedLabel = activeMonth ? formatMonth(activeMonth) : "No reports";
 
+  const sectionHeading = (
+    <div className="border-border grid gap-1.5 border-t pt-8">
+      <p className="text-muted-foreground font-mono text-[11px] tracking-wide">Monthly analyzer reports · {selectedLabel}</p>
+      <h2 className="text-xl font-bold tracking-tight">Monthly AI intelligence</h2>
+      <p className="text-muted-foreground max-w-[72ch] text-sm leading-relaxed">Machine and month snapshots from the detailed analyzers, on their own ledger and selectors; they are not added to the overview above.</p>
+    </div>
+  );
   if (loading)
     return (
-      <Workspace>
+      <section className="grid gap-6" aria-label="Monthly analyzer reports">
+        {sectionHeading}
         <EmptyState title="Loading report history…" description="Reading the uploaded monthly analyses." />
-      </Workspace>
+      </section>
     );
   if (error && !reports.length)
     return (
-      <Workspace>
+      <section className="grid gap-6" aria-label="Monthly analyzer reports">
+        {sectionHeading}
         <Alert variant="destructive">
           <AlertTitle>Connection issue</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
-      </Workspace>
+      </section>
     );
   if (!reports.length)
     return (
-      <Workspace>
-        <TokenActivity />
+      <section className="grid gap-6" aria-label="Monthly analyzer reports">
+        {sectionHeading}
         <EmptyState
           title="Ready for the first monthly upload"
-          description="The database is connected. Run the token skill with its upload configuration to populate this dashboard."
+          description="The database is connected. Run the token skill with its upload configuration to populate this section."
         />
-      </Workspace>
+      </section>
     );
 
   const composedTotal = rawTotal || 1;
 
   return (
-    <Workspace>
-      <PageHeader
-        eyebrow={`Usage · tokens · ${selectedLabel}`}
-        title="Monthly AI intelligence"
-        description={`${partialMonth ? "Month to date · full report detail" : "Full monthly report"} · ${hourlyMachines ? `${hourlyMachines} of ${visibleRows.length} selected machine reports refresh hourly` : "Scheduled and manual report snapshots"}.${partialMonth ? " Prior-month percentage comparisons resume after this month closes." : ""}`}
-        actions={
+    <section className="grid gap-8" aria-label="Monthly analyzer reports">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        {sectionHeading}
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-muted-foreground w-full font-mono text-[11px]">{`${partialMonth ? "Month to date · full report detail" : "Full monthly report"} · ${hourlyMachines ? `${hourlyMachines} of ${visibleRows.length} selected machine reports refresh hourly` : "Scheduled and manual report snapshots"}.${partialMonth ? " Prior-month percentage comparisons resume after this month closes." : ""}`}</p>
           <>
             <MachineReporters machines={monthRows} />
             <Select value={activeMonth} onValueChange={(month) => { setSelectedMonth(month); setSelectedMachine("all"); }}>
@@ -472,10 +433,8 @@ export default function Home() {
               </SelectContent>
             </Select>
           </>
-        }
-      />
-
-      <TokenActivity />
+        </div>
+      </div>
 
       {error && (
         <Alert variant="destructive" role="alert">
@@ -941,6 +900,6 @@ export default function Home() {
       <footer className="text-muted-foreground border-border border-t pt-4 font-mono text-[11px]">
         Token Observatory · local analysis · authenticated uploads · historical comparison
       </footer>
-    </Workspace>
+    </section>
   );
 }

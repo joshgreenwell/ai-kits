@@ -2,7 +2,7 @@
 
 [Backlog index](README.md) · [Direction](../usage-direction.md)
 
-Status: Planned
+Status: Done
 Priority: P1
 Scope: Core
 Stage: 3. Read models
@@ -34,8 +34,13 @@ Apply the common completion requirements in the [backlog index](README.md). This
 ## Starting points
 
 - [docs/usage-direction.md](<../../docs/usage-direction.md>)
-- [app/(private)/usage/environmental-factors.json](<../../app/(private)/usage/environmental-factors.json>)
+- [lib/environmental-factors.json](<../../lib/environmental-factors.json>)
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+Completed September 15, 2026 as the research dependency required to finish USG-020.
+
+- Primary-source research and claim-state rules are recorded in [the dated evidence note](../usage-evidence/usg-019-2026-09-15.md). It selected Climeworks Technology focus for future durable-removal delivery, BEF's Jordan River Water Restoration Certificate for a named catchment, and Rewiring America for unquantified U.S. electrification/efficiency support.
+- `lib/environmental-actions.ts` carries the concise UI copy, direct destinations, units, availability, geography, delivery/evidence boundaries, and caveats. The full note retains disclosed prices, minimums, fees, candidate rejections, and recheck requirements without turning them into the optional budget arithmetic owned by USG-034.
+- The recommendation states distinguish contribution, purchase, commitment, delivery, and retirement. No order, donation, automated checkout, compensation ledger, or neutrality claim was made.
+- Direct program, registry/standard-owner, WRI, DOE, and EPA pages were checked September 15. Recommendation rendering and link coverage are verified with the USG-020 tests; live availability must still be rechecked before each release because these are external programs.

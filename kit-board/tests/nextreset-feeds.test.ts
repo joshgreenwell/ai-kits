@@ -171,7 +171,7 @@ test('public feed fetches enforce schema, content type, size and JSON bounds', a
 
 test('retired provider URLs and fallback UI are absent from active reset code', async () => {
   const { readFile } = await import('node:fs/promises');
-  for (const path of ['lib/reset-feeds.ts', 'lib/reset-feed-fetch.ts', 'lib/reset-feed-store.ts', 'lib/nextreset-feeds.ts', 'app/(private)/usage/resets/page.tsx']) {
+  for (const path of ['lib/reset-feeds.ts', 'lib/reset-feed-fetch.ts', 'lib/reset-feed-store.ts', 'lib/nextreset-feeds.ts', 'components/reset-record.tsx']) {
     const source = await readFile(new URL('../' + path, import.meta.url), 'utf8');
     assert.ok(!source.includes('codex-reset.com'), path);
     assert.ok(!source.includes('primary_error'), path);
