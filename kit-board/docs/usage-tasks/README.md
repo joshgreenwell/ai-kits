@@ -2,7 +2,7 @@
 
 Created: 2026-09-13
 
-**34 filesystem tasks: 26 core delivery tasks, seven follow-ups, and one optional task awaiting a decision.** Nineteen are Done, two are In progress, twelve are Planned, and one waits on a decision. The [release status](#release-status) below states what is finished and what still stands between here and the release; the per-stage tables carry the authoritative status for each task. Creating and maintaining this backlog does not itself run collection, change settings, schedule work, or authorize a deployment.
+**34 filesystem tasks: 26 core delivery tasks, seven follow-ups, and one optional task awaiting a decision.** Nineteen are Done, three are In progress, eleven are Planned, and one waits on a decision. The [release status](#release-status) below states what is finished and what still stands between here and the release; the per-stage tables carry the authoritative status for each task. Creating and maintaining this backlog does not itself run collection, change settings, schedule work, or authorize a deployment.
 
 Planning and tracking for this work live in these files. Do not use Jira. The USG identifiers are local backlog IDs, not Linear issue IDs. If the user later chooses Linear, carry these scopes and acceptance criteria across and record the mapping rather than creating duplicate sources of truth.
 
@@ -10,7 +10,7 @@ The [direction document](../usage-direction.md) defines the intended experience.
 
 ## Release status
 
-Updated 2026-09-16, after the Tokens and Allowances interface work on `kit-board/usg-018-usg-020-insights`.
+Updated 2026-09-16, after the Tokens and Allowances interface work merged to `main`, deployed to production, and both pending migrations were applied.
 
 ### Done (19)
 
@@ -20,12 +20,13 @@ Read models: [USG-011](usg-011-reconcile-historical-ledgers.md), [USG-012](usg-0
 
 Interface: [USG-015](usg-015-global-settings-and-navigation.md), [USG-017](usg-017-tokens-overview-and-daily-volume.md), [USG-018](usg-018-cost-and-model-cards.md), [USG-020](usg-020-environmental-impact-section.md), [USG-023](usg-023-allowance-account-accordions.md), [USG-024](usg-024-reset-calendar-and-feed-relocation.md).
 
-Done here means the acceptance criteria are met in the repository and verified locally. It does not mean deployed: every one of these still reaches production through [USG-025](usg-025-activate-backfill-and-verify-release.md).
+Done here means the acceptance criteria are met in the repository and verified locally. The September 16 merge to `main` carried all of it to production and the two migrations behind it were applied the same day; [USG-025](usg-025-activate-backfill-and-verify-release.md) still owns source-to-screen verification against production.
 
-### In progress (2)
+### In progress (3)
 
 - [USG-002](usg-002-preserve-history-and-recover-publication.md) — unattended Windows publication is verified; the inaccessible-host inventory and production-wide reconciliation are open.
 - [USG-016](usg-016-shared-filters-and-interactive-charts.md) — the filter bar, interval charts, legend toggles, persisted graph/table preferences, and design-system alignment shipped through USG-017 and USG-018. What remains is its own verification pass: filter URL round trips, timezone boundaries, touch and keyboard paths, long labels, and narrow screens.
+- [USG-025](usg-025-activate-backfill-and-verify-release.md) — the September 16 merge deployed the server build to production and both migrations are applied. Everything else this task owns is open: the detail-level change at the source, backfill and receipts, scheduled-cycle and source-to-screen verification, and the release record.
 
 ### Left before the release gate (6 core)
 
@@ -35,14 +36,14 @@ Done here means the acceptance criteria are met in the repository and verified l
 | [USG-016](usg-016-shared-filters-and-interactive-charts.md) | Nothing further | Implementation shipped; verification remains. |
 | [USG-021](usg-021-project-and-agent-breakdowns.md) | Project and agent cards | Needs request detail: `execution.detail_level` is `buckets_only` on both companions and `project_attribution` is `off`, so there is nothing to break down yet. |
 | [USG-022](usg-022-tool-and-knowledge-cards.md) | Tool and knowledge cards | Needs `requests_with_tools`; tool and access rows upload at that level only. |
-| [USG-025](usg-025-activate-backfill-and-verify-release.md) | The release itself | Owns the two unapplied migrations, the detail-level change, and source-to-screen verification. See the deployment prerequisites below. |
+| [USG-025](usg-025-activate-backfill-and-verify-release.md) | The release itself | The migrations are applied; the detail-level change and source-to-screen verification remain. See the deployment prerequisites below. |
 | [USG-026](usg-026-retire-redundant-usage-pipelines.md) | v1 retirement | Gated on USG-025 parity. |
 
 ### Deployment prerequisites owned by USG-025
 
-Neither is done, and neither is a code change:
+Neither is a code change. The first is now done:
 
-1. **Two migrations are in the repository and not applied to production.** `20260914030000_reconcile_historical_ledgers.sql` (USG-011: `token_bucket_canonical`, and `allowance_percent_view` carrying `history_only`) and `20260914040000_usage_report_subjects.sql` (USG-012: the monthly report-subject crosswalk). The server tolerates their absence — `lib/telemetry-store.ts` and `lib/usage-query.ts` catch SQLSTATE `42P01` and `42703` and fall back — so a deploy degrades rather than fails: disabled-producer history stays hidden and monthly snapshots stay unmerged. Mapping a report subject in Settings is the one path that errors until the crosswalk exists.
+1. **Both migrations are applied to production.** Done on September 16 with `supabase db push --linked`, after the merge to `main` deployed the server build that reads them: `20260914030000_reconcile_historical_ledgers.sql` (USG-011: `token_bucket_canonical`, and `allowance_percent_view` carrying `history_only`) and `20260914040000_usage_report_subjects.sql` (USG-012: the monthly report-subject crosswalk). That order was safe because `lib/telemetry-store.ts` and `lib/usage-query.ts` catch SQLSTATE `42P01` and `42703` and fall back; those fallbacks stay for the next such window. `supabase migration list --linked` shows local and remote matching through `20260914040000`, and a post-apply read as `personal_hub_app` returned `token_bucket_canonical` and `allowance_percent_view.history_only` rows and accepted a rolled-back `usage_report_subjects` insert. Disabled-producer history is visible again, monthly snapshots can merge, and mapping a report subject in Settings no longer errors.
 2. **Request detail is off at the source.** Both companions run `execution.detail_level: "buckets_only"` at settings version 4 while advertising `requests` and `requests_with_tools`, so `personal_hub.activity_requests` is empty across all recorded history. Cost, reasoning effort, service tier, surface, project, agent, and tool surfaces stay empty until the setting changes, and only from the next run forward — the retained monthly reports hold a precomputed `api_equivalent_estimate` rollup, not per-request rows, so there is nothing per-request to backfill.
 
 ### Follow-ups, not release gates (7 + 1 optional)
@@ -136,7 +137,7 @@ Every implementation task inherits these requirements:
 
 | Task | Priority | Depends on | Status |
 | --- | --- | --- | --- |
-| [USG-025: Activate supported detail, backfill retained data, and verify the complete release](usg-025-activate-backfill-and-verify-release.md) | P0 | [USG-010](usg-010-replace-browser-quota-bridge.md), [USG-011](usg-011-reconcile-historical-ledgers.md), [USG-012](usg-012-unified-filtered-usage-queries.md), [USG-013](usg-013-reuse-cost-and-environment-calculations.md), [USG-014](usg-014-truthful-settings-and-collection-health.md), [USG-017](usg-017-tokens-overview-and-daily-volume.md), [USG-018](usg-018-cost-and-model-cards.md), [USG-020](usg-020-environmental-impact-section.md), [USG-021](usg-021-project-and-agent-breakdowns.md), [USG-022](usg-022-tool-and-knowledge-cards.md), [USG-024](usg-024-reset-calendar-and-feed-relocation.md) | Planned |
+| [USG-025: Activate supported detail, backfill retained data, and verify the complete release](usg-025-activate-backfill-and-verify-release.md) | P0 | [USG-010](usg-010-replace-browser-quota-bridge.md), [USG-011](usg-011-reconcile-historical-ledgers.md), [USG-012](usg-012-unified-filtered-usage-queries.md), [USG-013](usg-013-reuse-cost-and-environment-calculations.md), [USG-014](usg-014-truthful-settings-and-collection-health.md), [USG-017](usg-017-tokens-overview-and-daily-volume.md), [USG-018](usg-018-cost-and-model-cards.md), [USG-020](usg-020-environmental-impact-section.md), [USG-021](usg-021-project-and-agent-breakdowns.md), [USG-022](usg-022-tool-and-knowledge-cards.md), [USG-024](usg-024-reset-calendar-and-feed-relocation.md) | In progress |
 | [USG-026: Retire superseded usage publishers, collectors, and schedules after parity](usg-026-retire-redundant-usage-pipelines.md) | P1 | [USG-002](usg-002-preserve-history-and-recover-publication.md), [USG-010](usg-010-replace-browser-quota-bridge.md), [USG-011](usg-011-reconcile-historical-ledgers.md), [USG-025](usg-025-activate-backfill-and-verify-release.md) | Planned |
 
 ## 6. Provider coverage

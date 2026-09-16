@@ -2,7 +2,7 @@
 
 [Backlog index](README.md) · [Direction](../usage-direction.md)
 
-Status: Planned
+Status: In progress
 Priority: P0
 Scope: Core
 Stage: 5. Cutover
@@ -43,4 +43,13 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+Partly executed on 2026-09-16 from `main`, under the owner's explicit authorization to merge the usage stack, let Vercel deploy production from it, and apply the pending migrations with the Supabase CLI. No collector, machine, or account setting was changed.
+
+Done:
+
+- The usage stack merged into `main` as `8dc9c7a` (`--no-ff`), and Vercel's GitHub integration built and promoted the Production deployment for that commit; its deployment status reads success and the production alias answers with its authenticated redirect. The `kit-board` CI workflow passed on the merge commit.
+- Both pending migrations applied with `supabase db push --linked` after that deploy: `20260914030000_reconcile_historical_ledgers.sql` (USG-011) and `20260914040000_usage_report_subjects.sql` (USG-012). `supabase migration list --linked` then showed local and remote matching through `20260914040000`, with none of the version drift the recovery guide warns about.
+- Deploy-then-migrate was deliberate, not an accident of ordering: `lib/telemetry-store.ts` and `lib/usage-query.ts` catch SQLSTATE `42P01` and `42703`, so the window between the two served the pre-migration view instead of failing. `PUT /api/usage-report-subjects` was the one path that would have errored in that window, and nothing called it.
+- Post-apply validation ran as `personal_hub_app`, the restricted application role, rather than as an administrator: `token_bucket_canonical` and `allowance_percent_view` both read, the view exposed `history_only`, and an `usage_report_subjects` insert succeeded inside a transaction that was then rolled back. The table is empty; no row was written to production.
+
+Remaining: criteria 2 through 6 in full, and the collector half of criterion 1. `execution.detail_level` is still `buckets_only` on both companions with `project_attribution` off, so request, tool, project, and resource evidence is still not produced and cannot be verified end to end; USG-010 still owns the Claude allowance reader. Also open: backfill activation with progress and retry receipts, a scheduled cycle verified per accessible machine and provider, authenticated source-to-screen checks against production rather than local, the partial/stale/error/rollover/navigation/keyboard/touch/responsive pass, and the release receipt with parity, residual gaps, and a tested rollback path.
