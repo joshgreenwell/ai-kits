@@ -60,18 +60,18 @@ test('the header shows every window side by side with remaining, countdown, and 
   assert.match(html, /aria-expanded="false"/);
 });
 
-test('expanding an account reveals each window’s burn chart, forecast explanation, and history-only wording', () => {
+test('expanding an account reveals each window’s burn chart, forecast stats, and history-only wording', () => {
   const html = render(true, ['claude-a', 'codex-b'], { 'codex-b': ['Identity unconfirmed on desk: readings the collector cannot attribute are held on the machine, not shown here.'] });
   assert.match(html, /data-state="open"[^>]*data-testid="account-claude-a"/);
   const five = html.slice(html.indexOf('data-testid="detail-five_hour"'), html.indexOf('data-testid="detail-seven_day"'));
   assert.match(five, /role="group"[^>]*aria-label="12\.0% used at the last reading, projected [\d.]+% by reset; 1 other cycle shown faint"/);
-  assert.match(five, /Cycle start · /);
-  assert.match(five, />reset</);
-  assert.match(five, /role="button"[^>]*aria-label="[^"]*60\.0% used via v1, history only"/, 'the history-only reading stays on the chart and says so');
+  // Recharts draws nothing until it has measured a container, so the chart's own figures are read from its DOM mirror.
+  assert.match(five, /Cycle start Sep 10, 7:00 AM, reset Sep 10, 12:00 PM\./);
+  assert.match(five, /role="img"[^>]*aria-label="[^"]*60\.0% used via v1, history only"/, 'the history-only reading stays on the chart and says so');
   assert.match(five, /via statusline · 5-hour window · 1 history-only readings/);
   assert.match(five, /Forecast burn \/ hour/);
-  assert.match(five, /Current-window pace is blended with 1 completed cycle/);
-  assert.match(five, /Readings from a disabled source stay on the chart as history/);
+  assert.match(five, /67% current evidence · pts/, 'the blend weight is carried by the stat, not by a paragraph');
+  assert.match(five, /Above 100% is demand beyond the allowance/);
   const weekly = html.slice(html.indexOf('data-testid="detail-seven_day"'), html.indexOf('data-testid="account-codex-b"'));
   assert.match(weekly, /Every reading of this window comes from a disabled source, so it is history only/);
   assert.match(weekly, /1 readings in the last cycle; no current reading/);
@@ -101,10 +101,10 @@ test('the burn chart keeps a newer history-only cycle faint and pauses the seed 
   const html = renderToStaticMarkup(createElement(AllowanceBurnChart, { pace: view.pace, cycles: view.cycles, history: view.history, timezone: TZ }));
   assert.doesNotMatch(html, /NaN/);
   assert.match(html, /forecast unavailable; 2 other cycles shown faint/);
-  assert.match(html, /<title>Open cycle, reset Sep 10, 12:00 PM: 13\.0 points over 0\.8h<\/title>/, 'the newer history-only cycle is drawn, not dropped');
-  assert.match(html, /<title>Completed cycle, reset Sep 9, 7:00 AM/);
+  assert.match(html, />Open cycle, reset Sep 10, 12:00 PM: 13\.0 points over 0\.8h</, 'the newer history-only cycle is drawn, not dropped');
+  assert.match(html, />Completed cycle, reset Sep 9, 7:00 AM/);
   assert.doesNotMatch(html, /Recent cycles seed/, 'a stale reading pauses the forecast, so no seed line or band is drawn');
-  assert.doesNotMatch(html, /<polygon/);
+  assert.doesNotMatch(html, /Recent cycles spread/);
   assert.match(html, /aria-label="Sep 10, 4:00 AM: 15\.0% used via statusline"/);
-  assert.match(html, /x1="326"[^>]*x2="326"[\s\S]*>reset</, 'the reset marker sits at the right edge');
+  assert.match(html, /Cycle start Sep 10, 2:00 AM, reset Sep 10, 7:00 AM\./, 'the mirror names the cycle the chart plots between');
 });

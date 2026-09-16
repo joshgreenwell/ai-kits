@@ -144,7 +144,7 @@ export default async function Schedules() {
             <TableRow className="even:bg-foreground/[0.03] border-b-0">
               <TableCell className="py-2">
                 <Link
-                  href="/usage/resets"
+                  href="/usage/allowances#reset-calendar"
                   className="hover:text-primary font-semibold underline-offset-4 hover:underline"
                 >
                   Public reset feeds

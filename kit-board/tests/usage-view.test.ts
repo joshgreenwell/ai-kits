@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_FILTERS, activeFilterChips, chartScale, clearedFilters, compositionView, customRangeFromDates, hourlyAllowed, hourlyPossible, intervalLabel, parseTokensFilters, queryString, rangeDates, seriesSummary, serializeTokensFilters, whenIn,
+  DEFAULT_FILTERS, activeFilterChips, clearedFilters, compositionView, customRangeFromDates, hourlyAllowed, hourlyPossible, intervalLabel, parseTokensFilters, queryString, rangeDates, seriesSummary, serializeTokensFilters, whenIn,
 } from '../lib/usage-view';
 
 test('the private URL round-trips the filter state and drops what it does not recognize', () => {
@@ -44,9 +44,7 @@ test('composition reconciles to the headline, folds a reported-only remainder in
   assert.equal(compositionView({ total_tokens: 0, composition: { input_fresh: 0, input_cached: 0, input_cache_write: 0, output: 0, reasoning: null, unclassified: 0 } }).segments[0].share, null);
 });
 
-test('the chart scale, interval labels, series summary, and range helpers follow the display zone', () => {
-  assert.deepEqual(chartScale([{ total_tokens: 0 }, { total_tokens: 1_500_000 }]).ticks.map(t => t.label), ['0', '750K', '1.5M']);
-  assert.deepEqual(chartScale([]).ticks.map(t => t.label), ['0']);
+test('interval labels, series summary, and range helpers follow the display zone', () => {
   const tz = 'America/Chicago';
   assert.equal(intervalLabel({ start: '2026-09-02T05:00:00.000Z', end: '2026-09-03T05:00:00.000Z', state: 'observed' }, tz, 'day'), 'Wed, Sep 2');
   assert.equal(intervalLabel({ start: '2026-09-02T05:00:00.000Z', end: '2026-09-02T20:30:00.000Z', state: 'partial' }, tz, 'day'), 'Wed, Sep 2 · 00:00 to 15:30', 'a clipped day names both ends');

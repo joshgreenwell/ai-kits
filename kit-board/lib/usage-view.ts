@@ -148,15 +148,6 @@ export function compositionView(headline: { total_tokens: number; composition: C
   return { segments, total, classified, remainder, inconsistent, reasoning: c.reasoning, reasoning_share_of_output: c.reasoning !== null && c.output > 0 ? c.reasoning / c.output : null };
 }
 
-export type ChartScale = { max: number; ticks: { value: number; label: string }[] };
-
-/** Three labeled ticks at most: zero, a round midpoint, and the peak. */
-export function chartScale(points: { total_tokens: number }[]): ChartScale {
-  const peak = Math.max(0, ...points.map(p => p.total_tokens));
-  if (peak <= 0) return { max: 1, ticks: [{ value: 0, label: '0' }] };
-  return { max: peak, ticks: [{ value: 0, label: '0' }, { value: peak / 2, label: compactTokens(peak / 2) }, { value: peak, label: compactTokens(peak) }] };
-}
-
 export const compactTokens = (n: number) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: n >= 1e9 ? 2 : 1 }).format(n);
 export const exactTokens = (n: number) => new Intl.NumberFormat('en-US').format(Math.round(n));
 export const percent = (share: number | null) => (share === null ? '—' : `${(share * 100).toFixed(share * 100 >= 10 ? 0 : 1)}%`);

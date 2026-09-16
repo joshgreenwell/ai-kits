@@ -1,81 +1,104 @@
 'use client';
-import { useId, useRef, useState } from 'react';
+import { Bar, BarChart, CartesianGrid, Rectangle, XAxis, YAxis } from 'recharts';
 import { cn } from 'cn';
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import type { SeriesPoint } from '@/lib/usage-query';
 import type { Resolution } from '@/lib/usage-periods';
-import { STATE_LABELS, chartScale, compactTokens, exactTokens, intervalLabel, percent } from '@/lib/usage-view';
+import { STATE_LABELS, compactTokens, exactTokens, intervalLabel, percent } from '@/lib/usage-view';
+
+type Row = { shortLabel: string; label: string; total_tokens: number; point: SeriesPoint };
+type BarShapeProps = { x?: number; y?: number; width?: number; height?: number; payload?: Row };
+
+const config = { total_tokens: { label: 'Tokens', color: 'var(--primary)' } } satisfies ChartConfig;
 
 /**
- * Tokens over time (USG-017). One focusable bar per interval, so hover, keyboard focus, and a tap all
- * reveal the same exact detail beneath the chart; the Y axis carries three abbreviated labels and its
- * unit. A still-observed interval is outlined, a recorded zero is a flat tick, and an interval with no
- * collector coverage is a dashed tick, so absence never reads as activity. Dependency-free by design;
- * USG-016 may swap the drawing for a shared charting primitive without changing what a point means.
+ * A bar is not always a quantity here: a recorded zero, an interval with no collector coverage, and an
+ * interval still being observed have to look different from each other and from a small real value, or
+ * absence reads as activity. Recharts draws a rectangle per value and nothing else, so the shape is
+ * drawn here: flat tick for a recorded zero, dashed tick for missing coverage, hollow bar while the
+ * interval is still open, solid bar once it is closed.
+ */
+function IntervalBar({ x = 0, y = 0, width = 0, height = 0, payload }: BarShapeProps) {
+  const state = payload?.point.state;
+  const w = Math.max(1, width);
+  if (state === 'missing') return <line x1={x} x2={x + w} y1={y} y2={y} stroke="var(--muted-foreground)" strokeOpacity={0.6} strokeWidth={1.5} strokeDasharray="3 2" />;
+  if (height < 1) return <rect x={x} y={y - 2} width={w} height={2} fill="var(--muted-foreground)" fillOpacity={0.5} />;
+  const drawn = Math.max(2, height);
+  return state === 'partial'
+    ? <Rectangle x={x} y={y + height - drawn} width={w} height={drawn} radius={[2, 2, 0, 0]} fill="var(--primary)" fillOpacity={0.25} stroke="var(--primary)" strokeWidth={1} />
+    : <Rectangle x={x} y={y + height - drawn} width={w} height={drawn} radius={[2, 2, 0, 0]} fill="var(--primary)" fillOpacity={0.7} />;
+}
+
+function Line({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-mono tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+/**
+ * Tokens over time (USG-017) on the vendored shadcn/Recharts primitive: hovering, tapping, or arrowing
+ * through the bars reveals the same exact interval in the chart's own tooltip. The exact values are
+ * mirrored into the DOM as well, because Recharts draws nothing until it has measured the container.
  */
 export function IntervalBars({ points, timezone, resolution, className }: { points: SeriesPoint[]; timezone: string; resolution: Resolution; className?: string }) {
-  const [active, setActive] = useState<number | null>(null);
-  const bars = useRef<(HTMLButtonElement | null)[]>([]);
-  const detailId = useId();
-  // One tab stop for the whole chart; arrow keys, Home, and End move between bars.
-  const tabStop = active ?? 0;
-  const move = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
-    const target = event.key === 'ArrowRight' ? index + 1 : event.key === 'ArrowLeft' ? index - 1 : event.key === 'Home' ? 0 : event.key === 'End' ? points.length - 1 : null;
-    if (target === null || target < 0 || target >= points.length) return;
-    event.preventDefault(); setActive(target); bars.current[target]?.focus();
-  };
-  const scale = chartScale(points);
-  const selected = active !== null ? points[active] : null;
-  const first = points[0], last = points.at(-1), middle = points[Math.floor(points.length / 2)];
-  const xLabel = (p: SeriesPoint | undefined) => (p ? intervalLabel(p, timezone, resolution).split(' · ')[0] : '');
+  const data: Row[] = points.map(point => {
+    const label = intervalLabel(point, timezone, resolution);
+    return { shortLabel: label.split(' · ')[0], label, total_tokens: point.total_tokens, point };
+  });
+
   return (
     <div data-slot="interval-bars" className={cn('grid gap-2', className)}>
-      <div className="grid grid-cols-[auto_1fr] gap-2">
-        <div className="text-muted-foreground relative w-12 font-mono text-[10px]" aria-hidden="true">
-          {scale.ticks.map(tick => (
-            <span key={tick.value} className="absolute right-0 -translate-y-1/2 whitespace-nowrap" style={{ bottom: `${(tick.value / scale.max) * 100}%` }}>{tick.label}</span>
-          ))}
-          <span className="absolute right-0 top-0 -translate-y-full pb-0.5">tokens</span>
-        </div>
-        <div role="group" aria-label={`${points.length} intervals, peak ${compactTokens(scale.max)} tokens`} aria-describedby={detailId}
-          className="border-border relative flex h-32 items-end gap-[2px] border-b border-l" onMouseLeave={() => setActive(null)}>
-          {points.map((point, index) => {
-            const height = point.state === 'observed' || point.state === 'partial' ? Math.max(point.total_tokens > 0 ? 2 : 0, (point.total_tokens / scale.max) * 100) : 0;
-            const label = `${intervalLabel(point, timezone, resolution)}: ${exactTokens(point.total_tokens)} tokens, ${exactTokens(point.calls)} calls, ${STATE_LABELS[point.state]}`;
-            return (
-              <button key={point.start} type="button" aria-label={label} aria-pressed={active === index} tabIndex={index === tabStop ? 0 : -1}
-                ref={element => { bars.current[index] = element; }} onKeyDown={event => move(event, index)}
-                onMouseEnter={() => setActive(index)} onFocus={() => setActive(index)} onClick={() => setActive(current => (current === index ? null : index))}
-                className="group focus-visible:ring-ring/50 relative flex h-full min-w-[3px] flex-1 items-end rounded-t-xs outline-none focus-visible:ring-[3px]">
-                {point.state === 'missing' ? (
-                  <span aria-hidden="true" className="border-muted-foreground/60 absolute inset-x-0 bottom-0 border-t border-dashed" />
-                ) : point.state === 'zero' || point.total_tokens === 0 ? (
-                  <span aria-hidden="true" className={cn('absolute inset-x-0 bottom-0 h-[2px]', point.state === 'partial' ? 'bg-primary/40' : 'bg-muted-foreground/50')} />
-                ) : (
-                  <span aria-hidden="true" style={{ height: `${height}%` }}
-                    className={cn('w-full rounded-t-xs transition-colors', point.state === 'partial' ? 'bg-primary/25 ring-primary ring-1 ring-inset' : 'bg-primary/55 group-hover:bg-primary group-aria-pressed:bg-primary')} />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      <div className="text-muted-foreground ml-14 flex justify-between font-mono text-[10px]" aria-hidden="true">
-        <span>{xLabel(first)}</span><span>{points.length > 2 ? xLabel(middle) : ''}</span><span>{xLabel(last)}</span>
-      </div>
-      <div id={detailId} role="status" aria-live="polite" className="border-border bg-muted/40 min-h-[3.25rem] rounded-md border px-3 py-2 font-mono text-[11px] leading-relaxed">
-        {selected ? (
-          <>
-            <span className="text-foreground font-semibold">{intervalLabel(selected, timezone, resolution)}</span>
-            <span className="text-muted-foreground"> · {STATE_LABELS[selected.state]}{selected.sources.length ? ` · from ${selected.sources.join(' + ')}` : ''}</span>
-            <br />
-            <span className="text-foreground">{exactTokens(selected.total_tokens)} tokens</span>
-            <span className="text-muted-foreground"> · {exactTokens(selected.calls)} calls · fresh {compactTokens(selected.composition.input_fresh)} · cached {compactTokens(selected.composition.input_cached)} · cache-write {compactTokens(selected.composition.input_cache_write)} · output {compactTokens(selected.composition.output)}</span>
-            {selected.composition.reasoning !== null && selected.composition.output > 0 ? <span className="text-muted-foreground"> (reasoning {percent(selected.composition.reasoning / selected.composition.output)} of output)</span> : null}
-            {selected.composition.unclassified > 0 ? <span className="text-muted-foreground"> · unclassified {compactTokens(selected.composition.unclassified)}</span> : null}
-          </>
-        ) : (
-          <span className="text-muted-foreground">Hover, tap, or arrow through the bars for each interval&rsquo;s exact tokens, calls, and composition.</span>
-        )}
+      <ChartContainer config={config} className="aspect-auto h-[220px] w-full" aria-label={`${points.length} intervals of tokens over time`}>
+        <BarChart accessibilityLayer data={data} margin={{ left: 4, right: 8, top: 8, bottom: 0 }} barCategoryGap={1}>
+          <CartesianGrid vertical={false} />
+          <XAxis dataKey="shortLabel" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" minTickGap={28} />
+          <YAxis tickLine={false} axisLine={false} width={48} tickMargin={4} tickFormatter={value => compactTokens(Number(value))} />
+          <ChartTooltip
+            cursor={{ fill: 'var(--muted)', fillOpacity: 0.6 }}
+            content={
+              <ChartTooltipContent
+                hideIndicator
+                className="min-w-[15rem]"
+                labelFormatter={(_, payload) => String((payload?.[0]?.payload as Row | undefined)?.label ?? '')}
+                formatter={(_value, _name, item) => {
+                  const point = (item.payload as Row | undefined)?.point;
+                  if (!point) return null;
+                  const c = point.composition;
+                  return (
+                    <div className="grid flex-1 gap-1">
+                      <div className="flex items-baseline justify-between gap-4">
+                        <span className="text-muted-foreground">Tokens</span>
+                        <span className="text-foreground font-mono font-medium tabular-nums">{exactTokens(point.total_tokens)}</span>
+                      </div>
+                      <Line label="Calls" value={exactTokens(point.calls)} />
+                      <div className="border-border/50 grid gap-0.5 border-t pt-1">
+                        <Line label="Fresh input" value={compactTokens(c.input_fresh)} />
+                        <Line label="Cached input" value={compactTokens(c.input_cached)} />
+                        <Line label="Cache-write" value={compactTokens(c.input_cache_write)} />
+                        <Line label="Output" value={c.reasoning !== null && c.output > 0 ? `${compactTokens(c.output)} · reasoning ${percent(c.reasoning / c.output)}` : compactTokens(c.output)} />
+                        {c.unclassified > 0 ? <Line label="Unclassified" value={compactTokens(c.unclassified)} /> : null}
+                      </div>
+                      <p className="text-muted-foreground border-border/50 border-t pt-1">
+                        {STATE_LABELS[point.state]}{point.sources.length ? ` · from ${point.sources.join(' + ')}` : ''}
+                      </p>
+                    </div>
+                  );
+                }}
+              />
+            }
+          />
+          <Bar dataKey="total_tokens" shape={IntervalBar} isAnimationActive={false} />
+        </BarChart>
+      </ChartContainer>
+
+      {/* The same reading the tooltip gives, available to assistive tech before the chart is measured. */}
+      <div className="sr-only">
+        {data.map(row => (
+          <span key={row.point.start} role="img" aria-label={`${row.label}: ${exactTokens(row.point.total_tokens)} tokens, ${exactTokens(row.point.calls)} calls, ${STATE_LABELS[row.point.state]}`} />
+        ))}
       </div>
     </div>
   );

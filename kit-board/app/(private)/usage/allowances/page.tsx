@@ -1,8 +1,7 @@
 'use client';
-import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { PageHeader } from '@/components/page-header';
 import { Workspace } from '@/components/workspace';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -11,27 +10,13 @@ import { AllowanceAccordion } from '@/components/allowance-accordion';
 import { Choice, useLiveData, type LiveData } from '@/components/telemetry-shared';
 import { UsageStatusLine } from '@/components/usage-status-line';
 import { ModelUsageHistory } from '@/components/model-usage-history';
+import { ResetRecord } from '@/components/reset-record';
 import { fetchPrivateJson } from '@/lib/fetch-private-json';
 import { DISPLAY_TIMEZONE } from '@/lib/usage-periods';
 import {
   DEFAULT_PREFERENCES, HISTORY_RANGES, PREFERENCE_KEY, accountViews, carriedAccounts, expandedAccounts, parsePreferences, rememberExpanded, type AllowancePreferences, type HistoryDays,
 } from '@/lib/allowance-view';
 import type { InstallsSummary } from '@/lib/usage-store';
-
-function SectionHeading({ id, number, title, description, action }: { id: string; number: string; title: string; description: string; action?: ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-end justify-between gap-4">
-      <div className="flex items-start gap-3">
-        <span className="border-border text-muted-foreground mt-0.5 rounded-md border px-2 py-1 font-mono text-[10px]">{number}</span>
-        <div className="grid gap-1">
-          <h2 id={id} className="text-lg font-semibold tracking-tight">{title}</h2>
-          <p className="text-muted-foreground max-w-[72ch] text-sm">{description}</p>
-        </div>
-      </div>
-      {action}
-    </div>
-  );
-}
 
 const INSTALLS_TTL = 5 * 60_000;
 
@@ -87,13 +72,6 @@ function AllowancesInner() {
 
   return (
     <Workspace>
-      <PageHeader
-        eyebrow="Usage · allowances"
-        title="Allowances"
-        description="Each account's current windows and reset outlook, forecast independently from its own readings. Percentages are the provider's own meters; tokens never convert into allowance."
-        actions={<Button variant="outline" size="sm" asChild><Link href="/usage/resets">Reset calendar</Link></Button>}
-      />
-
       {error && (
         <Alert variant={data ? 'warning' : 'destructive'}>
           <AlertTitle>{data ? 'The latest refresh failed' : 'Allowances are temporarily unavailable'}</AlertTitle>
@@ -119,8 +97,7 @@ function AllowancesInner() {
         !error && <p className="text-muted-foreground text-sm">Loading allowances…</p>
       ) : (
         <>
-          <section className="grid gap-4" aria-labelledby="allowance-accounts-heading">
-            <SectionHeading id="allowance-accounts-heading" number="01" title="Accounts" description={`Current capacity is the newest live reading per window in ${DISPLAY_TIMEZONE}; the history range changes the charts only.${narrowed ? ' Showing the accounts carried from Tokens.' : ''}`} />
+          <section className="grid gap-4" aria-label="Accounts">
             {views.length ? (
               <AllowanceAccordion views={views} expanded={expanded} onExpandedChange={ids => update({ expanded: rememberExpanded(active, data.accounts, carried, ids) })} now={now} timezone={DISPLAY_TIMEZONE} />
             ) : (
@@ -132,12 +109,19 @@ function AllowancesInner() {
             )}
           </section>
 
-          <section className="grid gap-4" aria-labelledby="model-history-heading">
-            <SectionHeading id="model-history-heading" number="02" title="Model history" description="How each model appeared during the allowance cycles in view, using call share and active hours instead of converting tokens into quota." />
+          <section className="grid gap-4" aria-label="Model history">
             <ModelUsageHistory data={data} windows={modelWindows} now={now} />
           </section>
         </>
       )}
+
+      {/*
+        The calendar reads the public feeds, not this Observatory's own readings, so it does not wait
+        on live allowance data; /usage/resets now redirects to this anchor.
+      */}
+      <section id="reset-calendar" className="grid scroll-mt-24 gap-4" aria-label="Reset calendar">
+        <ResetRecord />
+      </section>
     </Workspace>
   );
 }

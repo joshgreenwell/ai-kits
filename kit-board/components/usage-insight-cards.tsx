@@ -1,18 +1,18 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Card, CardAction, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { DataTable, EmptyState, Stat, StatGroup, type Column } from '@/components/kit';
+import { DataTable, Disclosure, EmptyState, Stat, StatGroup, type Column } from '@/components/kit';
 import { UsageSeriesChart, modelColors, type ChartCategory, type ChartSeries } from '@/components/usage-series-chart';
 import type { PricingRow } from '@/lib/usage-pricing';
 import type { UsageQueryResult } from '@/lib/usage-query';
 import { compactTokens, exactTokens, intervalLabel, percent } from '@/lib/usage-view';
 
 type View = 'graph' | 'table';
-const MAX_TABLE_HEIGHT = 'max-h-[28rem] overflow-auto';
+/** Long ledgers scroll inside the card rather than growing it; the card's own edge is the only frame. */
 
 function useViewPreference(key: string) {
   const [view, setViewState] = useState<View>('graph');
@@ -48,21 +48,8 @@ function calendarDates(observed: string[]) {
   return dates;
 }
 
-function Disclosure({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <Collapsible>
-      <CollapsibleTrigger asChild>
-        <Button type="button" variant="ghost" size="xs" className="text-muted-foreground hover:text-foreground h-auto px-0 font-mono text-[11px]">
-          {title}
-        </Button>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="mt-3">{children}</CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-export function CostModelTable({ rows }: { rows: PricingRow[] }) {
-  if (!rows.length) return <EmptyState title="No request pricing evidence" description="Hourly totals remain visible, but this scope has no request records with pricing dimensions." />;
+export function CostModelTable({ rows, empty }: { rows: PricingRow[]; empty?: ReactNode }) {
+  if (!rows.length) return empty ?? <EmptyState title="No request pricing evidence" description="This scope has no request records carrying pricing dimensions. The collected token totals are unaffected." />;
   const columns: Column<PricingRow>[] = [
     { id: 'model', header: 'Model', sortValue: row => row.model, cell: row => <span className="font-mono text-xs">{modelLabel(row.model)}</span> },
     { id: 'calls', header: 'Calls', numeric: true, sortValue: row => row.calls, cell: row => exactTokens(row.calls) },
@@ -70,11 +57,7 @@ export function CostModelTable({ rows }: { rows: PricingRow[] }) {
     { id: 'priced', header: 'Priced', numeric: true, sortValue: row => row.priced_tokens, cell: row => priceCoverage(row) },
     { id: 'estimate', header: 'Estimate', numeric: true, sortValue: row => row.estimated_cost_usd, cell: row => <span className="font-semibold">{formatUsd(row.estimated_cost_usd)}</span> },
   ];
-  return (
-    <div className={`border-border rounded-lg border ${MAX_TABLE_HEIGHT}`}>
-      <DataTable columns={columns} rows={rows} getRowId={row => row.model} defaultSort={{ id: 'estimate', dir: 'desc' }} />
-    </div>
-  );
+  return <DataTable columns={columns} rows={rows} getRowId={row => row.model} defaultSort={{ id: 'estimate', dir: 'desc' }} />;
 }
 
 function CostPeriodTable({ rows }: { rows: UsageQueryResult['cost']['series'] }) {
@@ -89,9 +72,7 @@ function CostPeriodTable({ rows }: { rows: UsageQueryResult['cost']['series'] })
   const data = rows.map((row, index) => ({ ...row, id: `${row.rate_date}:${row.model}:${index}` }));
   return (
     <Disclosure title="View daily model values">
-      <div className={`border-border rounded-lg border ${MAX_TABLE_HEIGHT}`}>
-        <DataTable columns={columns} rows={data} getRowId={row => row.id} defaultSort={{ id: 'date', dir: 'asc' }} />
-      </div>
+      <DataTable columns={columns} rows={data} getRowId={row => row.id} defaultSort={{ id: 'date', dir: 'asc' }} />
     </Disclosure>
   );
 }
@@ -109,9 +90,7 @@ function CostDimensionTable({ rows }: { rows: PricingRow[] }) {
   ];
   return (
     <Disclosure title="View effort and service-tier detail">
-      <div className={`border-border rounded-lg border ${MAX_TABLE_HEIGHT}`}>
-        <DataTable columns={columns} rows={data} getRowId={row => row.id} defaultSort={{ id: 'estimate', dir: 'desc' }} />
-      </div>
+      <DataTable columns={columns} rows={data} getRowId={row => row.id} defaultSort={{ id: 'estimate', dir: 'desc' }} />
     </Disclosure>
   );
 }
@@ -130,11 +109,24 @@ export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colo
     }),
   }));
   const unpricedReasons = Object.entries(cost.unpriced_reasons);
+  const coverage = result.pricing_inputs.coverage;
+  /*
+    An estimate of $0.00 over billions of tokens reads as a broken card unless the card says why. The
+    reason is upstream of this screen: a list price is per request, and a scope whose headline comes
+    from bucket totals has no request to price. Name the shortfall in the reader's own numbers.
+  */
+  const noEvidence = (
+    <EmptyState
+      title="No request pricing evidence in this scope"
+      description={`A list-price estimate needs per-request records carrying a model and a source price date. ${exactTokens(coverage.classified)} of ${exactTokens(coverage.headline)} headline tokens carry that detail here, so there is nothing to price. The token figures on this page are unaffected: they come from the collected totals, which do not record per-request pricing dimensions.`}
+    />
+  );
 
   return (
-    <Card aria-label="API-equivalent cost estimate">
-      <Tabs value={view} onValueChange={next => { if (next === 'graph' || next === 'table') setView(next); }}>
-        <CardHeader>
+    <Card className="gap-0 overflow-hidden py-0" aria-label="API-equivalent cost estimate">
+      {/* The tabs own the card, so the header, the figures, and the plot stay one reading rather than stacked panels. */}
+      <Tabs value={view} onValueChange={next => { if (next === 'graph' || next === 'table') setView(next); }} className="gap-0">
+        <CardHeader className="p-4">
           <CardTitle className="text-base">API-equivalent cost estimate</CardTitle>
           <CardDescription>Public list-price estimate for request detail in this selected scope. It is not subscription spend, credits, an invoice, or an actual bill.</CardDescription>
           <CardAction>
@@ -150,74 +142,59 @@ export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colo
           <Stat label="Unpriced tokens" value={exactTokens(cost.unpriced_tokens)} caption={unpricedReasons.length ? unpricedReasons.map(([reason, tokens]) => `${reason.replaceAll('_', ' ')} ${compactTokens(tokens)}`).join(' · ') : 'none in pricing inputs'} />
           <Stat label="Input evidence" value={percent(result.pricing_inputs.coverage.headline ? result.pricing_inputs.coverage.classified / result.pricing_inputs.coverage.headline : null)} caption={`${exactTokens(result.pricing_inputs.coverage.classified)} of ${exactTokens(result.pricing_inputs.coverage.headline)} headline tokens carry a model in request detail`} />
         </StatGroup>
-        <CardContent className="grid gap-4">
+        <div className="grid gap-4 p-4">
           <TabsContent value="graph">
             {series.length && categories.length
               ? <UsageSeriesChart categories={categories} series={series} unit="estimated USD" formatValue={formatUsd} formatAxis={formatUsd} />
-              : <EmptyState title="No cost series for this scope" description="The headline token total is still valid. Cost needs request records with a source price date and model." />}
+              : noEvidence}
           </TabsContent>
           <TabsContent value="table" className="grid gap-4">
-            <CostModelTable rows={cost.by_model} />
+            <CostModelTable rows={cost.by_model} empty={noEvidence} />
             <CostPeriodTable rows={cost.series} />
             <CostDimensionTable rows={cost.by_model_effort_service_tier} />
           </TabsContent>
-          <p className="text-muted-foreground text-xs leading-relaxed">Cost lines use each request&apos;s source price date in America/Chicago. A missing date is a gap in request pricing evidence, not a zero-cost day. Hiding a line or switching this view does not change the selected scope or the token headline.</p>
-          <Collapsible>
-            <CollapsibleTrigger asChild>
-              <Button type="button" variant="outline" size="sm" className="w-full justify-start">Catalog, coverage, and assumptions</Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="text-muted-foreground mt-3 grid gap-3 text-xs leading-relaxed">
-              <p>Catalog {cost.pricing_catalog.version}. Rates are per {exactTokens(cost.pricing_catalog.unit_tokens)} tokens. {result.pricing_inputs.coverage.note}</p>
-              <p>{exactTokens(cost.missing_service_tier_calls_assumed_standard)} calls assumed Standard service tier · {exactTokens(cost.assumed_cache_write_ttl_calls)} calls assumed a 5-minute cache-write TTL · {exactTokens(cost.priority_at_standard_calls)} Anthropic priority calls priced at Standard and flagged.</p>
-              <ul className="grid gap-1">{cost.assumptions.map(assumption => <li key={assumption}>• {assumption}</li>)}</ul>
-              <div className="flex flex-wrap gap-2">{cost.pricing_catalog.sources.map(source => <Button key={`${source.label}:${source.url}`} variant="outline" size="xs" asChild><a href={source.url} target="_blank" rel="noreferrer">{source.label}</a></Button>)}</div>
-            </CollapsibleContent>
-          </Collapsible>
-        </CardContent>
+          <Disclosure title="Catalog, coverage, and assumptions" contentClassName="text-muted-foreground grid gap-3 text-xs leading-relaxed">
+            <p>Catalog {cost.pricing_catalog.version}. Rates are per {exactTokens(cost.pricing_catalog.unit_tokens)} tokens. {result.pricing_inputs.coverage.note}</p>
+            <p>{exactTokens(cost.missing_service_tier_calls_assumed_standard)} calls assumed Standard service tier · {exactTokens(cost.assumed_cache_write_ttl_calls)} calls assumed a 5-minute cache-write TTL · {exactTokens(cost.priority_at_standard_calls)} Anthropic priority calls priced at Standard and flagged.</p>
+            <ul className="grid gap-1">{cost.assumptions.map(assumption => <li key={assumption}>• {assumption}</li>)}</ul>
+            <div className="flex flex-wrap gap-2">{cost.pricing_catalog.sources.map(source => <Button key={`${source.label}:${source.url}`} variant="outline" size="xs" asChild><a href={source.url} target="_blank" rel="noreferrer">{source.label}</a></Button>)}</div>
+          </Disclosure>
+        </div>
+        <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed">Cost lines use each request&apos;s source price date in America/Chicago. A missing date is a gap in request pricing evidence, not a zero-cost day. Hiding a line or switching this view does not change the selected scope or the token headline.</p>
       </Tabs>
     </Card>
   );
 }
 
+type ModelRow = UsageQueryResult['by_model'][number];
+
 export function ModelSummaryTable({ result, colors }: { result: UsageQueryResult; colors: Map<string, string> }) {
   if (!result.by_model.length) return <EmptyState title="No model attribution in this scope" description="The selected total may include historical snapshots or activity that did not record a model." />;
-  const columns: Column<UsageQueryResult['by_model'][number]>[] = [
-    { id: 'model', header: 'Model', sortValue: row => row.model, cell: row => (
-      <span className="inline-flex items-center gap-2 font-mono text-xs"><i aria-hidden className="block size-2 rounded-full" style={{ background: colors.get(row.model) }} />{modelLabel(row.model)}</span>
+  const rows = result.by_model;
+  const sum = (pick: (row: ModelRow) => number) => rows.reduce((total, row) => total + pick(row), 0);
+  const composition = (pick: (row: ModelRow) => number, header: string): Column<ModelRow> => ({
+    id: header, header, numeric: true, sortValue: pick,
+    cell: row => compactTokens(pick(row)),
+    footer: compactTokens(sum(pick)),
+  });
+  const columns: Column<ModelRow>[] = [
+    { id: 'model', header: 'Model', sortValue: row => row.model, footer: `Total · ${rows.length} ${rows.length === 1 ? 'model' : 'models'}`, cell: row => (
+      <span className="inline-flex max-w-[26ch] items-center gap-2" title={row.model}>
+        <i aria-hidden className="inline-block size-1.5 shrink-0 rounded-xs" style={{ background: colors.get(row.model) }} />
+        <span className="truncate font-mono">{modelLabel(row.model)}</span>
+      </span>
     ) },
-    { id: 'calls', header: 'Calls', numeric: true, sortValue: row => row.calls, cell: row => exactTokens(row.calls) },
-    { id: 'tokens', header: 'Tokens', numeric: true, sortValue: row => row.total_tokens, cell: row => exactTokens(row.total_tokens) },
-    { id: 'share', header: 'Share', numeric: true, sortValue: row => row.share, cell: row => percent(row.share) },
-    { id: 'composition', header: 'Fresh / cached / write / output', numeric: true, sortValue: row => row.composition.input_fresh, cell: row => (
-      <span className="text-muted-foreground text-[11px]">{compactTokens(row.composition.input_fresh)} / {compactTokens(row.composition.input_cached)} / {compactTokens(row.composition.input_cache_write)} / {compactTokens(row.composition.output)}</span>
-    ) },
+    { id: 'calls', header: 'Calls', numeric: true, sortValue: row => row.calls, cell: row => exactTokens(row.calls), footer: exactTokens(sum(row => row.calls)) },
+    { id: 'tokens', header: 'Tokens', numeric: true, sortValue: row => row.total_tokens, cell: row => exactTokens(row.total_tokens), footer: exactTokens(sum(row => row.total_tokens)) },
+    // A withheld share sorts below every known one rather than pretending to be zero.
+    { id: 'share', header: 'Share', numeric: true, sortValue: row => row.share ?? -1, cell: row => percent(row.share),
+      footer: percent(result.headline.total_tokens ? sum(row => row.total_tokens) / result.headline.total_tokens : null) },
+    composition(row => row.composition.input_fresh, 'Fresh'),
+    composition(row => row.composition.input_cached, 'Cached'),
+    composition(row => row.composition.input_cache_write, 'Cache write'),
+    composition(row => row.composition.output, 'Output'),
   ];
-  return (
-    <div className={`border-border rounded-lg border ${MAX_TABLE_HEIGHT}`}>
-      <DataTable columns={columns} rows={result.by_model} getRowId={row => row.model} defaultSort={{ id: 'tokens', dir: 'desc' }} />
-    </div>
-  );
-}
-
-function ModelPeriodTable({ result }: { result: UsageQueryResult }) {
-  const rows = result.model_series.flatMap(model => model.points.map(point => ({ model: model.model, ...point, id: `${point.start}:${model.model}` })))
-    .sort((a, b) => a.start.localeCompare(b.start) || a.model.localeCompare(b.model));
-  if (!rows.length) return null;
-  const columns: Column<typeof rows[number]>[] = [
-    { id: 'interval', header: 'Interval', sortValue: row => row.start, cell: row => (
-      <span className="font-mono text-xs">{intervalLabel({ ...row, end: result.series.points.find(point => point.start === row.start)?.end ?? row.start, state: result.series.points.find(point => point.start === row.start)?.state ?? 'observed' }, result.scope.range.timezone, result.series.resolution)}</span>
-    ) },
-    { id: 'model', header: 'Model', sortValue: row => row.model, cell: row => <span className="font-mono text-xs">{modelLabel(row.model)}</span> },
-    { id: 'calls', header: 'Calls', numeric: true, sortValue: row => row.calls, cell: row => exactTokens(row.calls) },
-    { id: 'tokens', header: 'Tokens', numeric: true, sortValue: row => row.total_tokens, cell: row => exactTokens(row.total_tokens) },
-  ];
-  return (
-    <Disclosure title="View interval model values">
-      <div className={`border-border rounded-lg border ${MAX_TABLE_HEIGHT}`}>
-        <DataTable columns={columns} rows={rows} getRowId={row => row.id} defaultSort={{ id: 'interval', dir: 'asc' }} />
-      </div>
-    </Disclosure>
-  );
+  return <DataTable columns={columns} rows={rows} getRowId={row => row.model} defaultSort={{ id: 'tokens', dir: 'desc' }} />;
 }
 
 export function TokensByModelCard({ result, colors }: { result: UsageQueryResult; colors: Map<string, string> }) {
@@ -243,11 +220,10 @@ export function TokensByModelCard({ result, colors }: { result: UsageQueryResult
   const unattributed = Math.max(0, result.headline.total_tokens - attributed);
 
   return (
-    <Card aria-label="Tokens by model">
-      <Tabs value={view} onValueChange={next => { if (next === 'graph' || next === 'table') setView(next); }}>
-        <CardHeader>
+    <Card className="gap-0 overflow-hidden py-0" aria-label="Tokens by model">
+      <Tabs value={view} onValueChange={next => { if (next === 'graph' || next === 'table') setView(next); }} className="gap-0">
+        <CardHeader className="p-4">
           <CardTitle className="text-base">Tokens by model</CardTitle>
-          <CardDescription>Which recorded models contributed to the selected token scope. Model colors match the API-equivalent cost card.</CardDescription>
           <CardAction>
             <TabsList aria-label="Tokens by model view">
               <TabsTrigger value="graph">Graph</TabsTrigger>
@@ -255,22 +231,20 @@ export function TokensByModelCard({ result, colors }: { result: UsageQueryResult
             </TabsList>
           </CardAction>
         </CardHeader>
-        <CardContent className="grid gap-4">
-          <TabsContent value="graph">
-            {series.length
-              ? <UsageSeriesChart categories={categories} series={series} unit="tokens" formatValue={value => `${exactTokens(value)} tokens`} formatAxis={compactTokens} />
-              : <EmptyState title="No model series in this scope" description="The selected token total remains visible above, but these records do not carry a model breakdown." />}
-          </TabsContent>
-          <TabsContent value="table" className="grid gap-4">
-            <ModelSummaryTable result={result} colors={colors} />
-            <ModelPeriodTable result={result} />
-          </TabsContent>
-          <p className="text-muted-foreground text-xs leading-relaxed">
-            {exactTokens(attributed)} of {exactTokens(result.headline.total_tokens)} headline tokens are attributed to a recorded model.
-            {unattributed > 0 ? ` ${exactTokens(unattributed)} tokens remain outside this breakdown, including snapshots without model detail.` : ' The model rows reconcile to the headline.'}
-            {' '}A missing point means model detail is unavailable for that interval; it is not drawn as zero. Hiding a line or switching views never changes the headline total.
-          </p>
-        </CardContent>
+        {/* The plot is inset; the ledger runs to the card's own edge, the way a shadcn table sits in a card. */}
+        <TabsContent value="graph" className="p-4 pt-6">
+          {series.length
+            ? <UsageSeriesChart categories={categories} series={series} unit="tokens" formatValue={value => `${exactTokens(value)} tokens`} formatAxis={compactTokens} />
+            : <EmptyState title="No model series in this scope" description="The selected token total remains visible above, but these records do not carry a model breakdown." />}
+        </TabsContent>
+        <TabsContent value="table">
+          <ModelSummaryTable result={result} colors={colors} />
+        </TabsContent>
+        <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed">
+          {exactTokens(attributed)} of {exactTokens(result.headline.total_tokens)} headline tokens are attributed to a recorded model.
+          {unattributed > 0 ? ` ${exactTokens(unattributed)} tokens remain outside this breakdown, including snapshots without model detail.` : ' The model rows reconcile to the headline.'}
+          {' '}A missing point means model detail is unavailable for that interval; it is not drawn as zero.
+        </p>
       </Tabs>
     </Card>
   );

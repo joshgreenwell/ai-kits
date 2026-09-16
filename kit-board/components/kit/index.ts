@@ -1,6 +1,7 @@
 export { CopyButton } from "./copy-button"
 export { DataTable, type Column } from "./data-table"
 export { DiffView, type DiffLine } from "./diff-view"
+export { Disclosure } from "./disclosure"
 export { EmptyState } from "./empty-state"
 export { Field } from "./field"
 export { KitCard } from "./kit-card"

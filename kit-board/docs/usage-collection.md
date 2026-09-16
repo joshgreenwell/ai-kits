@@ -216,6 +216,6 @@ The experimental cloud/uncollected token-equivalent card and calibration control
 
 The active source allowlist, provider mappings, calendar behavior, normalization, failure handling, and verification evidence live in [reset feeds](reset-feeds.md). Keep that document authoritative instead of copying provider-specific instructions here. Current concurrent source changes select NextReset for Codex and retain Reset Radar for Claude; deployment of those changes was not verified by this usage audit.
 
-Checked-in Vercel configuration schedules a daily feed check at 13:15 UTC. Opening the reset calendar (`/usage/resets`) or Settings → Reset feeds can request a refresh, constrained by a shared 30-minute lease. The v2 companion does not implement hourly feed refresh; that old claim referred to the v1 collector's `--refresh-feeds` option.
+Checked-in Vercel configuration schedules a daily feed check at 13:15 UTC. Opening the reset calendar (`/usage/allowances#reset-calendar`) or Settings → Reset feeds can request a refresh, constrained by a shared 30-minute lease. The v2 companion does not implement hourly feed refresh; that old claim referred to the v1 collector's `--refresh-feeds` option.
 
 Feed fetching and normalization use no model calls. These are attributed public reset/announcement claims, never personal allowance observations, token counts, or permission to redeem a credit. Retained source snapshots are separate historical evidence.

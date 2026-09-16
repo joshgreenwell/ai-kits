@@ -87,6 +87,12 @@ export type UsageQueryResult = {
   series: { resolution: Resolution; points: SeriesPoint[]; excludes_snapshot_tokens: number };
   by_model: { model: string; total_tokens: number; calls: number; composition: Composition; share: number | null; basis: 'buckets' | 'requests' }[];
   model_series: { model: string; points: { start: string; total_tokens: number; calls: number }[] }[];
+  /**
+   * Model crossed with reasoning effort over the same periods. Only request records carry effort, so this
+   * is request detail alone and never reconciles to the bucket headline; `coverage` says how much of the
+   * headline it can speak for, and a model that reports no effort is kept as `unknown` rather than dropped.
+   */
+  effort_series: { rows: { model: string; effort: string; points: { start: string; total_tokens: number; calls: number }[] }[]; coverage: Coverage };
   pricing_inputs: { rows: { provider: string | null; model: string | null; reasoning_effort: string | null; service_tier: string | null; speed: string | null; context_window_tokens: number | null;
       cache_write_ttl: string | null; token_state: string | null; context_band: 'short' | 'long'; rate_date: string | null; calls: number; composition: Composition; total_tokens: number }[];
     coverage: Coverage; note: string };
@@ -328,6 +334,12 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         (${loggedInput} > ${cp.add(thresholds.openai)}::bigint) AS over_openai, (${loggedInput} > ${cp.add(thresholds.anthropic)}::bigint) AS over_anthropic,
         to_char(r.activity_at AT TIME ZONE ${cp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date, ${compositionSelect()}
       FROM requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ORDER BY total_tokens DESC NULLS LAST`, cp.values) : [];
+    // Effort is a request-only dimension: the hourly ledger records a model but never how hard it was asked to think.
+    const ep = new Params(); const ecte = requestCte(ep, q, accounts, range);
+    const effortRows = accounts.length ? await db.unsafe(`WITH ${ecte.text}
+      SELECT coalesce(r.model_actual, '${UNKNOWN}') AS model, coalesce(r.reasoning_effort, '${UNKNOWN}') AS effort, ${periodExpr('r.activity_at', q.resolution, ep, tz)} AS period_start,
+        sum(r.observed_total_tokens)::float8 AS total_tokens, count(*)::int AS calls
+      FROM requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY 3`, ep.values) : [];
 
     // 3. Tools, callers, and outcomes: one invocation identity counts once; the newest result names its outcome.
     const tp = new Params(); const tcte = requestCte(tp, q, accounts, range);
@@ -398,7 +410,11 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // 6. Monthly snapshots for the months the range touches, crosswalked to accounts where the operator mapped them.
     const months = monthsWithin(range, tz);
     const closedMonths = months.filter(month => monthBounds(month, tz).end <= now);
-    const snapshotRows = await db.unsafe(`SELECT DISTINCT ON (rv.period_key, rv.subject_key) rv.period_key, rv.subject_key, rv.status, rv.produced_at,
+    // The crosswalk table arrives with the report-subjects migration; before it exists (SQLSTATE 42P01)
+    // no subject is mapped, which is the same answer an empty table gives. Reading the envelopes without
+    // the join keeps the whole query answering across the deploy-then-migrate window: an unmapped
+    // snapshot is listed and never counted, exactly as it is when the table is there and empty.
+    const snapshotSql = (crosswalk: boolean) => `SELECT DISTINCT ON (rv.period_key, rv.subject_key) rv.period_key, rv.subject_key, rv.status, rv.produced_at,
         rv.payload->>'machine_name' AS machine_name,
         (rv.payload#>>'{report,current,totals,total_tokens}')::float8 AS total_tokens, (rv.payload#>>'{report,current,totals,calls}')::float8 AS calls,
         (rv.payload#>>'{report,current,totals,threads}')::float8 AS threads,
@@ -407,11 +423,14 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         rv.payload#>'{report,current,environmental_estimate}' AS environmental,
         rv.payload#>>'{report,current,api_equivalent_cost,pricing_catalog,version}' AS pricing_catalog,
         (rv.payload#>>'{report,current,api_equivalent_cost,estimated_cost_usd}')::float8 AS estimated_cost_usd,
-        sub.account_id, sub.source_timezone
-      FROM personal_hub.report_revisions rv LEFT JOIN personal_hub.usage_report_subjects sub ON sub.subject_key = rv.subject_key
+        ${crosswalk ? 'sub.account_id, sub.source_timezone' : 'NULL::text AS account_id, NULL::text AS source_timezone'}
+      FROM personal_hub.report_revisions rv${crosswalk ? ' LEFT JOIN personal_hub.usage_report_subjects sub ON sub.subject_key = rv.subject_key' : ''}
       WHERE rv.kind = 'usage' AND rv.status <> 'failed' AND rv.period_key = ANY($1::text[])
-      ORDER BY rv.period_key, rv.subject_key, CASE WHEN rv.period_key = ANY($2::text[]) AND rv.status = 'complete' THEN 0 ELSE 1 END, rv.produced_at DESC, rv.received_at DESC`,
-      [months, closedMonths]);
+      ORDER BY rv.period_key, rv.subject_key, CASE WHEN rv.period_key = ANY($2::text[]) AND rv.status = 'complete' THEN 0 ELSE 1 END, rv.produced_at DESC, rv.received_at DESC`;
+    const snapshotRows = await db.unsafe(snapshotSql(true), [months, closedMonths]).catch(error => {
+      if ((error as { code?: string }).code !== '42P01') throw error;
+      return db.unsafe(snapshotSql(false), [months, closedMonths]);
+    });
     // The whole-month cohort population per account: what the environmental class is inferred from, unfiltered,
     // and which (account, source month) pairs the hourly ledger covers at all.
     const mp = new Params();
@@ -566,6 +585,22 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const modelRows = [...byModel.entries()].map(([model, value]) => ({ model, ...value, share: share(value.total_tokens, headlineTokens) })).sort((a, b) => b.total_tokens - a.total_tokens);
     const modelSeriesRows = [...modelSeries.entries()].map(([model, series]) => ({ model,
       points: [...series.entries()].sort((a, b) => a[0] - b[0]).map(([index, value]) => ({ start: points[index].start, ...value })) }));
+    // One row per model and effort, carrying only the periods it actually recorded; a period with no request stays absent.
+    const effortSeries = new Map<string, { model: string; effort: string; points: Map<number, { total_tokens: number; calls: number }> }>();
+    let effortTokens = 0;
+    for (const row of effortRows) {
+      const index = pointIndex.get(new Date(row.period_start as string).getTime());
+      if (index === undefined) continue;
+      const model = row.model as string, effort = row.effort as string, key = `${model}\u0000${effort}`;
+      const series = effortSeries.get(key) ?? { model, effort, points: new Map() };
+      const entry = series.points.get(index) ?? { total_tokens: 0, calls: 0 };
+      entry.total_tokens += num(row.total_tokens); entry.calls += num(row.calls);
+      effortTokens += num(row.total_tokens);
+      series.points.set(index, entry); effortSeries.set(key, series);
+    }
+    const effortSeriesRows = [...effortSeries.values()].map(({ model, effort, points: byIndex }) => ({ model, effort,
+      points: [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([index, value]) => ({ start: points[index].start, ...value })) }))
+      .sort((a, b) => a.model.localeCompare(b.model) || a.effort.localeCompare(b.effort));
 
     const requestEligible = useRequests ? requestTotals.matching.tokens : bucketTotals.tokens;
     const requestCovered = useRequests ? requestTotals.matching.tokens : requestTotals.all.tokens;
@@ -645,6 +680,8 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       headline: { ...headline, last_observation: lastObservation ? new Date(lastObservation).toISOString() : null },
       series: { resolution: q.resolution, points, excludes_snapshot_tokens: snapshotSeriesExcluded },
       by_model: modelRows, model_series: modelSeriesRows,
+      effort_series: { rows: effortSeriesRows,
+        coverage: coverage('tokens', headlineTokens, requestCovered, effortTokens, 'Effort is recorded on request detail only; the eligible population is the request-covered tokens, and a request without a reported effort is kept as unknown.') },
       pricing_inputs: { rows: pricing, coverage: coverage('tokens', headlineTokens, pricedEligible, pricedWithEvidence, 'Pricing inputs exist only on request records; the eligible population is the request-covered tokens, and rows without a model cannot be priced.'), note: 'Catalog pricing is applied by the cost calculation (USG-013); these are its inputs with effort, tier, speed, context, and cache-write evidence preserved and unknown kept unknown.' },
       projects: { rows: projectRowsOut,
         coverage: coverage('tokens', headlineTokens, requestCovered, projectEvidenced, 'Project evidence: request-covered tokens with a project identity or an explicit No project; Unknown project is the remainder.'),
@@ -671,10 +708,21 @@ export function createUsageQuery(getDatabase?: () => Sql) {
   /** Subjects seen in monthly reports beside their crosswalk, for the Settings surface that maps them. */
   async function listReportSubjects() {
     const db = await sql();
-    const rows = await db`SELECT rv.subject_key, max(rv.payload->>'machine_name') AS machine_name, min(rv.period_key) AS first_month, max(rv.period_key) AS last_month,
+    // Before the crosswalk table exists (SQLSTATE 42P01) every subject is simply unmapped, so the surface
+    // still lists what the envelopes name; mapping one needs the migration and says so on its own.
+    const subjectRows = (crosswalk: boolean) => crosswalk
+      ? db`SELECT rv.subject_key, max(rv.payload->>'machine_name') AS machine_name, min(rv.period_key) AS first_month, max(rv.period_key) AS last_month,
         count(*)::int AS revisions, sub.account_id, sub.source_timezone, sub.updated_at
       FROM personal_hub.report_revisions rv LEFT JOIN personal_hub.usage_report_subjects sub ON sub.subject_key = rv.subject_key
-      WHERE rv.kind = 'usage' GROUP BY rv.subject_key, sub.account_id, sub.source_timezone, sub.updated_at ORDER BY rv.subject_key`;
+      WHERE rv.kind = 'usage' GROUP BY rv.subject_key, sub.account_id, sub.source_timezone, sub.updated_at ORDER BY rv.subject_key`
+      : db`SELECT rv.subject_key, max(rv.payload->>'machine_name') AS machine_name, min(rv.period_key) AS first_month, max(rv.period_key) AS last_month,
+        count(*)::int AS revisions, NULL::text AS account_id, NULL::text AS source_timezone, NULL::timestamptz AS updated_at
+      FROM personal_hub.report_revisions rv
+      WHERE rv.kind = 'usage' GROUP BY rv.subject_key ORDER BY rv.subject_key`;
+    const rows = await subjectRows(true).catch(error => {
+      if ((error as { code?: string }).code !== '42P01') throw error;
+      return subjectRows(false);
+    });
     const accounts = await db`SELECT id, provider, label FROM personal_hub.usage_accounts ORDER BY created_at, id`;
     return clone({ subjects: rows, accounts });
   }

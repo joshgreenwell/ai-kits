@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
+import { cn } from 'cn';
 import { Button } from '@/components/ui/button';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 
@@ -13,6 +14,12 @@ export type ChartSeries = { key: string; label: string; color: string; values: (
 /** Stable within one result and shared by the cost and token cards. */
 export function modelColors(models: string[]) {
   return new Map([...new Set(models)].sort().map((model, index) => [model, MODEL_COLORS[index % MODEL_COLORS.length]]));
+}
+
+/** One point as a sentence: which series, which category, the exact value, and the evidence behind it. */
+function pointLabel(item: ChartSeries, category: ChartCategory, index: number, formatValue: (value: number) => string) {
+  const detail = item.details?.[index];
+  return `${item.label}, ${category.label}: ${formatValue(item.values[index] as number)}${detail ? `, ${detail}` : ''}`;
 }
 
 function chartKey(key: string) {
@@ -45,30 +52,12 @@ export function UsageSeriesChart({ categories, series, unit, formatValue, format
   });
 
   return (
-    <div className="grid gap-3" data-slot="usage-series-chart">
-      <div className="flex flex-wrap items-center gap-2" aria-label="Chart series">
-        {series.map(item => (
-          <Button key={item.key} type="button" size="xs" variant={visible.has(item.key) ? 'outline' : 'ghost'}
-            aria-pressed={visible.has(item.key)}
-            onClick={() => {
-              setVisible(current => {
-                const next = new Set(current);
-                if (next.has(item.key)) next.delete(item.key); else next.add(item.key);
-                return next;
-              });
-            }}>
-            <i aria-hidden className="block h-0.5 w-4 rounded" style={{ background: visible.has(item.key) ? item.color : 'var(--border)' }} />
-            <span className={visible.has(item.key) ? '' : 'text-muted-foreground line-through'}>{item.label}</span>
-          </Button>
-        ))}
-        {series.length > 5 ? <span className="text-muted-foreground text-[11px]">Top 5 shown initially.</span> : null}
-        {visible.size < series.length ? <Button type="button" variant="ghost" size="xs" onClick={() => setVisible(new Set(series.map(item => item.key)))}>Show all</Button> : null}
-      </div>
-
+    <div className="grid gap-1" data-slot="usage-series-chart">
       <ChartContainer config={config} className="aspect-auto h-[220px] w-full" aria-label={`${unit} over time by model`}>
         <LineChart accessibilityLayer data={data} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
           <CartesianGrid vertical={false} />
-          <XAxis dataKey="shortLabel" tickLine={false} axisLine={false} tickMargin={8} />
+          {/* A uniform gap keeps the cadence even; without it a short label (Sep 1) buys a tick a long one (Aug 18) cannot. */}
+          <XAxis dataKey="shortLabel" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" minTickGap={28} />
           <YAxis tickLine={false} axisLine={false} width={48} tickMargin={4} tickFormatter={formatAxis} />
           <ChartTooltip
             content={
@@ -94,24 +83,58 @@ export function UsageSeriesChart({ categories, series, unit, formatValue, format
           {shown.map(item => {
             const key = chartKey(item.key);
             return (
-              <Line key={item.key} dataKey={key} type="linear" stroke={`var(--color-${key})`} strokeWidth={2}
-                connectNulls={false} isAnimationActive={false}
-                dot={props => {
-                  const value = typeof props.value === 'number' ? props.value : Number(props.value);
-                  if (props.cx == null || props.cy == null || !Number.isFinite(value)) return null;
-                  const payload = props.payload as Record<string, unknown> | undefined;
-                  const detail = payload?.[`${key}_detail`];
-                  const label = `${item.label}, ${String(payload?.label ?? '')}: ${formatValue(value)}${typeof detail === 'string' ? `, ${detail}` : ''}`;
-                  return (
-                    <circle cx={props.cx} cy={props.cy} r={3.5} fill={item.color} stroke="var(--card)" strokeWidth={2}
-                      role="img" aria-label={label} />
-                  );
-                }}
-                activeDot={{ r: 5, stroke: 'var(--card)', strokeWidth: 2 }} />
+              // `natural` and no resting dot is the shadcn line chart: the reading is the tooltip's job,
+              // so the plot stays a smooth line and only the hovered point is marked.
+              <Line key={item.key} dataKey={key} type="natural" stroke={`var(--color-${key})`} strokeWidth={2}
+                connectNulls={false} isAnimationActive={false} dot={false}
+                activeDot={{ r: 4, stroke: 'var(--card)', strokeWidth: 2 }} />
             );
           })}
         </LineChart>
       </ChartContainer>
+
+      {/*
+        shadcn draws its legend as swatch and label beneath the plot; these are the same rows, made
+        pressable so a reader can take a series out of the picture without leaving the card. A hidden
+        series is dimmed rather than struck through: the label stays legible while the swatch carries
+        the state.
+      */}
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 pt-3 text-xs" aria-label="Chart series">
+        {series.map(item => {
+          const on = visible.has(item.key);
+          return (
+            <button key={item.key} type="button" aria-pressed={on} title={item.label}
+              className="focus-visible:ring-ring/50 flex max-w-[16rem] min-w-0 cursor-pointer items-center gap-1.5 rounded-sm outline-none focus-visible:ring-[3px]"
+              onClick={() => {
+                setVisible(current => {
+                  const next = new Set(current);
+                  if (next.has(item.key)) next.delete(item.key); else next.add(item.key);
+                  return next;
+                });
+              }}>
+              <i aria-hidden className="block size-2 shrink-0 rounded-[2px]" style={{ background: on ? item.color : 'var(--border)' }} />
+              <span className={cn('truncate', on ? 'text-foreground' : 'text-muted-foreground')}>{item.label}</span>
+            </button>
+          );
+        })}
+        {visible.size < series.length ? (
+          <Button type="button" variant="ghost" size="xs" className="text-muted-foreground -my-1" onClick={() => setVisible(new Set(series.map(item => item.key)))}>Show all</Button>
+        ) : null}
+      </div>
+
+      {/*
+        Recharts draws nothing until it has measured the container, so the exact values live in the DOM
+        as well: the same reading a sighted reader gets from the tooltip, available to assistive tech
+        immediately and independent of layout.
+      */}
+      <div className="sr-only">
+        {shown.map(item => categories.map((category, index) => {
+          const value = item.values[index];
+          return typeof value === 'number' && Number.isFinite(value)
+            ? <span key={`${item.key}:${category.key}`} role="img" aria-label={pointLabel(item, category, index, formatValue)} />
+            : null;
+        }))}
+      </div>
     </div>
   );
 }

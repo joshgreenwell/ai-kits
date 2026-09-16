@@ -127,6 +127,9 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     assert.deepEqual([day('2026-09-03T05:00:00.000Z').total_tokens, day('2026-09-04T05:00:00.000Z').state, day('2026-09-14T05:00:00.000Z').state], [440, 'zero', 'partial']);
     assert.equal(all.series.points.reduce((n, p) => n + p.total_tokens, 0), all.headline.total_tokens, 'the series reconciles to the headline');
     assert.deepEqual(all.model_series.find(m => m.model === 'm1')!.points.map(p => [p.start, p.total_tokens]), [['2026-09-02T05:00:00.000Z', 170], ['2026-09-14T05:00:00.000Z', 5]]);
+    // Effort is request detail only, so it speaks for the same 210 tokens as pricing_inputs, not the 615-token headline.
+    assert.deepEqual(all.effort_series.rows.map(r => [r.model, r.effort, r.points.reduce((n, p) => n + p.total_tokens, 0)]), [['m1', 'high', 150], ['m1', 'unknown', 20], ['m2', 'low', 40]]);
+    assert.deepEqual([all.effort_series.coverage.eligible, all.effort_series.coverage.classified], [210, 210]);
     assert.deepEqual(all.request_detail, { covered_tokens: 210, covered_calls: 3, coverage: { unit: 'tokens', headline: 615, eligible: 615, classified: 210, applicable: 1, complete: 210 / 615, note: all.request_detail.coverage.note } });
     assert.deepEqual(all.projects.rows.map(r => [r.state, r.label, r.total_tokens, r.calls, r.conversations]), [['project', 'Fixture project', 170, 2, 1], ['no_project', null, 40, 1, 1]]);
     assert.deepEqual([all.projects.coverage.headline, all.projects.coverage.eligible, all.projects.coverage.classified, all.projects.registry.eligible, all.projects.registry.classified], [615, 210, 210, 170, 170]);

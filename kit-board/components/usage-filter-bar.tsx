@@ -1,10 +1,14 @@
 'use client';
+import type * as React from 'react';
 import { useEffect, useState } from 'react';
+import { ChevronDownIcon, XIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { cn } from 'cn';
 import { PRESETS, type Preset } from '@/lib/usage-periods';
 import {
   AGENT_SCOPES, PRESET_LABELS, PROJECT_STATES, PROJECT_STATE_LABELS, PROVIDER_OPTIONS, SURFACE_OPTIONS, activeFilterChips, clearedFilters, customRangeFromDates,
@@ -28,6 +32,7 @@ export function UsageFilterBar({ filters, onChange, vocabulary, range, labels, d
   range: { start: string; end: string; anchored_to_now: boolean } | null; labels: FilterLabels; disabled?: boolean;
 }) {
   const chips = activeFilterChips(filters, labels);
+  const moreCount = [filters.providers, filters.models, filters.efforts, filters.machines, filters.surfaces].reduce((count, list) => count + list.length, 0) + (filters.agent_scope === 'all' ? 0 : 1);
   // The date inputs follow the URL's own bounds for a custom range (so a shared link shows its dates) and the resolved range otherwise.
   const bounds = filters.preset === 'custom' && filters.start && filters.end ? { start: filters.start, end: filters.end } : range;
   const dates = bounds ? rangeDates(bounds, filters.timezone) : { start: '', end: '' };
@@ -70,7 +75,17 @@ export function UsageFilterBar({ filters, onChange, vocabulary, range, labels, d
         <MultiSelect label="Projects" placeholder="All projects" selected={filters.projects} onToggle={value => toggle('projects', value)} disabled={disabled}
           options={[...vocabulary.projects, ...PROJECT_STATES.map(state => ({ value: state, label: PROJECT_STATE_LABELS[state], hint: 'bucket' }))]} />
         <Popover>
-          <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" disabled={disabled}>More filters</Button></PopoverTrigger>
+          <PopoverTrigger asChild>
+            {/* data-slot is how app/theme.css styles a control, so wearing the Select trigger's slot is
+                what makes this the same control as Period - not a copy of its classes, which theme.css
+                would override anyway. */}
+            <FilterTrigger disabled={disabled} label={`More filters${moreCount ? `: ${moreCount} applied` : ''}`}>
+              <span className="flex min-w-0 items-center gap-2">
+                More filters
+                {moreCount ? <Badge variant="soft" className="-my-0.5">{moreCount}</Badge> : null}
+              </span>
+            </FilterTrigger>
+          </PopoverTrigger>
           <PopoverContent align="start" className="grid w-[22rem] max-w-[calc(100vw-2rem)] gap-4">
             <CheckList title="Provider" options={PROVIDER_OPTIONS.map(v => ({ value: v, label: v }))} selected={filters.providers} onToggle={v => toggle('providers', v)} />
             <CheckList title="Model" options={vocabulary.models} selected={filters.models} onToggle={v => toggle('models', v)} empty="Models appear once activity is in scope." />
@@ -86,7 +101,7 @@ export function UsageFilterBar({ filters, onChange, vocabulary, range, labels, d
                   </Button>
                 ))}
               </div>
-              <p className="text-muted-foreground text-[11px]">Effort, surface, project, and agent filters apply to request detail; the headline then covers that detail and says what it could not examine.</p>
+              <p className="text-muted-foreground text-xs leading-relaxed">Effort, surface, project, and agent filters apply to request detail; the headline then covers that detail and says what it could not examine.</p>
             </div>
           </PopoverContent>
         </Popover>
@@ -102,21 +117,41 @@ export function UsageFilterBar({ filters, onChange, vocabulary, range, labels, d
         </label>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-muted-foreground font-mono text-[11px]">
+        <span className="text-muted-foreground font-mono text-xs">
           {range ? `${new Date(range.start).toLocaleString('en-US', { timeZone: filters.timezone, month: 'short', day: 'numeric' })} to ${new Date(range.end).toLocaleString('en-US', { timeZone: filters.timezone, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}${range.anchored_to_now ? ' (now)' : ''} · ` : ''}
           {filters.timezone}
         </span>
         {chips.map(chip => (
           <Badge key={chip.key} variant="soft" className="gap-1 pr-1">
             {chip.label}
-            <button type="button" aria-label={`Remove ${chip.label}`} onClick={() => onChange(chip.next)} className="hover:bg-primary/20 rounded-full px-1 leading-none">×</button>
+            <button type="button" aria-label={`Remove ${chip.label}`} onClick={() => onChange(chip.next)} className="hover:bg-foreground/10 focus-visible:ring-ring/50 -mr-0.5 grid size-4 place-items-center rounded-full outline-none focus-visible:ring-[3px]">
+              <XIcon aria-hidden="true" className="size-3" />
+            </button>
           </Badge>
         ))}
-        {chips.length ? <Button type="button" variant="ghost" size="sm" onClick={() => onChange(clearedFilters(filters))}>Clear all</Button> : <span className="text-muted-foreground text-[11px]">All accounts and projects</span>}
+        {chips.length ? <Button type="button" variant="ghost" size="sm" onClick={() => onChange(clearedFilters(filters))}>Clear all</Button> : <span className="text-muted-foreground text-xs">All accounts and projects</span>}
       </div>
     </section>
   );
 }
+
+/**
+ * The one control the filter bar adds. app/theme.css dresses every select trigger in the app through
+ * `[data-slot="select-trigger"]`, so carrying that slot is what keeps Accounts, Projects, and More
+ * filters the same 44px, 14px, card-backed control as Period and Resolution. Copying Tailwind classes
+ * out of the Select cannot do it: theme.css overrides those utilities, which is exactly how the first
+ * attempt drifted to a 36px transparent button.
+ */
+const FilterTrigger = ({ className, label, disabled, children, ...props }: React.ComponentProps<'button'> & { label: string }) => (
+  // data-slot sits AFTER the spread on purpose: PopoverTrigger's `asChild` passes its own
+  // data-slot="popover-trigger" down as a prop, and whichever is written last wins. Before this the
+  // popover's slot overwrote the select's and theme.css dressed nothing, which is how these drifted
+  // back to a 46px transparent button while Period stayed the 44px card-backed one.
+  <button type="button" role="combobox" aria-label={label} disabled={disabled} className={cn('w-fit', className)} {...props} data-slot="select-trigger" data-size="default">
+    {children}
+    <ChevronDownIcon aria-hidden="true" />
+  </button>
+);
 
 function MultiSelect({ label, placeholder, options: given, selected, onToggle, disabled }: { label: string; placeholder: string; options: FilterOption[]; selected: string[]; onToggle: (value: string) => void; disabled?: boolean }) {
   const options = withSelected(given, selected);
@@ -125,7 +160,13 @@ function MultiSelect({ label, placeholder, options: given, selected, onToggle, d
     <div className="grid gap-1.5">
       <span className="text-muted-foreground text-xs font-semibold">{label}</span>
       <Popover>
-        <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" className="min-w-[160px] justify-between font-normal" disabled={disabled} aria-label={`${label}: ${summary}`}>{summary}<span aria-hidden="true" className="text-muted-foreground ml-2">▾</span></Button></PopoverTrigger>
+        {/* A Radix Select is single-select, so this stays a popover of checkboxes wearing the Select
+            trigger's own slot, so it cannot drift from Period and Resolution. */}
+        <PopoverTrigger asChild>
+          <FilterTrigger className="w-[170px]" disabled={disabled} label={`${label}: ${summary}`}>
+            <span className={cn('truncate', selected.length === 0 && 'text-muted-foreground')}>{summary}</span>
+          </FilterTrigger>
+        </PopoverTrigger>
         <PopoverContent align="start" className="w-[18rem] max-w-[calc(100vw-2rem)]">
           <CheckList title={label} options={options} selected={selected} onToggle={onToggle} empty="Nothing to choose yet." />
         </PopoverContent>
@@ -142,13 +183,13 @@ function CheckList({ title, options: given, selected, onToggle, empty }: { title
   return (
     <fieldset className="grid gap-1">
       <legend className="text-muted-foreground mb-1 text-xs font-semibold">{title}</legend>
-      {options.length === 0 ? <p className="text-muted-foreground text-[11px]">{empty ?? 'No options.'}</p> : null}
+      {options.length === 0 ? <p className="text-muted-foreground text-xs">{empty ?? 'No options.'}</p> : null}
       <div className="grid max-h-56 gap-1 overflow-auto">
         {options.map(option => (
-          <label key={option.value} className="hover:bg-accent flex cursor-pointer items-center gap-2 rounded-sm px-1 py-0.5 text-sm">
-            <input type="checkbox" className="accent-primary" checked={selected.includes(option.value)} onChange={() => onToggle(option.value)} />
+          <label key={option.value} className="hover:bg-accent flex cursor-pointer items-center gap-2 rounded-sm px-1.5 py-1 text-sm">
+            <Checkbox checked={selected.includes(option.value)} onCheckedChange={() => onToggle(option.value)} />
             <span className="truncate">{option.label}</span>
-            {option.hint ? <span className="text-muted-foreground ml-auto font-mono text-[10px]">{option.hint}</span> : null}
+            {option.hint ? <span className="text-muted-foreground ml-auto shrink-0 font-mono text-[10px]">{option.hint}</span> : null}
           </label>
         ))}
       </div>

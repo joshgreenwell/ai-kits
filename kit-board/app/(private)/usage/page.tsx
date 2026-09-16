@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { MachineReporters } from "@/components/machine-reporters";
-import { PageHeader } from "@/components/page-header";
 import { TokensOverviewLive } from "@/components/tokens-overview";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -272,11 +271,6 @@ function aggregateCostDimensions(rows: StoredReport[]) {
 export default function TokensPage() {
   return (
     <Workspace>
-      <PageHeader
-        eyebrow="Usage · tokens"
-        title="Tokens"
-        description="Observed model activity from the collected ledgers for the selected period, accounts, and projects. Allowance percentages stay on their own tab; the monthly analyzer reports follow below on their own snapshots."
-      />
       <TokensOverviewLive />
       <MonthlyReports />
     </Workspace>

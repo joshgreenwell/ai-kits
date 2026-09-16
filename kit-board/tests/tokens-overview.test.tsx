@@ -40,6 +40,7 @@ function synthetic(): UsageQueryResult {
     series: { resolution: 'day', points, excludes_snapshot_tokens: 0 },
     by_model: [{ model: 'm1', total_tokens: 1_400, calls: 7, composition: composition(1_400, 0, 0, 0, null), share: 0.7, basis: 'buckets' }],
     model_series: [{ model: 'm1', points: [{ start: points[0].start, total_tokens: 1_000, calls: 4 }, { start: points[4].start, total_tokens: 400, calls: 3 }] }],
+    effort_series: { rows: [], coverage: empty },
     pricing_inputs: { rows: [], coverage: coverage(2_000, 1_400, 1_400), note: 'fixture pricing coverage' },
     projects: { rows: [], coverage: empty, registry: empty },
     agents: { rows: [], summary: { main_tokens: 0, subagent_tokens: 0, unattributed_tokens: 0, observed_children: 0, spawns: 0, by_class: {} }, coverage: empty },
@@ -93,17 +94,18 @@ test('the rendered headline, composition, and series agree with the query result
   const summary = seriesSummary(result.series.points);
   assert.match(body, /5 intervals · 2 observed · 1 recorded as zero · 1 without collector coverage · 1 still being observed\. Bars sum to 2,000 tokens/);
   assert.equal(summary.total, result.headline.total_tokens - 0, 'day sums equal the headline when nothing is excluded from the series');
-  assert.match(html, /aria-label="Tue, Sep 1: 1,000 tokens, 4 calls, observed"[^>]*tabindex="0"/, 'each bar names its interval and exact values; the first is the one tab stop');
-  assert.match(html, /aria-label="Wed, Sep 2: 0 tokens, 0 calls, no activity recorded"[^>]*tabindex="-1"/, 'the other bars are reached with the arrow keys');
+  assert.match(html, /role="img" aria-label="Tue, Sep 1: 1,000 tokens, 4 calls, observed"/, 'every bar is mirrored for assistive tech with its interval and exact values');
+  assert.match(html, /role="img" aria-label="Wed, Sep 2: 0 tokens, 0 calls, no activity recorded"/, 'a zero interval is still named rather than dropped from the mirror');
   assert.match(html, /aria-label="Thu, Sep 3: 0 tokens, 0 calls, no collector coverage"/);
   assert.match(html, /aria-label="Sat, Sep 5 · 00:00 to 15:30: 400 tokens, 3 calls, still being observed"/, 'the clipped current day names both ends');
-  assert.match(body, /hourly buckets \+ monthly snapshots/, 'the basis badge discloses merged snapshots');
+  assert.match(body, /\+ monthly snapshots/, 'the basis badge discloses merged snapshots');
+  assert.match(body, /canonical hourly buckets in scope/, 'and the calls stat names the bucket basis');
   assert.match(body, /Legacy box · 2026-09 · whole source days merged · 600 tokens · method 2026-08-20.1/);
   assert.match(body, /1 stored monthly snapshot in this range is listed and not counted: subject not mapped/);
   assert.match(body, /Monthly snapshots cannot be placed on an hourly series/); assert.match(body, /straddling a range edge/);
   assert.match(body, /Request detail 25% 500 of 2,000 headline tokens carry request records/);
   assert.match(body, /API-equivalent cost estimate Public list-price estimate/);
-  assert.match(body, /Tokens by model Which recorded models contributed/);
+  assert.match(body, /Tokens by model Graph Table/, 'the model card offers both the plot and the ledger');
   assert.match(body, /Environmental impact Inference-equivalent scenarios/);
   assert.match(body, /Actions you can take/);
   assert.match(body, /Estimated API equivalent \$1\.25/);
@@ -128,7 +130,6 @@ test('detail filters, unfilterable buckets, and a failed refresh are explained w
   assert.match(body, /Exact total 500 tokens/, 'the last good figures stay up');
   assert.match(body, /request detail/); assert.match(body, /1,500 tokens and 7 calls in the selected hourly buckets carry no request detail and are excluded, not matched/);
   assert.match(body, /Project: Kit board/); assert.match(body, /Account: Claude personal/); assert.match(body, /Clear all/);
-  assert.match(body, /Reasoning within output is not reported separately for this scope/);
   const failed = text(render({ result: null, error: 'Usage is temporarily unavailable. Retry, or wait for the next refresh.' }));
   assert.match(failed, /Usage is temporarily unavailable/); assert.doesNotMatch(failed, /Exact total/);
   const loading = text(render({ result: null, loading: true }));
@@ -142,10 +143,10 @@ test('an inconsistent composition withholds shares and a hourly series labels ho
   assert.match(body, /components exceed the total/); assert.match(body, /Known components add up to 2,200 tokens against a reported total of 2,000; shares are withheld rather than clamped/);
   const hourly = synthetic();
   hourly.series = { resolution: 'hour', points: [point('2026-09-05T14:00:00.000Z', '2026-09-05T15:00:00.000Z', 100, 1, 'observed')], excludes_snapshot_tokens: 600 };
-  const hours = text(render({ result: hourly, filters: { ...DEFAULT_FILTERS, resolution: 'hour' } }));
-  assert.match(hours, /Hourly totals in America\/Chicago/); assert.match(hours, /600 snapshot tokens count in the total but cannot be placed on hours/);
-  const inFlight = text(render({ result: hourly, filters: { ...DEFAULT_FILTERS, resolution: 'day', timezone: 'UTC' }, loading: true }));
-  assert.match(inFlight, /updating…/); assert.match(inFlight, /Hourly totals in America\/Chicago/, 'the last good result keeps its own resolution and zone while new filters load');
+  const hoursHtml = render({ result: hourly, filters: { ...DEFAULT_FILTERS, resolution: 'hour' } });
+  assert.match(hoursHtml, /aria-label="Sat, Sep 5 · 09:00 to 10:00: 100 tokens, 1 calls, observed"/, 'hour intervals are named in the display zone'); assert.match(text(hoursHtml), /600 snapshot tokens count in the total but cannot be placed on hours/);
+  const inFlight = render({ result: hourly, filters: { ...DEFAULT_FILTERS, resolution: 'day', timezone: 'UTC' }, loading: true });
+  assert.match(text(inFlight), /updating…/); assert.match(inFlight, /aria-label="Sat, Sep 5 · 09:00 to 10:00: 100 tokens, 1 calls, observed"/, 'the last good result keeps its own resolution and zone while new filters load');
   assert.match(renderToStaticMarkup(<TokensOverview filters={{ ...DEFAULT_FILTERS, resolution: 'hour' }} onFiltersChange={() => {}} result={hourly} vocabulary={vocabulary} error={null} stale={false} loading={false} onRetry={() => {}} now={0} />), /Sat, Sep 5 · 09:00 to 10:00: 100 tokens/);
 });
 
@@ -155,12 +156,11 @@ test('cost/model tables preserve exact values and a large legend starts readable
   const cost = text(renderToStaticMarkup(<CostModelTable rows={result.cost.by_model} />));
   assert.match(cost, /m1 7 1,400 86% \$1\.25/);
   const models = text(renderToStaticMarkup(<ModelSummaryTable result={result} colors={colors} />));
-  assert.match(models, /m1 7 1,400 70% 1\.4K \/ 0 \/ 0 \/ 0/);
+  assert.match(models, /Model Calls Tokens Share Fresh Cached Cache write Output m1 7 1,400 70% 1\.4K 0 0 0/, 'one column per composition part, exact values preserved');
 
   const legend = renderToStaticMarkup(<UsageSeriesChart categories={[{ key: 'd', label: 'Day', shortLabel: 'D' }]}
     series={Array.from({ length: 6 }, (_, index) => ({ key: `m${index}`, label: `Model ${index}`, color: `var(--chart-${index % 5 + 1})`, values: [index + 1] }))}
     unit="tokens" formatValue={value => `${value} tokens`} formatAxis={String} />);
-  assert.match(legend, /Top 5 shown initially/);
   assert.match(legend, /aria-pressed="false"[^>]*>.*Model 5/s, 'the sixth line remains discoverable in the legend without crowding the initial graph');
   assert.match(legend, /Show all/);
 });

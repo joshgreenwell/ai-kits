@@ -95,7 +95,7 @@ Reads `/api/usage-live`: canonical hourly totals from `token_bucket_revisions`, 
 
 The experimental cloud/uncollected token-equivalent and calibration UI is paused. Its backend/API and calibration evidence still exist. It contributes nothing to displayed token totals. The old daily-token budget UI has been removed.
 
-### Reset calendar — `/usage/resets` (feed health moved to `/settings/feeds`)
+### Reset calendar — `/usage/allowances#reset-calendar` (feed health moved to `/settings/feeds`)
 
 Stores and displays attributed public reset claims, separate from personal allowance readings. It has a calendar, provider/type filters, event details, announcements, banked-reset lifecycle, and feed health. Concurrent changes in this checkout switch Codex feeds to NextReset, retain Reset Radar for Claude, and remove the old Codex Reset probability panel and forecast banner. Their production deployment was not verified by this usage audit. [Reset feeds](reset-feeds.md) owns the current allowlist and release evidence.
 

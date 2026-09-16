@@ -2,7 +2,7 @@
 
 [Backlog index](README.md) · [Direction](../usage-direction.md)
 
-Status: Planned
+Status: In progress
 Priority: P1
 Scope: Core
 Stage: 4. Interface
@@ -41,4 +41,15 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+Delivered incrementally by the tasks that consume it rather than as its own change, through USG-017, USG-018, USG-023, and the September 16 design-system alignment pass.
+
+Criteria 1-4 are implemented:
+
+- `components/usage-filter-bar.tsx` carries the shared bar — date, accounts, projects, and the additional dimensions behind More filters, multi-select, active chips, Clear all, and one displayed timezone. Private URL state round-trips through the Tokens page.
+- `components/usage-series-chart.tsx` and `components/allowance-burn-chart.tsx` provide the interval primitives: exact-value tooltips, keyboard and touch access, minimal labeled axes, one shared model-color map, and missing/partial/zero states.
+- The legend rows are pressable and a hidden series stays discoverable, with Show all to recover. Hiding a line never changes filters or the headline.
+- `components/kit/data-table.tsx` supplies numeric sorting with an accessible header control, and each card persists its own graph/table preference (`observatory.tokens.cost-view.v1`, `observatory.tokens.model-view.v1`, `observatory.allowances.v1`) without losing scope or grouping.
+
+Criterion 5 was the September 16 correction. The controls had been built from Tailwind classes copied out of the vendored primitives, which does not reproduce the look: `app/theme.css` dresses shadcn primitives through unlayered `[data-slot="..."]` selectors, so a control is only styled when it carries the right slot. The filter triggers, the tooltip surface, the chart curves, and the model table were brought back onto the existing design system and the shadcn chart defaults; see the USG-018 execution record for the specific changes and the measured result.
+
+Remaining: this task's own verification pass — filter URL round trips, multi-selection, timezone boundaries, legend reset, graph/table consistency, touch and keyboard usage, long labels, and narrow screens with synthetic data. The implementation is in place; the evidence is not recorded.
