@@ -99,7 +99,7 @@ export function customRangeFromDates(startDate: string, endDate: string, timezon
   return { start: new Date(start).toISOString(), end: new Date(end).toISOString() };
 }
 
-export type FilterLabels = { accounts?: Record<string, string>; projects?: Record<string, string>; machines?: Record<string, string> };
+export type FilterLabels = { accounts?: Record<string, string>; projects?: Record<string, string>; machines?: Record<string, string>; agents?: Record<string, string> };
 export type FilterChip = { key: string; label: string; next: TokensFilters };
 
 /** Every active narrowing as a removable chip; the range and resolution are controls, not chips. */
@@ -107,7 +107,7 @@ export function activeFilterChips(filters: TokensFilters, labels: FilterLabels =
   const chips: FilterChip[] = [];
   const name = (key: ListFilterKey, value: string) => {
     if (key === 'projects' && (PROJECT_STATES as readonly string[]).includes(value)) return PROJECT_STATE_LABELS[value as typeof PROJECT_STATES[number]];
-    const table = key === 'accounts' ? labels.accounts : key === 'projects' ? labels.projects : key === 'machines' ? labels.machines : undefined;
+    const table = key === 'accounts' ? labels.accounts : key === 'projects' ? labels.projects : key === 'machines' ? labels.machines : key === 'agents' ? labels.agents : undefined;
     const short = key === 'agents' ? `agent ${value.slice(0, 8)}` : value;
     return table?.[value] ?? short;
   };

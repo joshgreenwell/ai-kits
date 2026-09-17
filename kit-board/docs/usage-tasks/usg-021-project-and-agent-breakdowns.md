@@ -2,7 +2,7 @@
 
 [Backlog index](README.md) · [Direction](../usage-direction.md)
 
-Status: Planned
+Status: Done
 Priority: P1
 Scope: Core
 Stage: 4. Interface
@@ -39,4 +39,12 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+Completed September 16, 2026 on the USG-012 read model, USG-017 filter state, and USG-020 card placement.
+
+- `components/usage-breakdown-cards.tsx` adds `ProjectAgentBreakdown`: a Projects card and an Agents card side by side from `xl` up and stacked below it, rendered by `components/tokens-overview.tsx` after the environmental impact section and before the coverage card, from the same `GET /api/usage-query` result as every card above. The "Next in this order" placeholder paragraph is gone; `TOKENS_SECTIONS` still declares the agreed order.
+- Projects: one sortable row per result row with the mapped label or the agreed state label, exact tokens, share, calls, and conversations; No project and Unknown project are separate rows kept inside the total. Stats show the named-project count, attribution coverage (tokens carrying a project over headline tokens), and registry mapping (attributed tokens mapped to a named project), plus a badge naming the headline share without request detail. The empty state explains that hourly buckets name no project and links to project settings.
+- Agents: the summary band shows main, subagent, and unattributed tokens with their share of the same total, distinct observed children, and spawn events; the role-class line shows main, built-in, custom, and unknown tokens; the table shows each agent's name or class with a short key, role, parent (named from the same rows, otherwise the short key, `session root` for the main agent, `not recorded` where absent), recorded model, depth, tokens, share, and calls. Unattributed rows are shown but not selectable.
+- Drill-down: selecting a project row sets `filters.projects` to the registry id or state code; selecting an agent row sets `filters.agents` to the key; "Main agent only" and "Subagents only" toggle `agent_scope`. Every change goes through the common `onFiltersChange`, lands in the private URL, and appears as a removable chip in the filter bar; selecting the same row again or removing the chip restores the wider scope. `FilterLabels` gained `agents`, so an agent chip reads as the agent's name rather than a bare key.
+- Wording keeps the acceptance limits explicit: agent tokens divide the headline and are never added; missing identity stays unattributed rather than main; a role class describes the child, not who started it, and the logs do not record user-versus-model delegation.
+- `tests/tokens-overview.test.tsx` extends the synthetic result with project, agent, tool, and knowledge rows and checks every displayed figure, the card order, the selected-row state, the chip labels for a drilled-down filter set, the pure helpers `projectFilterValue` and `agentLabel`, and the empty states. `npm run typecheck`, `npm test` (127 passing), and `npm run build` pass.
+- Remaining blocker, owned by USG-025: production still collects `buckets_only` with project attribution off, so both cards show their empty states there until the detail level changes at the source.

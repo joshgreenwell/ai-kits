@@ -9,6 +9,7 @@ import { Card, CardAction, CardDescription, CardHeader, CardTitle } from '@/comp
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { EmptyState, Stat, StatGroup } from '@/components/kit';
 import { EnvironmentalImpact } from '@/components/environmental-impact';
+import { ProjectAgentBreakdown, ToolKnowledgeCard, agentLabel } from '@/components/usage-breakdown-cards';
 import { IntervalBars } from '@/components/usage-chart';
 import { UsageInsightCards } from '@/components/usage-insight-cards';
 import { UsageFilterBar, type FilterOption, type FilterVocabulary } from '@/components/usage-filter-bar';
@@ -20,7 +21,7 @@ import {
   compactTokens, compositionView, exactTokens, parseTokensFilters, percent, queryString, seriesSummary, serializeTokensFilters, whenIn, type TokensFilters,
 } from '@/lib/usage-view';
 
-/** The agreed Tokens card order; every delivered section below shares this filter bar and query result. */
+/** The agreed Tokens card order; every section below shares this filter bar and query result. */
 export const TOKENS_SECTIONS = [
   { key: 'filters', title: 'Filter bar', task: 'USG-017' }, { key: 'total', title: 'Total tokens and composition', task: 'USG-017' }, { key: 'activity', title: 'Tokens over time', task: 'USG-017' },
   { key: 'cost', title: 'API-equivalent cost estimate', task: 'USG-018' }, { key: 'models', title: 'Tokens by model', task: 'USG-018' }, { key: 'environment', title: 'Environmental impact', task: 'USG-020' },
@@ -39,10 +40,12 @@ export type TokensOverviewProps = {
 
 /** The Tokens overview from one query result; every number below the filter bar comes from that result. */
 export function TokensOverview({ filters, onFiltersChange, result, vocabulary, error, stale, loading, onRetry, now, status }: TokensOverviewProps) {
+  // Agent chips take their names from the result itself: the registry has no agent vocabulary, and a drill-down chip should read like the row that made it.
   const labels = useMemo(() => ({
     accounts: Object.fromEntries(vocabulary.accounts.map(o => [o.value, o.label])), projects: Object.fromEntries(vocabulary.projects.map(o => [o.value, o.label])),
     machines: Object.fromEntries(vocabulary.machines.map(o => [o.value, o.label])),
-  }), [vocabulary]);
+    agents: Object.fromEntries((result?.agents.rows ?? []).filter(row => row.agent_key).map(row => [row.agent_key as string, agentLabel(row)])),
+  }), [vocabulary, result]);
   const composition = result ? compositionView(result.headline) : null;
   const summary = result ? seriesSummary(result.series.points) : null;
   const merged = result?.historical.snapshots.filter(s => s.merged !== 'none') ?? [];
@@ -162,6 +165,8 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
 
           <UsageInsightCards result={result} />
           <EnvironmentalImpact estimate={result.environment} />
+          <ProjectAgentBreakdown result={result} filters={filters} onFiltersChange={onFiltersChange} />
+          <ToolKnowledgeCard result={result} />
 
           <Card className="gap-0 overflow-hidden py-0" aria-label="Coverage and sources">
             <CardHeader className="p-4">
@@ -187,10 +192,6 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
               <p className="text-muted-foreground text-xs">Local logs do not cover browser or cloud conversations; those move account allowances without exposing tokens here. Configure collectors and project names under <Link href="/settings" className="underline underline-offset-4">Settings</Link>.</p>
             </div>
           </Card>
-
-          <p className="text-muted-foreground text-xs leading-relaxed" data-testid="section-order">
-            Next in this order, sharing the filter bar above: {TOKENS_SECTIONS.filter(s => s.task === 'USG-021' || s.task === 'USG-022').map(s => `${s.title} (${s.task})`).join(', ')}.
-          </p>
         </>
       )}
     </div>

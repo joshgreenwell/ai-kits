@@ -2,7 +2,7 @@
 
 [Backlog index](README.md) · [Direction](../usage-direction.md)
 
-Status: Planned
+Status: Done
 Priority: P1
 Scope: Core
 Stage: 4. Interface
@@ -39,4 +39,11 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+Completed September 16, 2026 on the USG-006 and USG-008 collection, the USG-012 read model, and the USG-015 Settings > Sources registry UI.
+
+- `components/usage-breakdown-cards.tsx` adds `ToolKnowledgeCard`, rendered by `components/tokens-overview.tsx` as the final Tokens card, after the project and agent breakdowns and before the coverage card, from the same `GET /api/usage-query` result.
+- The summary band keeps three counts apart and names each: tool invocations (each once; results and status updates are not counted again), model calls (the headline's canonical requests), and agent spawns (delegation attempts), plus caller attribution coverage over reported invocations. Top tools show name, class, namespace, invocations, and share; top callers show the agent (named as in the Agents card) and recorded model with their invocation counts. Outcome counts appear only where the result's outcome coverage has classified invocations, with the unrecorded remainder named; otherwise the card says outcomes were not collected rather than assuming success. An unsupported filter (the model filter) is shown as a warning badge.
+- The Knowledge sources area lists one row per source, including unassigned identities and unknown rows, with accesses, distinct tool calls, sessions, agents, read/search/write/unknown counts, and earlier-configuration accesses; badges carry the configured-source count and the unduplicated distinct tool-call total, which is kept separate from the global tool total; "Configure sources" links to `/settings/sources`. The empty state explains the `requests_with_tools` and configured-source prerequisites and that running inside a vault folder is not access.
+- The footnotes carry the layer's own coverage notes and the limits: per-source counts overlap, access is not proof the answer used the contents, and no per-source token cost is estimated.
+- `tests/tokens-overview.test.tsx` checks the three separate counts, outcomes and their remainder, the unsupported-filter badge, tool and caller rows, the knowledge rows with every column, the Settings link, the overlap wording, and the empty states. `npm run typecheck`, `npm test` (127 passing), and `npm run build` pass.
+- Remaining blocker, owned by USG-025: production collects `buckets_only`, and tool and access rows upload only at `requests_with_tools`, so this card shows its empty states there until the detail level changes at the source and the companion build carrying USG-008 is deployed.
