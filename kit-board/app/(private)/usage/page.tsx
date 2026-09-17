@@ -19,8 +19,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { environmentalFactors, legacyEstimateForReport } from "@/lib/environmental-estimate";
+import { UNPRICED_REASON_LABELS } from "@/lib/usage-view";
 
-interface UsageRow { key: string; total_tokens: number; calls?: number }
+interface UsageRow { key: string; model?: string; total_tokens: number; calls?: number }
 interface CostRow extends UsageRow {
   estimated_cost_usd: number;
   priced_tokens: number;
@@ -47,6 +48,7 @@ interface ApiEquivalentCost {
     reasoning_output_cost_usd: number;
     other_output_cost_usd: number;
   };
+  unpriced_reasons?: Partial<Record<string, number>>;
   by_model: CostRow[];
   by_reasoning_effort: CostRow[];
   by_service_tier: CostRow[];
@@ -360,7 +362,15 @@ function MonthlyReports() {
   // Models the analyzer could not price: the catalog it ships is the only rate source.
   const unpricedModels = (() => {
     const totals = new Map<string, number>();
-    for (const cost of costSnapshots) for (const row of cost?.by_model ?? []) if (row.unpriced_tokens > 0) totals.set(row.key, (totals.get(row.key) ?? 0) + row.unpriced_tokens);
+    for (const cost of costSnapshots) for (const row of cost?.by_model ?? []) if (row.unpriced_tokens > 0) {
+      const name = row.key || row.model || "unknown";
+      totals.set(name, (totals.get(name) ?? 0) + row.unpriced_tokens);
+    }
+    return [...totals].sort((a, b) => b[1] - a[1]);
+  })();
+  const unpricedReasons = (() => {
+    const totals = new Map<string, number>();
+    for (const cost of costSnapshots) for (const [reason, tokens] of Object.entries(cost?.unpriced_reasons ?? {})) totals.set(reason, (totals.get(reason) ?? 0) + Number(tokens));
     return [...totals].sort((a, b) => b[1] - a[1]);
   })();
   const environment = aggregateEnvironmental(visibleRows);
@@ -573,12 +583,17 @@ function MonthlyReports() {
           </StatGroup>
         </div>
 
-        {unpricedModels.length > 0 && (
+        {(unpricedModels.length > 0 || unpricedReasons.length > 0) && (
           <div className="border-border border-t px-4 py-3">
             <p className="text-muted-foreground text-xs leading-relaxed">
-              <span className="text-foreground font-semibold">Unpriced models:</span>{' '}
-              {unpricedModels.map(([model, tokens]) => `${model} (${formatTokens(tokens)})`).join(', ')}.
-              {' '}These are missing from the analyzer’s pricing catalog{pricingCatalogs.length ? ` (rates ${pricingCatalogs.join(', ')})` : ''}; add their rates there and the next hourly refresh prices the remaining {formatPercent(1 - pricingCoverage)}.
+              {unpricedModels.length > 0 ? <><span className="text-foreground font-semibold">Unpriced models:</span>{' '}
+              {unpricedModels.map(([model, tokens]) => `${model} (${formatTokens(tokens)})`).join(', ')}. </> : null}
+              {unpricedReasons.length > 0 ? <>
+                {unpricedReasons.map(([reason, tokens]) => `${UNPRICED_REASON_LABELS[reason] ?? reason.replaceAll('_', ' ')} (${formatTokens(tokens)})`).join('; ')}.
+                {unpricedReasons.some(([reason]) => reason === 'model_not_in_catalog')
+                  ? ` Add missing models to the catalog${pricingCatalogs.length ? ` (rates ${pricingCatalogs.join(', ')})` : ''} to price the remainder.`
+                  : ' Missing service-tier metadata is assumed Standard and already counted above; it does not leave those tokens unpriced.'}
+              </> : null}
             </p>
           </div>
         )}
@@ -629,7 +644,7 @@ function MonthlyReports() {
               </Table>
             ) : (
               <div className="p-4">
-                <EmptyState title="No model-level pricing in this upload" description="Re-run this month with the updated analyzer to add model, effort, and speed pricing." />
+                <EmptyState title="No model-level pricing in this upload" description="The Tokens estimate above prices collected model, date, and composition without this analyzer table. Re-run the month with the updated analyzer for effort and speed breakdowns." />
               </div>
             )}
           </div>

@@ -49,7 +49,7 @@ function calendarDates(observed: string[]) {
 }
 
 export function CostModelTable({ rows, empty }: { rows: PricingRow[]; empty?: ReactNode }) {
-  if (!rows.length) return empty ?? <EmptyState title="No request pricing evidence" description="This scope has no request records carrying pricing dimensions. The collected token totals are unaffected." />;
+  if (!rows.length) return empty ?? <EmptyState title="No priced model activity" description="This scope has no collected model rows to price. The token figures on this page are unaffected." />;
   const columns: Column<PricingRow>[] = [
     { id: 'model', header: 'Model', sortValue: row => row.model, cell: row => <span className="font-mono text-xs">{modelLabel(row.model)}</span> },
     { id: 'calls', header: 'Calls', numeric: true, sortValue: row => row.calls, cell: row => exactTokens(row.calls) },
@@ -111,14 +111,13 @@ export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colo
   const unpricedReasons = Object.entries(cost.unpriced_reasons);
   const coverage = result.pricing_inputs.coverage;
   /*
-    An estimate of $0.00 over billions of tokens reads as a broken card unless the card says why. The
-    reason is upstream of this screen: a list price is per request, and a scope whose headline comes
-    from bucket totals has no request to price. Name the shortfall in the reader's own numbers.
+    An estimate of $0.00 over billions of tokens reads as a broken card unless the card says why.
+    Name the shortfall in the reader's own numbers: no model to look up, not a missing request field.
   */
   const noEvidence = (
     <EmptyState
-      title="No request pricing evidence in this scope"
-      description={`A list-price estimate needs per-request records carrying a model and a source price date. ${exactTokens(coverage.classified)} of ${exactTokens(coverage.headline)} headline tokens carry that detail here, so there is nothing to price. The token figures on this page are unaffected: they come from the collected totals, which do not record per-request pricing dimensions.`}
+      title="No priced model activity in this scope"
+      description={`A list-price estimate needs a model and a rate date. Hourly buckets supply both from collected totals; request records add effort, tier, and long-context when they are the headline. ${exactTokens(coverage.classified)} of ${exactTokens(coverage.headline)} headline tokens carry a model here, so there is nothing to price.`}
     />
   );
 
@@ -128,7 +127,7 @@ export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colo
       <Tabs value={view} onValueChange={next => { if (next === 'graph' || next === 'table') setView(next); }} className="gap-0">
         <CardHeader className="p-4">
           <CardTitle className="text-base">API-equivalent cost estimate</CardTitle>
-          <CardDescription>Public list-price estimate for request detail in this selected scope. It is not subscription spend, credits, an invoice, or an actual bill.</CardDescription>
+          <CardDescription>Public list-price estimate for the selected scope. It is not subscription spend, credits, an invoice, or an actual bill.</CardDescription>
           <CardAction>
             <TabsList aria-label="API-equivalent cost view">
               <TabsTrigger value="graph">Graph</TabsTrigger>
@@ -137,10 +136,10 @@ export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colo
           </CardAction>
         </CardHeader>
         <StatGroup className="border-border border-y">
-          <Stat label="Estimated API equivalent" value={formatUsd(cost.estimated_cost_usd)} caption="USD · observed request pricing inputs only" />
+          <Stat label="Estimated API equivalent" value={formatUsd(cost.estimated_cost_usd)} caption="USD · public list price on collected activity" />
           <Stat label="Priced tokens" value={exactTokens(cost.priced_tokens)} caption={`${percent(cost.priced_token_coverage)} of tokens carrying price inputs`} />
           <Stat label="Unpriced tokens" value={exactTokens(cost.unpriced_tokens)} caption={unpricedReasons.length ? unpricedReasons.map(([reason, tokens]) => `${reason.replaceAll('_', ' ')} ${compactTokens(tokens)}`).join(' · ') : 'none in pricing inputs'} />
-          <Stat label="Input evidence" value={percent(result.pricing_inputs.coverage.headline ? result.pricing_inputs.coverage.classified / result.pricing_inputs.coverage.headline : null)} caption={`${exactTokens(result.pricing_inputs.coverage.classified)} of ${exactTokens(result.pricing_inputs.coverage.headline)} headline tokens carry a model in request detail`} />
+          <Stat label="Input evidence" value={percent(result.pricing_inputs.coverage.headline ? result.pricing_inputs.coverage.classified / result.pricing_inputs.coverage.headline : null)} caption={`${exactTokens(result.pricing_inputs.coverage.classified)} of ${exactTokens(result.pricing_inputs.coverage.headline)} headline tokens carry a model`} />
         </StatGroup>
         <div className="grid gap-4 p-4">
           <TabsContent value="graph">
@@ -160,7 +159,7 @@ export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colo
             <div className="flex flex-wrap gap-2">{cost.pricing_catalog.sources.map(source => <Button key={`${source.label}:${source.url}`} variant="outline" size="xs" asChild><a href={source.url} target="_blank" rel="noreferrer">{source.label}</a></Button>)}</div>
           </Disclosure>
         </div>
-        <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed">Cost lines use each request&apos;s source price date in America/Chicago. A missing date is a gap in request pricing evidence, not a zero-cost day. Hiding a line or switching this view does not change the selected scope or the token headline.</p>
+        <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed">Cost lines use the Chicago calendar date of each hourly bucket, or each request&apos;s activity when a detail filter makes requests the headline. A missing date is a gap, not a zero-cost day. Hiding a line or switching this view does not change the selected scope or the token headline.</p>
       </Tabs>
     </Card>
   );

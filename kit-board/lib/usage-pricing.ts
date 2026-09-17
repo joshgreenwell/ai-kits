@@ -48,7 +48,7 @@ export type ApiEquivalentEstimate = {
   missing_service_tier_calls_assumed_standard: number; assumed_cache_write_ttl_calls: number; priority_at_standard_calls: number;
   unpriced_reasons: Partial<Record<UnpricedReason, number>>;
   by_model: PricingRow[]; by_reasoning_effort: PricingRow[]; by_service_tier: PricingRow[]; by_model_effort_service_tier: PricingRow[];
-  /** Daily source-price dates by model. Missing dates are gaps in request pricing evidence, not zero-cost days. */
+  /** Daily source-price dates by model. Missing dates are gaps, not zero-cost days. */
   series: PricingSeriesRow[];
   pricing_catalog: { version: string; versions: Record<CatalogKey, string>; unit_tokens: number; long_context_threshold_tokens: Record<CatalogKey, number>; sources: { label: string; url: string }[]; provenance: Record<CatalogKey, string | null> };
   assumptions: string[];

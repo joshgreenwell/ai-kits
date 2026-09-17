@@ -151,6 +151,12 @@ export function compositionView(headline: { total_tokens: number; composition: C
 export const compactTokens = (n: number) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: n >= 1e9 ? 2 : 1 }).format(n);
 export const exactTokens = (n: number) => new Intl.NumberFormat('en-US').format(Math.round(n));
 export const percent = (share: number | null) => (share === null ? '—' : `${(share * 100).toFixed(share * 100 >= 10 ? 0 : 1)}%`);
+export const UNPRICED_REASON_LABELS: Record<string, string> = {
+  model_not_in_catalog: 'not in the pricing catalog',
+  no_rate_for_event_date: 'no catalog rate for the usage date',
+  service_tier_or_context_not_priced: 'tier or context band not priced',
+  legacy_total_only: 'reported only as a total',
+};
 
 const dayName = (instant: number, timezone: string) => new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short', month: 'short', day: 'numeric' }).format(instant);
 const clock = (instant: number, timezone: string) => new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: 'numeric', minute: '2-digit', hourCycle: 'h23' }).format(instant);

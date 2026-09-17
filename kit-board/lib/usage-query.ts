@@ -16,10 +16,14 @@ import { estimateEnvironment, type CohortInput, type EnvironmentalEstimate, type
  * Source precedence follows the metric contract. Canonical hourly buckets are the headline token
  * and call authority for every slice, because no collection manifest has declared a slice complete
  * at request level. Request records supply the dimensions buckets lack (project, effort, surface,
- * agent, pricing inputs); a filter on one of those dimensions narrows the headline to the request
- * detail that carries it and discloses the bucket tokens it cannot examine. Monthly snapshots are
- * historical fallback only where the hourly ledger has nothing for a crosswalked account and month,
- * and are never expanded into finer detail than they recorded.
+ * agent); a filter on one of those dimensions narrows the headline to the request detail that
+ * carries it and discloses the bucket tokens it cannot examine. Pricing follows the headline:
+ * buckets already carry model, hour, and exclusive composition, which is enough to estimate at
+ * assumed Standard on the short context band, with the Chicago calendar date of the hour choosing
+ * the rate period. Request records add effort, tier, speed, cache-write TTL, and per-request
+ * context band when they are the headline. Monthly snapshots are historical fallback only where
+ * the hourly ledger has nothing for a crosswalked account and month, and are never expanded into
+ * finer detail than they recorded.
  */
 type Sql = ReturnType<typeof postgres>;
 type Row = Record<string, unknown>;
@@ -152,6 +156,31 @@ const coverage = (unit: Coverage['unit'], headline: number, eligible: number, cl
   unit, headline, eligible, classified, applicable: headline > 0 ? eligible / headline : 0, complete: eligible > 0 ? classified / eligible : 0, note,
 });
 const share = (part: number, whole: number) => (whole > 0 ? part / whole : null);
+type PricingRowOut = UsageQueryResult['pricing_inputs']['rows'][number];
+function pricingRowFromSql(row: Row, extras: { provider?: string | null; context_band: 'short' | 'long'; rate_date: string | null }): PricingRowOut {
+  const composition = emptyComposition();
+  addComposition(composition, row);
+  return {
+    provider: extras.provider ?? ((row.provider as string | null) ?? null),
+    model: (row.model as string | null) ?? null,
+    reasoning_effort: (row.reasoning_effort as string | null) ?? null,
+    service_tier: (row.service_tier as string | null) ?? null,
+    speed: (row.speed as string | null) ?? null,
+    context_window_tokens: row.context_window_tokens === null || row.context_window_tokens === undefined ? null : num(row.context_window_tokens),
+    cache_write_ttl: (row.cache_write_ttl as string | null) ?? null,
+    token_state: (row.token_state as string | null) ?? null,
+    context_band: extras.context_band, rate_date: extras.rate_date, calls: num(row.calls), total_tokens: num(row.total_tokens), composition,
+  };
+}
+function pricingInputFromRow(row: PricingRowOut): PricingInputRow {
+  return {
+    provider: row.provider, model: row.model, reasoning_effort: row.reasoning_effort, service_tier: row.service_tier, speed: row.speed,
+    context_window_tokens: row.context_window_tokens, cache_write_ttl: row.cache_write_ttl, token_state: row.token_state,
+    context_band: row.context_band, rate_date: row.rate_date, calls: row.calls,
+    input_fresh: row.composition.input_fresh, input_cached: row.composition.input_cached, input_cache_write: row.composition.input_cache_write,
+    output: row.composition.output, reasoning: row.composition.reasoning, unclassified: row.composition.unclassified, total_tokens: row.total_tokens,
+  };
+}
 
 export function createUsageQuery(getDatabase?: () => Sql) {
   const sql = async () => getDatabase?.() ?? (await import('./db')).database();
@@ -309,6 +338,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // 2. Requests: one canonical row per logical request; grouped several ways from the same CTE.
     const rp = new Params();
     const cte = requestCte(rp, q, accounts, range);
+    const useRequests = cte.detailFilters;
     const requestPeriodRows = accounts.length ? await db.unsafe(`WITH ${cte.text}
       SELECT r.matches, r.account_id, r.model_actual AS model, ${periodExpr('r.activity_at', q.resolution, rp, tz)} AS period_start, ${compositionSelect()},
         max(r.observed_at) AS last_observed
@@ -325,15 +355,36 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         ${compositionSelect()}
       FROM requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY total_tokens DESC NULLS LAST`, ap.values) : [];
     const cp = new Params(); const ccte = requestCte(cp, q, accounts, range);
-    // Context band and rate date are what the catalog prices by; both come from each request, not from a group average.
+    // When requests are the headline, context band and rate date come from each request, not a group average.
     // Each request is compared against both catalogs' thresholds here; the band is chosen once the model's catalog is known.
     const thresholds = catalogThresholds();
     const loggedInput = 'coalesce(r.input_fresh_tokens, 0) + coalesce(r.input_cached_tokens, 0) + coalesce(r.input_cache_write_tokens, 0)';
-    const pricingRows = accounts.length ? await db.unsafe(`WITH ${ccte.text}
+    const requestPricingRows = useRequests && accounts.length ? await db.unsafe(`WITH ${ccte.text}
       SELECT r.provider, r.model_actual AS model, r.reasoning_effort, r.service_tier, r.speed, r.context_window_tokens, r.cache_write_ttl, r.token_state,
         (${loggedInput} > ${cp.add(thresholds.openai)}::bigint) AS over_openai, (${loggedInput} > ${cp.add(thresholds.anthropic)}::bigint) AS over_anthropic,
         to_char(r.activity_at AT TIME ZONE ${cp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date, ${compositionSelect()}
       FROM requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ORDER BY total_tokens DESC NULLS LAST`, cp.values) : [];
+    // Hourly buckets already have model, Chicago date, and exclusive composition. Missing tier is assumed
+    // Standard; the hour is not a single request, so the short context band is used rather than a summed input.
+    const bpp = new Params();
+    const bucketPriceWhere = [
+      `t.account_id = ANY(${bpp.add(accounts)}::text[])`,
+      `t.hour >= ${bpp.add(new Date(range.start).toISOString())}::timestamptz`,
+      `t.hour + interval '1 hour' <= ${bpp.add(new Date(bucketEnd).toISOString())}::timestamptz`,
+    ];
+    if (q.models.length) bucketPriceWhere.push(`(${[namedModels.length ? `t.model = ANY(${bpp.add(namedModels)}::text[])` : null, q.models.includes(UNKNOWN) ? `t.model = 'unknown'` : null].filter(Boolean).join(' OR ')})`);
+    const bucketPricingRows = !useRequests && accounts.length ? await db.unsafe(`WITH canonical AS (
+        SELECT DISTINCT ON (t.account_id, t.session_hash, t.hour, t.model) t.account_id, t.source_id, t.hour, t.model, t.calls,
+          t.input_tokens, t.cached_tokens, t.cache_write_tokens, t.output_tokens, t.total_tokens
+        FROM personal_hub.token_bucket_revisions t
+        WHERE ${bucketPriceWhere.join(' AND ')}
+        ORDER BY t.account_id, t.session_hash, t.hour, t.model, t.calls DESC, t.total_tokens DESC, t.observed_at DESC, t.received_at DESC, t.id DESC)
+      SELECT account_id, model, to_char(hour AT TIME ZONE ${bpp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date,
+        sum(calls)::float8 AS calls, sum(input_tokens)::float8 AS input_fresh, sum(cached_tokens)::float8 AS input_cached,
+        sum(cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, 0::float8 AS unclassified,
+        sum(total_tokens)::float8 AS total_tokens
+      FROM canonical ${q.machines.length ? `WHERE source_id = ANY(${bpp.add(q.machines)}::uuid[])` : ''}
+      GROUP BY 1, 2, 3 ORDER BY total_tokens DESC NULLS LAST`, bpp.values) : [];
     // Effort is a request-only dimension: the hourly ledger records a model but never how hard it was asked to think.
     const ep = new Params(); const ecte = requestCte(ep, q, accounts, range);
     const effortRows = accounts.length ? await db.unsafe(`WITH ${ecte.text}
@@ -458,7 +509,6 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       total_tokens: 0, calls: 0, composition: emptyComposition(), state: 'missing', sources: [] }));
     const mark = (index: number, source: SeriesPoint['sources'][number]) => { if (!points[index].sources.includes(source)) points[index].sources.push(source); };
 
-    const useRequests = cte.detailFilters;
     const headline = empty();
     const byModel = new Map<string, { total_tokens: number; calls: number; composition: Composition; basis: 'buckets' | 'requests' }>();
     const modelSeries = new Map<string, Map<number, { total_tokens: number; calls: number }>>();
@@ -605,19 +655,25 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const requestEligible = useRequests ? requestTotals.matching.tokens : bucketTotals.tokens;
     const requestCovered = useRequests ? requestTotals.matching.tokens : requestTotals.all.tokens;
     const detailNote = 'Request detail covers the canonical tokens linked to accepted request records; buckets remain the headline until a collection slice is declared complete and reconciled.';
-    const pricing = pricingRows.map(row => ({ provider: (row.provider as string | null) ?? null, model: (row.model as string | null) ?? null, reasoning_effort: (row.reasoning_effort as string | null) ?? null, service_tier: (row.service_tier as string | null) ?? null,
-      speed: (row.speed as string | null) ?? null, context_window_tokens: row.context_window_tokens === null ? null : num(row.context_window_tokens), cache_write_ttl: (row.cache_write_ttl as string | null) ?? null,
-      token_state: (row.token_state as string | null) ?? null,
-      context_band: contextBandFor((row.provider as string | null) ?? null, (row.model as string | null) ?? null, { openai: row.over_openai === true, anthropic: row.over_anthropic === true }),
-      rate_date: (row.rate_date as string | null) ?? null,
-      calls: num(row.calls), total_tokens: num(row.total_tokens), composition: (() => { const c = emptyComposition(); addComposition(c, row); return c; })() }));
-    const pricingInputs: PricingInputRow[] = pricing.map(row => ({ provider: row.provider, model: row.model, reasoning_effort: row.reasoning_effort, service_tier: row.service_tier, speed: row.speed,
-      context_window_tokens: row.context_window_tokens, cache_write_ttl: row.cache_write_ttl, token_state: row.token_state, context_band: row.context_band, rate_date: row.rate_date, calls: row.calls,
-      input_fresh: row.composition.input_fresh, input_cached: row.composition.input_cached, input_cache_write: row.composition.input_cache_write, output: row.composition.output,
-      reasoning: row.composition.reasoning, unclassified: row.composition.unclassified, total_tokens: row.total_tokens }));
-    const cost = priceUsage(pricingInputs);
+    const pricing = useRequests
+      ? requestPricingRows.map(row => pricingRowFromSql(row, {
+          context_band: contextBandFor((row.provider as string | null) ?? null, (row.model as string | null) ?? null, { openai: row.over_openai === true, anthropic: row.over_anthropic === true }),
+          rate_date: (row.rate_date as string | null) ?? null,
+        }))
+      : bucketPricingRows.map(row => pricingRowFromSql(row, {
+          provider: byId.get(row.account_id as string)?.provider ?? null,
+          context_band: 'short',
+          rate_date: (row.rate_date as string | null) ?? null,
+        }));
+    const cost = priceUsage(pricing.map(pricingInputFromRow));
     const pricedEligible = pricing.reduce((n, row) => n + row.total_tokens, 0);
     const pricedWithEvidence = pricing.filter(row => row.model !== null).reduce((n, row) => n + row.total_tokens, 0);
+    const pricingCoverageNote = useRequests
+      ? 'Pricing inputs exist on request records; the eligible population is the request-covered tokens, and rows without a model cannot be priced.'
+      : 'The estimate prices the same hourly buckets as the headline: model, the Chicago calendar date of the hour, and exclusive token composition. Missing service tier is assumed Standard and counted. Buckets are not a single request, so every row prices on the short context band. Rows without a model cannot be priced.';
+    const pricingNote = useRequests
+      ? 'Catalog pricing is applied by the cost calculation (USG-013); these are its inputs with effort, tier, speed, context, and cache-write evidence preserved and unknown kept unknown.'
+      : 'Catalog pricing is applied by the cost calculation (USG-013). Hourly collection is enough to estimate; request-level effort, tier, speed, and long-context evidence refine the estimate when a detail filter makes requests the headline.';
 
     const projectRowsOut = projectRows.map(row => ({ state: row.state as UsageQueryResult['projects']['rows'][number]['state'], project_id: (row.project_id as string | null) ?? null,
       label: (row.project_label as string | null) ?? null, total_tokens: num(row.total_tokens), calls: num(row.calls), conversations: num(row.conversations), share: share(num(row.total_tokens), useRequests ? headlineTokens : requestTotals.matching.tokens) }));
@@ -682,7 +738,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       by_model: modelRows, model_series: modelSeriesRows,
       effort_series: { rows: effortSeriesRows,
         coverage: coverage('tokens', headlineTokens, requestCovered, effortTokens, 'Effort is recorded on request detail only; the eligible population is the request-covered tokens, and a request without a reported effort is kept as unknown.') },
-      pricing_inputs: { rows: pricing, coverage: coverage('tokens', headlineTokens, pricedEligible, pricedWithEvidence, 'Pricing inputs exist only on request records; the eligible population is the request-covered tokens, and rows without a model cannot be priced.'), note: 'Catalog pricing is applied by the cost calculation (USG-013); these are its inputs with effort, tier, speed, context, and cache-write evidence preserved and unknown kept unknown.' },
+      pricing_inputs: { rows: pricing, coverage: coverage('tokens', headlineTokens, pricedEligible, pricedWithEvidence, pricingCoverageNote), note: pricingNote },
       projects: { rows: projectRowsOut,
         coverage: coverage('tokens', headlineTokens, requestCovered, projectEvidenced, 'Project evidence: request-covered tokens with a project identity or an explicit No project; Unknown project is the remainder.'),
         registry: coverage('tokens', headlineTokens, projectIdentity, projectMapped, 'Registry mapping: tokens carrying a stable project identity that a named project maps.') },

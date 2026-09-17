@@ -245,8 +245,11 @@ test('cost/model tables preserve exact values and a large legend starts readable
   const colors = new Map([['m1', 'var(--chart-1)']]);
   const cost = text(renderToStaticMarkup(<CostModelTable rows={result.cost.by_model} />));
   assert.match(cost, /m1 7 1,400 86% \$1\.25/);
-  const models = text(renderToStaticMarkup(<ModelSummaryTable result={result} colors={colors} />));
-  assert.match(models, /Model Calls Tokens Share Fresh Cached Cache write Output m1 7 1,400 70% 1\.4K 0 0 0/, 'one column per composition part, exact values preserved');
+    const models = text(renderToStaticMarkup(<ModelSummaryTable result={result} colors={colors} />));
+    assert.match(models, /Model Calls Tokens Share Fresh Cached Cache write Output m1 7 1,400 70% 1\.4K 0 0 0/, 'one column per composition part, exact values preserved');
+    const emptyCost = text(renderToStaticMarkup(<CostModelTable rows={[]} />));
+    assert.match(emptyCost, /No priced model activity/);
+    assert.doesNotMatch(emptyCost, /source price date|request records carrying pricing/);
 
   const legend = renderToStaticMarkup(<UsageSeriesChart categories={[{ key: 'd', label: 'Day', shortLabel: 'D' }]}
     series={Array.from({ length: 6 }, (_, index) => ({ key: `m${index}`, label: `Model ${index}`, color: `var(--chart-${index % 5 + 1})`, values: [index + 1] }))}

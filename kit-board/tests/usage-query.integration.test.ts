@@ -41,6 +41,7 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     await bucket(claude, claudeSource, 'a2', '2026-09-03T14:00:00Z', 'm2', 1, 40);
     await bucket(codex, codexSource, 'b1', '2026-09-03T15:00:00Z', 'm3', 4, 400);
     await bucket(codex, codexSource, 'b0', '2026-08-31T14:00:00Z', 'm3', 1, 10);
+    await bucket(codex, codexSource, 'sol1', '2026-08-31T14:00:00Z', 'gpt-5.6-sol', 2, 1_000_000);
     await bucket(claude, claudeSource, 'a3', '2026-09-14T20:00:00Z', 'm1', 1, 5);
 
     // Project registry: one mapped working-directory identity; knowledge registry: one mapped vault.
@@ -127,7 +128,7 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     assert.deepEqual([day('2026-09-03T05:00:00.000Z').total_tokens, day('2026-09-04T05:00:00.000Z').state, day('2026-09-14T05:00:00.000Z').state], [440, 'zero', 'partial']);
     assert.equal(all.series.points.reduce((n, p) => n + p.total_tokens, 0), all.headline.total_tokens, 'the series reconciles to the headline');
     assert.deepEqual(all.model_series.find(m => m.model === 'm1')!.points.map(p => [p.start, p.total_tokens]), [['2026-09-02T05:00:00.000Z', 170], ['2026-09-14T05:00:00.000Z', 5]]);
-    // Effort is request detail only, so it speaks for the same 210 tokens as pricing_inputs, not the 615-token headline.
+    // Effort is request detail only, so it speaks for the 210 covered request tokens, not the 615-token headline.
     assert.deepEqual(all.effort_series.rows.map(r => [r.model, r.effort, r.points.reduce((n, p) => n + p.total_tokens, 0)]), [['m1', 'high', 150], ['m1', 'unknown', 20], ['m2', 'low', 40]]);
     assert.deepEqual([all.effort_series.coverage.eligible, all.effort_series.coverage.classified], [210, 210]);
     assert.deepEqual(all.request_detail, { covered_tokens: 210, covered_calls: 3, coverage: { unit: 'tokens', headline: 615, eligible: 615, classified: 210, applicable: 1, complete: 210 / 615, note: all.request_detail.coverage.note } });
@@ -138,10 +139,12 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     assert.deepEqual([all.tools.invocations, all.tools.by_outcome, all.tools.by_tool.map(t => [t.name, t.invocations])], [2, { succeeded: 1, unknown: 1 }, [['Bash', 1], ['Read', 1]]]);
     assert.deepEqual([all.tools.caller_coverage.classified, all.tools.outcome_coverage.classified], [2, 1]);
     assert.deepEqual(all.knowledge.rows.map(r => [r.label, r.accesses, r.distinct_invocations, r.distinct_sessions, r.by_access_kind.read]), [['Fixture vault', 1, 1, 1, 1]]);
-    assert.deepEqual(all.pricing_inputs.rows.map(r => [r.model, r.reasoning_effort, r.total_tokens]), [['m1', 'high', 150], ['m2', 'low', 40], ['m1', null, 20]]);
-    assert.deepEqual([all.pricing_inputs.coverage.eligible, all.pricing_inputs.coverage.classified], [210, 210]);
+    assert.deepEqual(all.pricing_inputs.rows.map(r => [r.model, r.service_tier, r.context_band, r.rate_date, r.total_tokens]),
+      [['m3', null, 'short', '2026-09-03', 400], ['m1', null, 'short', '2026-09-02', 170], ['m2', null, 'short', '2026-09-03', 40], ['m1', null, 'short', '2026-09-14', 5]],
+      'hourly buckets price without waiting for request-level tier or effort');
+    assert.deepEqual([all.pricing_inputs.coverage.eligible, all.pricing_inputs.coverage.classified], [615, 615]);
     assert.deepEqual(all.environmental_inputs.cohorts.map(c => [c.account_id, c.month, c.selected.calls, c.selected.raw_tokens, c.population.calls, c.basis, c.month_closed]).sort(), [[claude, '2026-09', 5, 215, 5, 'buckets', false], [codex, '2026-09', 4, 400, 4, 'buckets', false]]);
-    assert.deepEqual([all.cost.unpriced_reasons, all.cost.estimated_cost_usd, all.cost.pricing_catalog.versions.openai], [{ model_not_in_catalog: 210 }, 0, '2026-09-13'], 'fixture models are unpriced with their reason, never free');
+    assert.deepEqual([all.cost.unpriced_reasons, all.cost.estimated_cost_usd, all.cost.pricing_catalog.versions.openai], [{ model_not_in_catalog: 615 }, 0, '2026-09-13'], 'fixture models are unpriced with their reason, never free');
     assert.deepEqual([all.environment.basis.model_calls, all.environment.energy_kwh.planning, all.environment.coverage.calls_headline, all.environment.methodology_versions], [9, 0.00306, 9, ['2026-08-20.1']]);
     assert.deepEqual(all.historical.snapshots.map(s => [s.subject_key, s.month, s.status, s.merged, s.reason]), [[subject, '2026-09', 'partial', 'none', 'hourly_ledger_covers_month']]);
 
@@ -216,13 +219,21 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     assert.deepEqual([halfUnknownZone.headline.total_tokens, halfUnknownZone.historical.snapshots[0].reason], [0, 'source_timezone_unknown_whole_month_only']);
     assert.equal((await query({ preset: 'custom', start: '2026-07-01T05:00:00Z', end: '2026-08-01T05:00:00Z', models: 'm1' })).historical.snapshots[0].reason, 'filters_unsupported_by_snapshot');
 
-    // 6. Pricing inputs carry the context band from each request against the provider threshold and a rate date pinned to the display default zone.
-    const august = await query({ preset: 'custom', start: '2026-08-31T05:00:00Z', end: '2026-09-01T05:00:00Z', accounts: codex });
+    // 6. Hourly buckets estimate from model, Chicago date, and composition; missing tier is Standard and the band is short.
+    const bucketPriced = await query({ preset: 'custom', start: '2026-08-31T05:00:00Z', end: '2026-09-01T05:00:00Z', accounts: codex, models: 'gpt-5.6-sol' });
+    assert.equal(bucketPriced.headline.basis, 'buckets');
+    assert.deepEqual(bucketPriced.pricing_inputs.rows.map(r => [r.provider, r.model, r.service_tier, r.context_band, r.rate_date, r.total_tokens, r.calls]),
+      [['codex', 'gpt-5.6-sol', null, 'short', '2026-08-31', 1_000_000, 2]]);
+    assert.deepEqual([bucketPriced.cost.estimated_cost_usd, bucketPriced.cost.missing_service_tier_calls_assumed_standard, bucketPriced.cost.unpriced_tokens], [5, 2, 0]);
+    assert.deepEqual(bucketPriced.cost.series.map(r => [r.rate_date, r.model, r.estimated_cost_usd, r.total_tokens]), [['2026-08-31', 'gpt-5.6-sol', 5, 1_000_000]],
+      'bucket hours become the daily cost series rate date');
+    // Request-level long/short band and dated Priority still apply when a detail filter makes requests the headline.
+    const august = await query({ preset: 'custom', start: '2026-08-31T05:00:00Z', end: '2026-09-01T05:00:00Z', accounts: codex, surfaces: 'cli', models: 'gpt-5.6-sol' });
     assert.deepEqual(august.pricing_inputs.rows.map(r => [r.provider, r.model, r.context_band, r.rate_date, r.total_tokens]), [['codex', 'gpt-5.6-sol', 'long', '2026-08-31', 272_001], ['codex', 'gpt-5.6-sol', 'short', '2026-08-31', 272_000]]);
     assert.deepEqual([august.cost.estimated_cost_usd, august.cost.by_model[0].long_context_calls, august.cost.unpriced_tokens], [4.08001, 1, 0], 'exactly the threshold is short, one over is long');
     assert.deepEqual(august.cost.series.map(r => [r.rate_date, r.model, r.estimated_cost_usd, r.total_tokens]), [['2026-08-31', 'gpt-5.6-sol', 4.08001, 544_001]],
       'the daily cost series reconciles its model and source price date');
-    const boundary = await query({ preset: 'custom', start: '2026-07-29T00:00:00Z', end: '2026-08-01T00:00:00Z', accounts: codex, timezone: 'UTC' });
+    const boundary = await query({ preset: 'custom', start: '2026-07-29T00:00:00Z', end: '2026-08-01T00:00:00Z', accounts: codex, timezone: 'UTC', surfaces: 'cli' });
     assert.deepEqual([boundary.pricing_inputs.rows[0].rate_date, boundary.cost.by_model_effort_service_tier[0].pricing_service_tiers, boundary.cost.estimated_cost_usd], ['2026-07-29', ['priority'], 1.25],
       'a 03:00Z event on July 30 is July 29 in America/Chicago whatever the display zone, so it prices in the launch Priority period');
 
