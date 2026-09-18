@@ -17,6 +17,8 @@ import {
   DEFAULT_PREFERENCES, HISTORY_RANGES, PREFERENCE_KEY, accountViews, carriedAccounts, expandedAccounts, parsePreferences, rememberExpanded, type AllowancePreferences, type HistoryDays,
 } from '@/lib/allowance-view';
 import type { InstallsSummary } from '@/lib/usage-store';
+import { oauthFailureAlerts, oauthFailureInstallNotices } from '@/lib/claude-oauth-notice';
+import { defaultCollectionSettings, type CollectionSettings } from '@/lib/companion-settings';
 
 const INSTALLS_TTL = 5 * 60_000;
 
@@ -36,11 +38,20 @@ function identityAlerts(installs: InstallsSummary['installs'] | null) {
   return alerts;
 }
 
+function mergeAlerts(identity: Record<string, string[]>, oauth: Record<string, string[]>) {
+  const alerts: Record<string, string[]> = {};
+  for (const id of new Set([...Object.keys(oauth), ...Object.keys(identity)])) {
+    alerts[id] = [...(oauth[id] ?? []), ...(identity[id] ?? [])];
+  }
+  return alerts;
+}
+
 function AllowancesInner() {
   const { data, error, now, retry } = useLiveData();
   const params = useSearchParams();
   const [preferences, setPreferences] = useState<AllowancePreferences | null>(null);
   const [installs, setInstalls] = useState<InstallsSummary['installs'] | null>(null);
+  const [settings, setSettings] = useState<CollectionSettings>(defaultCollectionSettings);
   const installsAt = useRef(0);
   useEffect(() => {
     let stored: string | null = null;
@@ -52,7 +63,13 @@ function AllowancesInner() {
     if (!data || Date.now() - installsAt.current < INSTALLS_TTL) return;
     const controller = new AbortController();
     fetchPrivateJson<InstallsSummary>('/api/usage-v2', controller.signal)
-      .then(summary => { if (!controller.signal.aborted) { installsAt.current = Date.now(); setInstalls(summary.installs); } })
+      .then(summary => {
+        if (!controller.signal.aborted) {
+          installsAt.current = Date.now();
+          setInstalls(summary.installs);
+          setSettings(summary.settings);
+        }
+      })
       .catch(() => {});
     return () => controller.abort();
   }, [data]);
@@ -64,14 +81,30 @@ function AllowancesInner() {
   const active = preferences ?? DEFAULT_PREFERENCES;
   const carried = useMemo(() => (data ? carriedAccounts(new URLSearchParams(params.toString()), data.accounts) : []), [data, params]);
   const narrowed = !!data && carried.length < data.accounts.length;
-  const views = useMemo(() => (data ? accountViews({ accounts: carried, sources: data.sources as LiveData['sources'], quotas: data.quotas, now, historyDays: active.historyDays, showSpark: active.showSpark, alerts: identityAlerts(installs) }) : []),
-    [data, carried, now, active.historyDays, active.showSpark, installs]);
+  const oauthNotices = useMemo(() => oauthFailureInstallNotices(installs, settings), [installs, settings]);
+  const views = useMemo(() => (data ? accountViews({ accounts: carried, sources: data.sources as LiveData['sources'], quotas: data.quotas, now, historyDays: active.historyDays, showSpark: active.showSpark, alerts: mergeAlerts(identityAlerts(installs), oauthFailureAlerts(installs, settings)) }) : []),
+    [data, carried, now, active.historyDays, active.showSpark, installs, settings]);
   const expanded = useMemo(() => expandedAccounts(active, carried), [active, carried]);
   const sparkTotal = views.reduce((n, v) => n + v.windows.filter(w => w.spark).length, 0);
   const modelWindows = views.flatMap(v => v.visible.filter(w => w.pace !== null).map(w => ({ account: v.account, pace: w.pace! })));
 
   return (
     <Workspace>
+      {oauthNotices.length > 0 && (
+        <Alert variant="warning">
+          <AlertTitle>Claude OAuth usage failed</AlertTitle>
+          <AlertDescription>
+            <p>Observatory could not collect Claude allowance through the signed-in Claude Code OAuth interface. Statusline is the fallback while Claude Code is running. Tokens, model, and effort metadata are collected; conversation text is never uploaded.</p>
+            <ul className="mt-2 grid gap-2">
+              {oauthNotices.map(row => (
+                <li key={row.machine_label}><span className="font-medium">{row.machine_label}.</span> {row.notice.body}</li>
+              ))}
+            </ul>
+            <p className="mt-2"><Link href="/settings/collection" className="underline underline-offset-4">Collection settings</Link> has Keep Claude Code signed in.</p>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {error && (
         <Alert variant={data ? 'warning' : 'destructive'}>
           <AlertTitle>{data ? 'The latest refresh failed' : 'Allowances are temporarily unavailable'}</AlertTitle>

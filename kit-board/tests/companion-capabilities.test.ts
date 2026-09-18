@@ -45,11 +45,13 @@ test('option support reads each companion build’s own report and never blocks 
   assert.equal(optionSupport(row('execution.detail_level'), 'buckets_only', []).state, 'always');
   assert.equal(optionSupport(row('execution.detail_level'), 'requests', []).state, 'unverified');
   assert.deepEqual(optionSupport(row('execution.detail_level'), 'requests', reports), { state: 'supported', supported: 1, reporting: 1, label: 'supported by 1 of 1 reporting' });
-  assert.equal(optionSupport(row('allowance.claude_reader'), 'oauth_usage', reports).state, 'unsupported', 'a mode the build does not implement');
+  assert.equal(optionSupport(row('allowance.claude_reader'), 'oauth_usage', reports).state, 'supported', 'oauth_usage is an implemented claude_account mode');
   assert.equal(optionSupport(row('allowance.codex_reader'), 'embedded', reports).state, 'supported', 'embedded rides on the codex execution adapter');
+  assert.equal(optionSupport(row('allowance.codex_reader'), 'web_backend', reports).state, 'unsupported', 'web_backend stays unimplemented');
   assert.equal(optionSupport(row('execution.claude_local_logs'), false, []).state, 'always', 'switching something off needs nothing');
-  assert.equal(optionSupport(row('providers.cursor'), true, reports).state, 'unsupported');
+  assert.equal(optionSupport(row('providers.cursor'), true, reports).state, 'supported');
   assert.equal(optionSupport(row('hooks.claude_statusline'), true, reports).state, 'supported');
+  assert.equal(optionSupport(row('allowance.claude_oauth_keepalive'), true, reports).state, 'supported');
   assert.equal(optionSupport(row('live_mode'), true, reports).state, 'unsupported');
   assert.equal(optionSupport(row('browser.claude_web'), true, reports).state, 'always', 'browser rows carry no companion requirement');
   const second = [...reports, { machine_label: 'mac', current: true, document: { ...document, features: { ...document.features, detail_levels: ['buckets_only'] } } }];

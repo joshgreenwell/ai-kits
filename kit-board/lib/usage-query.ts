@@ -8,10 +8,18 @@ import {
 import { catalogThresholds, contextBandFor, priceUsage, type ApiEquivalentEstimate, type PricingInputRow } from './usage-pricing';
 import { estimateEnvironment, type CohortInput, type EnvironmentalEstimate, type StoredEstimate } from './environmental-estimate';
 
+export const USAGE_QUERY_SECTIONS = ['overview', 'requests', 'tools'] as const;
+export type UsageQuerySection = (typeof USAGE_QUERY_SECTIONS)[number];
+/** Process-local coalescing only; HTTP responses stay private/no-store. */
+export const USAGE_QUERY_CACHE_TTL_MS = 5 * 60_000;
+const USAGE_QUERY_CACHE_MAX = 96;
+
 /**
- * One filtered usage query layer (USG-012). Every Tokens card reads the same selected scope from
- * here: half-open range at local boundaries, OR within a dimension and AND across dimensions,
- * explicit Unknown, full-bucket inclusion, and per-section coverage with stated denominators.
+ * One filtered usage query layer (USG-012). Tokens cards share this selected scope: half-open range
+ * at local boundaries, OR within a dimension and AND across dimensions, explicit Unknown,
+ * full-bucket inclusion, and per-section coverage with stated denominators. An optional `section`
+ * reads only the tables that card needs so the page can paint progressively; omitting it still
+ * returns the full result.
  *
  * Source precedence follows the metric contract. Canonical hourly buckets are the headline token
  * and call authority for every slice, because no collection manifest has declared a slice complete
@@ -58,6 +66,8 @@ export const usageQuerySchema = z.object({
   projects: list(z.union([z.uuid(), z.enum(PROJECT_STATES)]), 50),
   agent_scope: z.enum(['all', 'main', 'subagent']).default('all'),
   agents: list(sha256, 50),
+  /** When set, skip tables other cards own. Omitted = the full result (tests and non-Tokens callers). */
+  section: z.enum(USAGE_QUERY_SECTIONS).optional(),
 }).strict();
 export type UsageQuery = z.infer<typeof usageQuerySchema>;
 
@@ -83,7 +93,7 @@ export type UsageQueryResult = {
     accounts: { id: string; provider: string; label: string }[];
     /** Every non-browser collector source, the machine filter's vocabulary. */
     machines: { id: string; account_id: string; machine_label: string; mode: string }[];
-    filters: Omit<UsageQuery, 'preset' | 'start' | 'end' | 'timezone' | 'resolution'>;
+    filters: Omit<UsageQuery, 'preset' | 'start' | 'end' | 'timezone' | 'resolution' | 'section'>;
     /** Filters that only request detail can answer; when any is set the headline is the covered request detail. */
     detail_filters: string[] };
   headline: { total_tokens: number; calls: number; conversations: number | null; composition: Composition; basis: 'buckets' | 'requests';
@@ -351,6 +361,20 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       .filter((v): v is string => typeof v === 'string');
     const empty = (): UsageQueryResult['headline'] => ({ total_tokens: 0, calls: 0, conversations: null, composition: emptyComposition(), basis: 'buckets',
       unfilterable_tokens: 0, unfilterable_calls: 0, uncovered_request_tokens: 0, snapshot_tokens: 0, snapshot_calls: 0, last_observation: null });
+    const useRequests = detailFilters.length > 0;
+    const allSections = q.section === undefined;
+    const wantOverview = allSections || q.section === 'overview';
+    const wantRequests = allSections || q.section === 'requests';
+    const wantTools = allSections || q.section === 'tools';
+    // Overview is the hourly ledgers and snapshots. Requests own activity_requests group-bys.
+    // Tools own tool_events and knowledge. Detail filters make requests the headline, so overview
+    // then also ranks activity_requests — still skipping tool tables until that section runs.
+    const needBuckets = wantOverview || wantRequests;
+    const needRequestTable = wantRequests || wantTools || (wantOverview && useRequests);
+    const needRequestPeriods = (wantOverview && useRequests) || wantRequests;
+    const needRequestGroups = wantRequests;
+    const needRequestPricing = wantOverview && useRequests;
+    const needAgentEvidence = wantRequests || (wantOverview && useRequests);
 
     // 1. Canonical buckets by period and model. A bucket counts only when it lies wholly inside the range,
     //    the current hour being the one exception while the range is anchored to now.
@@ -358,7 +382,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const startIso = new Date(range.start).toISOString();
     const endIso = new Date(bucketEnd).toISOString();
     const bp = new Params();
-    const bucketRows = accounts.length ? await db.unsafe(`WITH ${canonicalBucketCte(bp, accounts, startIso, endIso, q, namedModels)}
+    const bucketRows = accounts.length && needBuckets ? await db.unsafe(`WITH ${canonicalBucketCte(bp, accounts, startIso, endIso, q, namedModels)}
       SELECT account_id, model, ${periodExpr('hour', q.resolution, bp, tz)} AS period_start, ${periodExpr('hour', 'day', bp, tz)} AS day_start,
         sum(calls)::float8 AS calls, sum(input_tokens)::float8 AS input_fresh, sum(cached_tokens)::float8 AS input_cached,
         sum(cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, sum(unclassified)::float8 AS unclassified,
@@ -371,7 +395,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const sp = new Params();
     const straddleLocalModel = modelFilterSql(sp, q, namedModels, 't.model');
     const straddleProviderModel = modelFilterSql(sp, q, namedModels, `coalesce(nullif(u.model, ''), 'unknown')`);
-    const [straddle] = accounts.length ? await db.unsafe(`SELECT (
+    const [straddle] = accounts.length && wantOverview ? await db.unsafe(`SELECT (
         (SELECT count(DISTINCT (t.account_id, t.session_hash, t.hour, t.model))::int
           FROM personal_hub.token_bucket_revisions t WHERE t.account_id = ANY(${sp.add(accounts)}::text[]) ${straddleLocalModel}
             AND ((t.hour < ${sp.add(startIso)}::timestamptz AND t.hour + interval '1 hour' > ${sp.add(startIso)}::timestamptz)
@@ -384,7 +408,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       )::int AS buckets`, sp.values) : [{ buckets: 0 }];
     // Conversations under the bucket basis are the distinct sessions among the canonical buckets in scope.
     const cp0 = new Params();
-    const [bucketSessions] = accounts.length ? await db.unsafe(`WITH canonical AS (
+    const [bucketSessions] = accounts.length && wantOverview && !useRequests ? await db.unsafe(`WITH canonical AS (
         SELECT DISTINCT ON (t.account_id, t.session_hash, t.hour, t.model) t.account_id, t.session_hash, t.source_id
         FROM personal_hub.token_bucket_revisions t
         WHERE t.account_id = ANY(${cp0.add(accounts)}::text[]) AND t.hour >= ${cp0.add(new Date(range.start).toISOString())}::timestamptz
@@ -400,7 +424,6 @@ export function createUsageQuery(getDatabase?: () => Sql) {
 
     // 2–5. Canonical requests once, then cheap group-bys. Rebuilding the ranked CTE for every card
     // timed out after request-with-tools collection (statement bound 5s, browser bound 8s).
-    const useRequests = detailFilters.length > 0;
     const thresholds = catalogThresholds();
     const loggedInput = 'coalesce(r.input_fresh_tokens, 0) + coalesce(r.input_cached_tokens, 0) + coalesce(r.input_cache_write_tokens, 0)';
     const rangeStartIso = new Date(range.start).toISOString();
@@ -417,7 +440,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       knowledgeTotal: { distinct_invocations: 0 } as Row,
       agentEvidence: { spawns: 0, observed_children: 0, conversations: 0 } as Row,
     };
-    const detail = accounts.length ? await db.begin(async tx => {
+    const detail = accounts.length && needRequestTable ? await db.begin(async tx => {
       await tx.unsafe(`SET LOCAL statement_timeout = '40s'`);
       const rp = new Params();
       const cte = requestCte(rp, q, accounts, range);
@@ -425,37 +448,37 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       await tx.unsafe(`CREATE INDEX _usage_requests_join ON _usage_requests (account_id, semantic_key)`);
 
       const periodP = new Params();
-      const requestPeriodRows = await tx.unsafe(`
+      const requestPeriodRows = needRequestPeriods ? await tx.unsafe(`
         SELECT r.matches, r.account_id, r.model_actual AS model, ${periodExpr('r.activity_at', q.resolution, periodP, tz)} AS period_start, ${compositionSelect()},
           max(r.observed_at) AS last_observed
-        FROM _usage_requests r GROUP BY 1, 2, 3, 4 ORDER BY 4, 3`, periodP.values);
+        FROM _usage_requests r GROUP BY 1, 2, 3, 4 ORDER BY 4, 3`, periodP.values) : [];
 
-      const projectRows = await tx.unsafe(`
+      const projectRows = needRequestGroups ? await tx.unsafe(`
         SELECT coalesce(r.project_state, 'unknown') AS state, r.project_id, r.project_label, ${compositionSelect()}
-        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY total_tokens DESC NULLS LAST`);
+        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY total_tokens DESC NULLS LAST`) : [];
 
-      const agentRows = await tx.unsafe(`
+      const agentRows = needRequestGroups ? await tx.unsafe(`
         SELECT r.agent_key, coalesce(r.agent_class, 'unknown') AS agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.model_actual AS model,
           CASE WHEN r.agent_identity_basis IS NULL THEN 'unattributed' WHEN r.agent_class = 'main' OR r.agent_depth = 0 THEN 'main'
                WHEN r.agent_depth > 0 OR r.parent_agent_key IS NOT NULL THEN 'subagent' ELSE 'unattributed' END AS role,
           ${compositionSelect()}
-        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY total_tokens DESC NULLS LAST`);
+        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY total_tokens DESC NULLS LAST`) : [];
 
       const cp = new Params();
-      const requestPricingRows = useRequests ? await tx.unsafe(`
+      const requestPricingRows = needRequestPricing ? await tx.unsafe(`
         SELECT r.provider, r.model_actual AS model, r.reasoning_effort, r.service_tier, r.speed, r.context_window_tokens, r.cache_write_ttl, r.token_state,
           (${loggedInput} > ${cp.add(thresholds.openai)}::bigint) AS over_openai, (${loggedInput} > ${cp.add(thresholds.anthropic)}::bigint) AS over_anthropic, (${loggedInput} > ${cp.add(thresholds.xai)}::bigint) AS over_xai,
           to_char(r.activity_at AT TIME ZONE ${cp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date, ${compositionSelect()}
         FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 ORDER BY total_tokens DESC NULLS LAST`, cp.values) : [];
 
       const effortP = new Params();
-      const effortRows = await tx.unsafe(`
+      const effortRows = needRequestGroups ? await tx.unsafe(`
         SELECT coalesce(r.model_actual, '${UNKNOWN}') AS model, coalesce(r.reasoning_effort, '${UNKNOWN}') AS effort, ${periodExpr('r.activity_at', q.resolution, effortP, tz)} AS period_start,
           sum(r.observed_total_tokens)::float8 AS total_tokens, count(*)::int AS calls
-        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY 3`, effortP.values);
+        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY 3`, effortP.values) : [];
 
       const tp = new Params();
-      const toolRows = await tx.unsafe(`WITH canonical_invocations AS (
+      const toolRows = wantTools ? await tx.unsafe(`WITH canonical_invocations AS (
           SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.tool_name, t.tool_class, t.tool_namespace, t.caller_agent_key, t.caller_request_key, t.outcome, t.session_hash, t.observed_at, b.source_id
           FROM personal_hub.tool_events t JOIN personal_hub.companion_bindings b ON b.id = t.binding_id
           WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${tp.add(accounts)}::text[])
@@ -477,10 +500,10 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           LEFT JOIN _usage_requests r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key)
         SELECT tool_name, tool_class, tool_namespace, caller_agent_key, caller_name, caller_class, caller_model, final_outcome AS outcome,
           (caller_request_key IS NOT NULL) AS has_caller_request, count(*)::int AS invocations
-        FROM joined ${useRequests ? 'WHERE matches' : ''} GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9`, tp.values);
+        FROM joined ${useRequests ? 'WHERE matches' : ''} GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9`, tp.values) : [];
 
       const kp = new Params();
-      const knowledgeRows = await tx.unsafe(`WITH accesses AS (
+      const knowledgeRows = wantTools ? await tx.unsafe(`WITH accesses AS (
           SELECT a.account_id, a.invocation_key, a.access_kind, a.current_configuration, a.source_id, a.source_label, a.source_state, a.identity_id
           FROM personal_hub.resource_access_source_resolution a
           WHERE a.account_id = ANY(${kp.add(accounts)}::text[]) AND a.observed_at >= ${kp.add(rangeStartIso)}::timestamptz AND a.observed_at < ${kp.add(rangeEndIso)}::timestamptz
@@ -499,13 +522,13 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'write')::int AS kind_write,
           count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'unknown')::int AS kind_unknown
         FROM accesses a LEFT JOIN invocations i ON i.account_id = a.account_id AND i.invocation_key = a.invocation_key
-        GROUP BY 1, 2, 3, 4 ORDER BY accesses DESC`, kp.values);
-      const [knowledgeTotal] = await tx.unsafe(`SELECT count(DISTINCT a.invocation_key)::int AS distinct_invocations
+        GROUP BY 1, 2, 3, 4 ORDER BY accesses DESC`, kp.values) : [];
+      const [knowledgeTotal] = wantTools ? await tx.unsafe(`SELECT count(DISTINCT a.invocation_key)::int AS distinct_invocations
         FROM personal_hub.resource_access_source_resolution a WHERE a.account_id = ANY($1::text[]) AND a.current_configuration AND a.observed_at >= $2::timestamptz AND a.observed_at < $3::timestamptz`,
-        [accounts, rangeStartIso, rangeEndIso]);
+        [accounts, rangeStartIso, rangeEndIso]) : [{ distinct_invocations: 0 }];
 
       const gp = new Params();
-      const [agentEvidence] = await tx.unsafe(`WITH events AS (
+      const [agentEvidence] = needAgentEvidence ? await tx.unsafe(`WITH events AS (
           SELECT DISTINCT ON (e.account_id, e.semantic_key) e.event_kind, e.agent_key, e.outcome
           FROM personal_hub.agent_events e WHERE e.account_id = ANY(${gp.add(accounts)}::text[])
             AND e.observed_at >= ${gp.add(rangeStartIso)}::timestamptz AND e.observed_at < ${gp.add(rangeEndIso)}::timestamptz
@@ -514,7 +537,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           (SELECT count(DISTINCT r.session_hash)::int FROM _usage_requests r WHERE r.matches) AS conversations,
           (SELECT count(DISTINCT agent_key)::int FROM (
             SELECT agent_key FROM events WHERE event_kind IN ('start', 'resume', 'finish') AND agent_key IS NOT NULL
-            UNION SELECT r.agent_key FROM _usage_requests r WHERE r.matches AND r.agent_key IS NOT NULL AND (r.agent_depth > 0 OR r.parent_agent_key IS NOT NULL)) children) AS observed_children`, gp.values);
+            UNION SELECT r.agent_key FROM _usage_requests r WHERE r.matches AND r.agent_key IS NOT NULL AND (r.agent_depth > 0 OR r.parent_agent_key IS NOT NULL)) children) AS observed_children`, gp.values) : [emptyDetail.agentEvidence];
 
       return {
         requestPeriodRows, projectRows, agentRows, requestPricingRows, effortRows, toolRows, knowledgeRows,
@@ -530,7 +553,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // Hourly buckets already have model, Chicago date, and exclusive composition. Missing tier is assumed
     // Standard; the hour is not a single request, so the short context band is used rather than a summed input.
     const bpp = new Params();
-    const bucketPricingRows = !useRequests && accounts.length ? await db.unsafe(`WITH ${canonicalBucketCte(bpp, accounts, startIso, endIso, q, namedModels)}
+    const bucketPricingRows = wantOverview && !useRequests && accounts.length ? await db.unsafe(`WITH ${canonicalBucketCte(bpp, accounts, startIso, endIso, q, namedModels)}
       SELECT account_id, model, to_char(hour AT TIME ZONE ${bpp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date,
         sum(calls)::float8 AS calls, sum(input_tokens)::float8 AS input_fresh, sum(cached_tokens)::float8 AS input_cached,
         sum(cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, sum(unclassified)::float8 AS unclassified,
@@ -558,15 +581,15 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       FROM personal_hub.report_revisions rv${crosswalk ? ' LEFT JOIN personal_hub.usage_report_subjects sub ON sub.subject_key = rv.subject_key' : ''}
       WHERE rv.kind = 'usage' AND rv.status <> 'failed' AND rv.period_key = ANY($1::text[])
       ORDER BY rv.period_key, rv.subject_key, CASE WHEN rv.period_key = ANY($2::text[]) AND rv.status = 'complete' THEN 0 ELSE 1 END, rv.produced_at DESC, rv.received_at DESC`;
-    const snapshotRows = await db.unsafe(snapshotSql(true), [months, closedMonths]).catch(error => {
+    const snapshotRows = wantOverview ? await db.unsafe(snapshotSql(true), [months, closedMonths]).catch(error => {
       if ((error as { code?: string }).code !== '42P01') throw error;
       return db.unsafe(snapshotSql(false), [months, closedMonths]);
-    });
+    }) : [];
     // The whole-month cohort population per account: what the environmental class is inferred from, unfiltered,
     // and which (account, source month) pairs the hourly ledger covers at all.
     const mp = new Params();
     const mtz = `${mp.add(tz)}::text`;
-    const monthRows = accounts.length && months.length ? await db.unsafe(`WITH ${canonicalBucketCte(
+    const monthRows = wantOverview && accounts.length && months.length ? await db.unsafe(`WITH ${canonicalBucketCte(
         mp, accounts,
         new Date(monthBounds(months[0], tz).start).toISOString(),
         new Date(monthBounds(months.at(-1)!, tz).end).toISOString(),
@@ -889,7 +912,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
 const defaultQuery = createUsageQuery();
 export const { listReportSubjects, updateReportSubject } = defaultQuery;
 
-/** Bounded per-scope cache: identical parameters within thirty seconds share one read, and at most 32 scopes are kept. */
+/** Bounded per-scope cache: identical parameters within five minutes share one read. */
 const cache = new Map<string, { expires: number; value: Promise<UsageQueryResult> }>();
 export function usageQuery(params: UsageQuery) {
   const key = stableJson(params);
@@ -897,7 +920,7 @@ export function usageQuery(params: UsageQuery) {
   const hit = cache.get(key);
   if (hit && hit.expires > now) return hit.value;
   const value = defaultQuery.usageQuery(params, { now }).catch(error => { cache.delete(key); throw error; });
-  if (cache.size >= 32) cache.delete(cache.keys().next().value!);
-  cache.set(key, { expires: now + 30_000, value });
+  if (cache.size >= USAGE_QUERY_CACHE_MAX) cache.delete(cache.keys().next().value!);
+  cache.set(key, { expires: now + USAGE_QUERY_CACHE_TTL_MS, value });
   return value;
 }

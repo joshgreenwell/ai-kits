@@ -1,0 +1,14 @@
+{
+  "five_hour": {
+    "utilization": 0.15,
+    "resets_at": "2026-09-15T05:00:00.000Z"
+  },
+  "seven_day": {
+    "utilization": 42,
+    "resets_at": "2026-09-20T00:00:00.000Z"
+  },
+  "seven_day_claude_sonnet": {
+    "utilization": 10,
+    "resets_at": "2026-09-20T00:00:00.000Z"
+  }
+}

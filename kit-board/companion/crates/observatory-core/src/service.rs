@@ -6,13 +6,14 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use observatory_contract::Uuid;
 use serde::Serialize;
 use thiserror::Error;
 
 use crate::paths::{ensure_private_dir, home_dir};
+use crate::process;
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
@@ -58,12 +59,12 @@ fn scheduler_name() -> &'static str {
 }
 
 fn run_quiet(program: &str, args: &[&str]) -> Result<bool, ServiceError> {
-    let status = Command::new(program).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
+    let status = process::command(program).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
     Ok(status.success())
 }
 
 fn run_capture(program: &str, args: &[&str]) -> Result<Option<String>, ServiceError> {
-    let output = Command::new(program).args(args).stderr(Stdio::null()).output()?;
+    let output = process::command(program).args(args).stderr(Stdio::null()).output()?;
     if output.status.success() {
         Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
     } else {
@@ -140,16 +141,18 @@ pub fn install(
             return Err(ServiceError::Command);
         }
     } else if cfg!(windows) {
-        // The directory is pinned so a run started by the scheduler and one started from a
-        // packaged app (which sees a redirected %LOCALAPPDATA%) share the same state.
-        let task =
-            format!("\"{}\" --config-dir \"{}\" run", exe.to_string_lossy(), config_dir.to_string_lossy());
-        let cadence = cadence_minutes.to_string();
-        let ok = run_quiet(
-            "schtasks",
-            &["/Create", "/TN", &label, "/TR", &task, "/SC", "MINUTE", "/MO", &cadence, "/IT", "/F"],
-        )?;
-        if !ok {
+        // Register from XML so Task Scheduler starts observatory.exe directly and we
+        // control the logon type. The release binary is a Windows-subsystem process, so
+        // InteractiveToken does not allocate a console. schtasks /TR is not used: it can
+        // wrap the command in cmd.exe, which is a visible console every cadence.
+        let xml = windows_task_xml(&exe, config_dir, cadence_minutes, &local_start_boundary());
+        let xml_path = logs.join("companion.task.xml");
+        write_utf16_le_bom(&xml_path, &xml)?;
+        crate::state::restrict_file(&xml_path)?;
+        let xml_arg = xml_path.to_string_lossy().into_owned();
+        let ok = run_quiet("schtasks", &["/Create", "/TN", &label, "/XML", &xml_arg, "/F"]);
+        let _ = fs::remove_file(&xml_path);
+        if !ok? {
             return Err(ServiceError::Command);
         }
     } else if cfg!(target_os = "linux") {
@@ -313,8 +316,101 @@ fn mechanism_name() -> Option<&'static str> {
 }
 
 fn run_capture_bytes(program: &str, args: &[&str]) -> Option<Vec<u8>> {
-    let output = Command::new(program).args(args).stderr(Stdio::null()).output().ok()?;
+    let output = process::command(program).args(args).stderr(Stdio::null()).output().ok()?;
     output.status.success().then_some(output.stdout)
+}
+
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+fn xml_unescape(text: &str) -> String {
+    text.replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+fn iso8601_period_minutes(minutes: u64) -> String {
+    if minutes > 0 && minutes % 60 == 0 { format!("PT{}H", minutes / 60) } else { format!("PT{minutes}M") }
+}
+
+fn local_start_boundary() -> String {
+    let zoned = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::system());
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+        zoned.year(),
+        zoned.month(),
+        zoned.day(),
+        zoned.hour(),
+        zoned.minute(),
+        zoned.second()
+    )
+}
+
+fn write_utf16_le_bom(path: &Path, text: &str) -> io::Result<()> {
+    let mut bytes = Vec::with_capacity(2 + text.len() * 2);
+    bytes.extend_from_slice(&[0xFF, 0xFE]);
+    bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+    fs::write(path, bytes)
+}
+
+/// Task Scheduler 1.2 XML for a hidden, interactive, least-privilege job that
+/// starts the companion directly. `start` is a local `YYYY-MM-DDTHH:MM:SS`.
+fn windows_task_xml(exe: &Path, config_dir: &Path, cadence_minutes: u64, start: &str) -> String {
+    let command = xml_escape(&exe.to_string_lossy());
+    let arguments = xml_escape(&format!("--config-dir \"{}\" run", config_dir.to_string_lossy()));
+    let interval = iso8601_period_minutes(cadence_minutes);
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Personal Observatory companion</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <TimeTrigger>
+      <Repetition>
+        <Interval>{interval}</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <StartBoundary>{start}</StartBoundary>
+      <Enabled>true</Enabled>
+    </TimeTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{command}</Command>
+      <Arguments>{arguments}</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"#
+    )
 }
 
 /// Console output as text: `schtasks /XML` writes UTF-16 (with or without a BOM);
@@ -382,7 +478,7 @@ pub fn parse_schtasks_repetition_minutes(xml: &str) -> Option<u64> {
 /// Whether the task's `Arguments` pin the given configuration directory.
 pub fn schtasks_pins_config_dir(xml: &str, config_dir: &Path) -> bool {
     let Some(arguments) = xml_element(xml, "Arguments") else { return false };
-    arguments_pin_config_dir(&arguments.replace("&quot;", "\""), config_dir)
+    arguments_pin_config_dir(&xml_unescape(arguments), config_dir)
 }
 
 fn same_dir(left: &str, right: &Path) -> bool {
@@ -633,5 +729,32 @@ mod readback_tests {
             "ExecStart=/opt/observatory run",
             Path::new("/home/s/.config/personal-hub/companion")
         ));
+    }
+
+    #[test]
+    fn windows_task_xml_is_silent_and_pins_the_config_dir() {
+        let exe = Path::new(r"C:\Program Files\observatory\observatory.exe");
+        let dir = Path::new(r"C:\Users\synthetic\.config\personal-hub\companion");
+        let xml = windows_task_xml(exe, dir, 60, "2026-09-16T10:00:00");
+        assert!(
+            !xml.to_ascii_lowercase().contains("cmd.exe"),
+            "schtasks /TR wrapping cmd.exe is what opens a console"
+        );
+        assert!(!xml.contains("<Hidden>true</Hidden>"), "keep the job visible in Task Scheduler");
+        assert!(xml.contains("<LogonType>InteractiveToken</LogonType>"));
+        assert_eq!(parse_schtasks_repetition_minutes(&xml), Some(60));
+        assert!(schtasks_pins_config_dir(&xml, dir));
+        assert_eq!(iso8601_period_minutes(15), "PT15M");
+        assert_eq!(iso8601_period_minutes(30), "PT30M");
+        assert_eq!(iso8601_period_minutes(60), "PT1H");
+        assert_eq!(
+            parse_schtasks_repetition_minutes(&windows_task_xml(exe, dir, 15, "2026-09-16T10:00:00")),
+            Some(15)
+        );
+        let ampersand_dir = Path::new(r"C:\Users\synthetic\A&B\companion");
+        let escaped =
+            windows_task_xml(Path::new(r"C:\obs&rvatory.exe"), ampersand_dir, 30, "2026-09-16T10:00:00");
+        assert!(escaped.contains("obs&amp;rvatory.exe"));
+        assert!(schtasks_pins_config_dir(&escaped, ampersand_dir));
     }
 }

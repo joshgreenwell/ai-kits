@@ -503,23 +503,24 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     const weekly = (reader: string, observed_at: string, value: number, basis = 'reported') => ({ ...reading(bindingId, 'claude_execution', 'hook_snapshot', reader, observed_at, value),
       basis, meter_key: 'seven_day', label: reader === 'web_backend' ? 'Weekly · all models' : 'Claude · weekly', window_minutes: 10080, resets_at: inHours(2), raw_window_id: 'seven_day' });
     const tieAt = minutesAgo(125);
+    const oauthAt = minutesAgo(122);
     const selection = await store.ingestUsage(current, envelope({ records: [
-      weekly('embedded', minutesAgo(130), 39), weekly('statusline', tieAt, 40, 'exact'), weekly('web_backend', tieAt, 41, 'estimated'), weekly('oauth_usage', minutesAgo(100), 60)] }));
+      weekly('embedded', minutesAgo(130), 39), weekly('statusline', tieAt, 40, 'exact'), weekly('web_backend', tieAt, 41, 'estimated'), weekly('oauth_usage', oauthAt, 60)] }));
     assert.equal(selection.accepted.records, 4);
     const currentMeter = (dashboard: Awaited<ReturnType<typeof store.usageDashboard>>) =>
       (dashboard.allowance as Record<string, unknown>[]).find(row => row.account_id === account && row.meter_key === 'seven_day')!;
     const chosen = currentMeter(await store.usageDashboard());
     assert.deepEqual([chosen.reader, chosen.value, chosen.basis, chosen.observed_at, chosen.raw_window_id, chosen.label, chosen.cadence_minutes, chosen.stale, chosen.stale_reason],
-      ['statusline', 40, 'exact', tieAt, 'seven_day', 'Claude · weekly', 60, false, null],
-      'an exact tie falls to reader rank, a newer unknown reader never wins, and 125 minutes is fresh at cadence 60');
-    assert.equal(chosen.age_minutes, 125);
+      ['oauth_usage', 60, 'reported', oauthAt, 'seven_day', 'Claude · weekly', 60, false, null],
+      'a strictly newer recognized reader wins, even when it used to be unknown');
+    assert.equal(chosen.age_minutes, 122);
     const [storedBasis] = await sql`SELECT basis FROM personal_hub.allowance_readings WHERE account_id = ${account} AND meter_key = 'seven_day' AND reader = 'web_backend'`;
     assert.equal(storedBasis.basis, 'estimated', 'the readings ledger keeps the wire basis');
     assert.deepEqual((await sql`SELECT reader, basis FROM personal_hub.allowance_percent_view WHERE account_id = ${account} AND window_key = 'seven_day' ORDER BY reader`).map(r => [r.reader, r.basis]),
       [['embedded', 'reported'], ['oauth_usage', 'reported'], ['statusline', 'exact'], ['web_backend', 'estimated']], 'the compatibility view exposes basis');
     await store.updateInstall({ id: install.id, action: 'override', settings: { cadence_minutes: 15 } });
     const faster = currentMeter(await store.usageDashboard());
-    assert.deepEqual([faster.reader, faster.cadence_minutes, faster.stale, faster.stale_reason], ['statusline', 15, true, 'age'],
+    assert.deepEqual([faster.reader, faster.cadence_minutes, faster.stale, faster.stale_reason], ['oauth_usage', 15, true, 'age'],
       'the same reading is stale once the install collects every fifteen minutes');
     assert.equal((await store.listInstalls()).installs.find(i => i.id === install.id)!.cadence_minutes, 15);
 

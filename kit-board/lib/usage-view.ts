@@ -84,6 +84,21 @@ export function serializeTokensFilters(filters: TokensFilters): URLSearchParams 
 /** The query string the API accepts is the same set of keys, so the private URL and the request stay one document. */
 export const queryString = (filters: TokensFilters) => serializeTokensFilters(filters).toString();
 
+/** Matches `usageQuerySchema.section`. Kept here so the Tokens client never imports the query module. */
+export const USAGE_QUERY_SECTIONS = ['overview', 'requests', 'tools'] as const;
+export type UsageQuerySection = (typeof USAGE_QUERY_SECTIONS)[number];
+/** Same TTL as the server process cache; HTTP stays no-store. */
+export const USAGE_QUERY_CACHE_TTL_MS = 5 * 60_000;
+
+/** Overlay a sectioned `/api/usage-query` response onto the last good result. */
+export function mergeUsageQuerySection(base: UsageQueryResult, section: UsageQuerySection, part: UsageQueryResult): UsageQueryResult {
+  if (section === 'overview') return part;
+  if (section === 'requests') {
+    return { ...base, effort_series: part.effort_series, projects: part.projects, agents: part.agents, request_detail: part.request_detail };
+  }
+  return { ...base, tools: part.tools, knowledge: part.knowledge };
+}
+
 export function hourlyAllowed(range: { start: string; end: string }) {
   return Date.parse(range.end) - Date.parse(range.start) <= MAX_HOURLY_RANGE_DAYS * 24 * HOUR;
 }

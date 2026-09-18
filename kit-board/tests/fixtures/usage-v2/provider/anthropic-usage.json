@@ -1,0 +1,27 @@
+{
+  "data": [
+    {
+      "starting_at": "2026-09-14T00:00:00.000Z",
+      "ending_at": "2026-09-14T01:00:00.000Z",
+      "results": [
+        {
+          "uncached_input_tokens": 100,
+          "cache_read_input_tokens": 20,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 10,
+            "ephemeral_1h_input_tokens": 5
+          },
+          "output_tokens": 40,
+          "model": "claude-sonnet-4-5",
+          "workspace_id": "wrkspc_1",
+          "api_key_id": "key_1",
+          "service_tier": "standard",
+          "context_window": "200k",
+          "speed": "standard"
+        }
+      ]
+    }
+  ],
+  "has_more": false,
+  "next_page": null
+}

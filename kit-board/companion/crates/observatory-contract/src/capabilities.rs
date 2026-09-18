@@ -81,6 +81,9 @@ pub struct Features {
     pub live_mode: bool,
     pub detailed_monthly_report: bool,
     pub account_history: bool,
+    /// This build can spawn Claude Code so *it* refreshes its OAuth store.
+    #[serde(default)]
+    pub claude_oauth_keepalive: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
@@ -38,12 +39,20 @@ pub const IDENTITY_CACHE: &str = "claude-identity-cache.json";
 /// still runs as the documented fallback, so a local deny of the statusline is
 /// matched against this path as well.
 pub const STATUSLINE_MODE_PATH: &str = "allowance.claude_reader.statusline";
+pub const OAUTH_USAGE_MODE_PATH: &str = "allowance.claude_reader.oauth_usage";
 
 /// True when a local deny-list entry removes the statusline reader whichever
 /// reader the server selects: the adapter id, `providers.claude`, the exact
 /// path, or a dotted prefix of it (`allowance.claude_reader`).
 pub fn statusline_reader_denied(deny: &[String]) -> bool {
     let gate = Gate { enabled: true, provider_enabled: true, mode_path: STATUSLINE_MODE_PATH.to_owned() };
+    deny.iter().any(|entry| denied(entry, Adapter::ClaudeAccount, &gate))
+}
+
+/// True when a local deny-list entry removes the OAuth usage reader whichever
+/// reader the server selects.
+pub fn oauth_usage_reader_denied(deny: &[String]) -> bool {
+    let gate = Gate { enabled: true, provider_enabled: true, mode_path: OAUTH_USAGE_MODE_PATH.to_owned() };
     deny.iter().any(|entry| denied(entry, Adapter::ClaudeAccount, &gate))
 }
 
@@ -71,11 +80,28 @@ pub fn stale_after_minutes(cadence_minutes: u64) -> u64 {
 pub fn window_minutes(key: &str) -> Option<u64> {
     if key == "five_hour" {
         Some(300)
-    } else if key == "seven_day" || (key.starts_with("seven_day_") && key.len() > "seven_day_".len()) {
+    } else if key == "seven_day"
+        || key == "extra_usage"
+        || (key.starts_with("seven_day_") && key.len() > "seven_day_".len())
+    {
         Some(10080)
     } else {
         None
     }
+}
+
+/// Slug a display name the way the browser quota normalizer does: lowercase,
+/// non-alphanumerics to underscores, edges trimmed.
+pub fn window_slug(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else if !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    out.trim_matches('_').to_owned()
 }
 
 fn title_case(slug: &str) -> String {
@@ -98,6 +124,7 @@ pub fn window_label(key: &str) -> String {
     match key {
         "five_hour" => "Claude · 5h".to_owned(),
         "seven_day" => "Claude · weekly".to_owned(),
+        "extra_usage" => "Claude · extra usage".to_owned(),
         scoped => format!("Claude · weekly · {}", title_case(scoped.trim_start_matches("seven_day_"))),
     }
 }
@@ -170,42 +197,171 @@ fn has_hour_prefix(name: &str) -> bool {
 }
 
 /// Extracts valid samples from the statusline JSON: every recognized window key
-/// (see `window_minutes`) whose `used_percentage` is in range and whose reset is
-/// in the future, in key order. Samples come back unstamped.
+/// (see `window_minutes`) whose used percentage is in range and whose reset is
+/// in the future, in encounter order. A top-level `limits` array (the shape
+/// Claude Code uses for model-scoped weekly windows) wins over a duplicate key
+/// in `rate_limits`. Samples come back unstamped.
 pub fn samples_from_statusline(data: &Value, now: Timestamp) -> Vec<StatuslineSample> {
-    let limits = match data.get("rate_limits") {
-        Some(Value::Object(map)) => map.clone(),
-        _ => Map::new(),
-    };
     let now_seconds = now.as_microsecond() as f64 / 1e6;
     let mut samples = Vec::new();
-    for (key, value) in &limits {
-        let Some(minutes) = window_minutes(key) else { continue };
-        let Value::Object(window) = value else { continue };
-        let used = window.get("used_percentage").and_then(Value::as_number);
-        let reset = window.get("resets_at").and_then(Value::as_f64);
-        let (Some(used), Some(reset)) = (used, reset) else { continue };
-        let percent = used.as_f64().unwrap_or(-1.0);
-        // The reset must lie inside the window (plus a day of slack); anything else is a
-        // bad clock or a hand-written payload and would pin the forecast for weeks.
-        if !(0.0..=100.0).contains(&percent)
-            || reset <= now_seconds
-            || reset > now_seconds + (minutes * 60 + 86_400) as f64
-        {
+    let mut seen = std::collections::BTreeSet::new();
+    for sample in samples_from_limits_array(data.get("limits"), now, now_seconds) {
+        if seen.insert(sample.window_key.clone()) {
+            samples.push(sample);
+        }
+    }
+    let empty = Map::new();
+    let limits = match data.get("rate_limits") {
+        Some(Value::Object(map)) => map,
+        _ => &empty,
+    };
+    for (key, value) in limits {
+        if seen.contains(key) {
             continue;
         }
-        let Some(resets_at) = crate::pyjson::iso(reset) else { continue };
-        samples.push(StatuslineSample {
-            window_key: key.clone(),
-            label: window_label(key),
-            observed_at: py_isoformat(now),
-            used_percent: used.clone(),
-            resets_at: py_isoformat(resets_at.timestamp()),
-            window_minutes: minutes,
-            identity_hash: None,
-        });
+        let Some(minutes) = window_minutes(key) else { continue };
+        let Value::Object(window) = value else { continue };
+        let Some(used) = window_used_percent(window) else { continue };
+        let Some(reset) = reset_unix(window.get("resets_at")) else { continue };
+        if let Some(sample) = sample_if_current(key, used, reset, minutes, now, now_seconds) {
+            seen.insert(key.clone());
+            samples.push(sample);
+        }
+    }
+    if !seen.contains("extra_usage") {
+        if let Some(weekly) = samples.iter().find(|sample| sample.window_key == "seven_day").cloned() {
+            if let Some(sample) = extra_usage_sample(data.get("extra_usage"), &weekly, now, now_seconds) {
+                samples.push(sample);
+            }
+        }
     }
     samples
+}
+
+fn samples_from_limits_array(
+    limits: Option<&Value>,
+    now: Timestamp,
+    now_seconds: f64,
+) -> Vec<StatuslineSample> {
+    let Some(items) = limits.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut samples = Vec::new();
+    for row in items {
+        let Some(obj) = row.as_object() else { continue };
+        let Some(key) = limit_row_key(obj) else { continue };
+        let Some(minutes) = window_minutes(&key) else { continue };
+        let Some(used) = window_used_percent(obj).or_else(|| {
+            serde_json::Number::from_f64(number_in_percent_range(obj.get("percent").and_then(Value::as_f64))?)
+        }) else {
+            continue;
+        };
+        let Some(reset) = reset_unix(obj.get("resets_at")).or_else(|| reset_unix(obj.get("resetsAt"))) else {
+            continue;
+        };
+        if let Some(sample) = sample_if_current(&key, used, reset, minutes, now, now_seconds) {
+            samples.push(sample);
+        }
+    }
+    samples
+}
+
+fn limit_row_key(row: &Map<String, Value>) -> Option<String> {
+    match row.get("kind").and_then(Value::as_str).unwrap_or("") {
+        "session" => Some("five_hour".to_owned()),
+        "weekly_all" => Some("seven_day".to_owned()),
+        "weekly_scoped" => {
+            let name = scoped_window_name(row.get("scope"))?;
+            let slug = window_slug(&name);
+            (!slug.is_empty()).then(|| format!("seven_day_{slug}"))
+        }
+        _ => None,
+    }
+}
+
+fn scoped_window_name(scope: Option<&Value>) -> Option<String> {
+    let scope = scope?.as_object()?;
+    if let Some(model) = scope.get("model") {
+        if let Some(name) = model.get("display_name").or(model.get("id")).and_then(Value::as_str) {
+            return Some(name.to_owned());
+        }
+    }
+    match scope.get("surface") {
+        Some(Value::String(name)) => Some(name.clone()),
+        Some(Value::Object(surface)) => {
+            surface.get("display_name").or(surface.get("id")).and_then(Value::as_str).map(str::to_owned)
+        }
+        _ => None,
+    }
+}
+
+fn extra_usage_sample(
+    extra: Option<&Value>,
+    weekly: &StatuslineSample,
+    now: Timestamp,
+    now_seconds: f64,
+) -> Option<StatuslineSample> {
+    let extra = extra?.as_object()?;
+    if extra.get("is_enabled").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let used = window_used_percent(extra)?;
+    let reset = reset_unix(extra.get("resets_at"))
+        .or_else(|| Timestamp::from_str(&weekly.resets_at).ok().map(|at| at.as_microsecond() as f64 / 1e6))?;
+    sample_if_current("extra_usage", used, reset, weekly.window_minutes, now, now_seconds)
+}
+
+fn sample_if_current(
+    key: &str,
+    used: serde_json::Number,
+    reset: f64,
+    minutes: u64,
+    now: Timestamp,
+    now_seconds: f64,
+) -> Option<StatuslineSample> {
+    let percent = used.as_f64().unwrap_or(-1.0);
+    // The reset must lie inside the window (plus a day of slack); anything else is a
+    // bad clock or a hand-written payload and would pin the forecast for weeks.
+    if !(0.0..=100.0).contains(&percent)
+        || reset <= now_seconds
+        || reset > now_seconds + (minutes * 60 + 86_400) as f64
+    {
+        return None;
+    }
+    let resets_at = crate::pyjson::iso(reset)?;
+    Some(StatuslineSample {
+        window_key: key.to_owned(),
+        label: window_label(key),
+        observed_at: py_isoformat(now),
+        used_percent: used,
+        resets_at: py_isoformat(resets_at.timestamp()),
+        window_minutes: minutes,
+        identity_hash: None,
+    })
+}
+
+fn window_used_percent(window: &Map<String, Value>) -> Option<serde_json::Number> {
+    if let Some(number) =
+        window.get("used_percentage").or(window.get("used_percent")).and_then(Value::as_number)
+    {
+        return number_in_percent_range(number.as_f64()).map(|_| number.clone());
+    }
+    let utilization = window.get("utilization").and_then(Value::as_f64)?;
+    let percent = if (0.0..=1.0).contains(&utilization) { utilization * 100.0 } else { utilization };
+    number_in_percent_range(Some(percent))?;
+    serde_json::Number::from_f64(percent)
+}
+
+fn number_in_percent_range(value: Option<f64>) -> Option<f64> {
+    value.filter(|percent| (0.0..=100.0).contains(percent))
+}
+
+fn reset_unix(value: Option<&Value>) -> Option<f64> {
+    match value? {
+        Value::Number(number) => number.as_f64(),
+        Value::String(text) => Timestamp::from_str(text).ok().map(|at| at.as_microsecond() as f64 / 1e6),
+        _ => None,
+    }
 }
 
 /// The one-line summary the statusline prints.
@@ -393,17 +549,28 @@ pub fn record_statusline_status(
         })
         .unwrap_or_default();
     let stamp = py_isoformat(now);
-    let limits = match data.get("rate_limits") {
-        Some(Value::Object(map)) => map.clone(),
+    let mut keys: Vec<String> = match data.get("rate_limits") {
+        Some(Value::Object(map)) => map.keys().cloned().collect(),
+        _ => Vec::new(),
+    };
+    let mut offered: Map<String, Value> = match data.get("rate_limits") {
+        Some(Value::Object(map)) => map
+            .iter()
+            .filter(|(key, value)| window_minutes(key).is_some() && value.is_object())
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
         _ => Map::new(),
     };
-    let mut keys: Vec<&String> = limits.keys().collect();
+    if let Some(items) = data.get("limits").and_then(Value::as_array) {
+        for row in items {
+            let Some(obj) = row.as_object() else { continue };
+            let Some(key) = limit_row_key(obj) else { continue };
+            keys.push(key.clone());
+            offered.entry(key).or_insert_with(|| Value::Object(obj.clone()));
+        }
+    }
     keys.sort();
-    let offered: Map<String, Value> = limits
-        .iter()
-        .filter(|(key, value)| window_minutes(key).is_some() && value.is_object())
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
+    keys.dedup();
     let mut offered_ever: Vec<String> = previous
         .get("offered_windows_ever")
         .and_then(Value::as_array)
@@ -420,12 +587,12 @@ pub fn record_statusline_status(
     status.insert("entrypoint".into(), data.get("entrypoint").cloned().unwrap_or(Value::Null));
     status.insert(
         "rate_limits_present".into(),
-        Value::Bool(data.get("rate_limits").is_some_and(Value::is_object)),
+        Value::Bool(
+            data.get("rate_limits").is_some_and(Value::is_object)
+                || data.get("limits").is_some_and(Value::is_array),
+        ),
     );
-    status.insert(
-        "rate_limit_keys".into(),
-        Value::Array(keys.into_iter().map(|k| Value::String(k.clone())).collect()),
-    );
+    status.insert("rate_limit_keys".into(), Value::Array(keys.into_iter().map(Value::String).collect()));
     status.insert(
         "last_offered_at".into(),
         if offered.is_empty() {
@@ -595,6 +762,8 @@ mod tests {
         assert_eq!(window_label("seven_day_claude_opus_4_1"), "Claude · weekly · Claude Opus 4 1");
         assert_eq!(window_minutes("seven_day_"), None);
         assert_eq!(window_minutes("spend"), None);
+        assert_eq!(window_minutes("extra_usage"), Some(10080));
+        assert_eq!(window_slug("Fable 5.1"), "fable_5_1");
         assert_eq!(
             py_isoformat(Timestamp::from_microsecond(1_788_310_800_123_456).unwrap()),
             "2026-09-02T01:00:00.123456Z"
@@ -635,6 +804,34 @@ mod tests {
             serde_json::from_str(r#"{"last_invocation_at":"2026-09-02T03:10:00Z","invocations":3}"#).unwrap();
         assert_eq!(legacy.offered_windows_ever, None, "an older sidecar does not claim no windows");
         assert!(read_statusline_status(&dir.path().join("elsewhere")).is_none());
+    }
+
+    #[test]
+    fn statusline_limits_array_publishes_scoped_weekly_windows() {
+        let now = Timestamp::from_second(1_788_310_800).unwrap();
+        let data = json!({
+            "limits": [
+                {"kind": "session", "percent": 20, "resets_at": "2026-09-02T02:00:00Z"},
+                {"kind": "weekly_all", "percent": 40, "resets_at": "2026-09-08T01:00:00Z"},
+                {"kind": "weekly_scoped", "percent": 51.5, "resets_at": "2026-09-08T01:00:00Z",
+                    "scope": {"model": {"display_name": "Fable"}}}
+            ],
+            "rate_limits": {
+                "five_hour": {"used_percentage": 99, "resets_at": 1_788_314_400}
+            },
+            "extra_usage": {"is_enabled": true, "utilization": 10},
+            "version": "2.1.274"
+        });
+        let samples = samples_from_statusline(&data, now);
+        assert_eq!(
+            samples.iter().map(|s| s.window_key.as_str()).collect::<Vec<_>>(),
+            ["five_hour", "seven_day", "seven_day_fable", "extra_usage"]
+        );
+        assert_eq!(samples[0].used_percent.as_f64(), Some(20.0), "limits array wins over rate_limits");
+        assert_eq!(samples[2].label, "Claude · weekly · Fable");
+        assert_eq!(samples[3].label, "Claude · extra usage");
+        assert_eq!(samples[3].used_percent.as_f64(), Some(10.0));
+        assert_eq!(samples[3].resets_at, samples[1].resets_at);
     }
 
     #[test]

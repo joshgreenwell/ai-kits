@@ -432,9 +432,8 @@ fn an_ambiguous_unstamped_hold_is_never_released_only_pruned() {
     assert_eq!(prune_quarantine(&state, &cutoff_ctx, &[&a]).unwrap(), 1);
 }
 
-/// A local deny of the statusline reader reaches the fallback under `oauth_usage`,
-/// whose effective gate names the OAuth reader: the adapter still runs but reads
-/// nothing and reports the deny.
+/// A local deny of the statusline reader under `oauth_usage` leaves the OAuth
+/// reader free to run; a deny of the whole Claude reader group still stops both.
 #[test]
 fn a_statusline_deny_keeps_the_oauth_usage_fallback_from_reading() {
     let h = Harness::new();
@@ -442,35 +441,48 @@ fn a_statusline_deny_keeps_the_oauth_usage_fallback_from_reading() {
     settings.allowance.claude_reader = ClaudeReader::OauthUsage;
     let a = confirmed(BINDING_A, "claude-primary", 'a');
     h.write_part("2026-09-11T23-1.json", &[sample(0, 20.0, Some(&hash('a')))]);
-    for entry in ["allowance.claude_reader.statusline", "allowance.claude_reader"] {
-        let ctx = h.context_denying(vec![a.clone()], settings.clone(), &[entry]);
-        // The run-level gate under `oauth_usage` names the other reader, so the adapter runs.
-        let decided = observatory_core::effective::effective(
-            observatory_contract::Adapter::ClaudeAccount,
-            &settings,
-            &ctx.deny,
-            &ctx.bindings,
-        );
-        assert_eq!(
-            decided.runs,
-            entry != "allowance.claude_reader",
-            "{entry}: only the prefix entry reaches the gate"
-        );
-        let (outcome, sink) = collect(&ctx);
-        assert!(sink.records.is_empty(), "{entry}");
-        assert_eq!((outcome.state, outcome.detail), (CoverageState::DeniedLocally, Some(DetailCode::Denied)));
-        assert_eq!(outcome.records_emitted, 0);
-        assert_eq!(outcome.files, 0, "{entry}: the inbox is not read");
-        assert_eq!(allowance(&outcome), (CapabilityState::DisabledBySetting, Some("denied_locally".into())));
-        let state = h.state();
-        assert!(state.dirty_allowance_slots(BINDING_A).unwrap().is_empty(), "{entry}: nothing bound");
-        assert!(state.quarantined_samples().unwrap().is_empty(), "{entry}: nothing held");
-    }
-    // An unrelated deny leaves the fallback reading.
+    let ctx = h.context_denying(vec![a.clone()], settings.clone(), &["allowance.claude_reader.statusline"]);
+    let decided = observatory_core::effective::effective(
+        observatory_contract::Adapter::ClaudeAccount,
+        &settings,
+        &ctx.deny,
+        &ctx.bindings,
+    );
+    assert!(decided.runs, "the adapter's gate names the OAuth reader");
+    let (outcome, sink) = collect(&ctx);
+    assert!(sink.records.is_empty(), "unit tests never inject an OAuth credential");
+    assert_eq!(
+        (outcome.state, outcome.detail),
+        (CoverageState::CredentialUnavailable, Some(DetailCode::CredentialMissing))
+    );
+    assert_eq!(outcome.records_emitted, 0);
+    assert_eq!(outcome.files, 0, "the inbox is not read");
+    assert_eq!(allowance(&outcome), (CapabilityState::Partial, Some("credential_missing".into())));
+    let state = h.state();
+    assert!(state.dirty_allowance_slots(BINDING_A).unwrap().is_empty(), "nothing bound");
+    assert!(state.quarantined_samples().unwrap().is_empty(), "nothing held");
+
+    let ctx = h.context_denying(vec![a.clone()], settings.clone(), &["allowance.claude_reader"]);
+    let decided = observatory_core::effective::effective(
+        observatory_contract::Adapter::ClaudeAccount,
+        &settings,
+        &ctx.deny,
+        &ctx.bindings,
+    );
+    assert!(!decided.runs, "the prefix entry reaches the gate");
+    let (outcome, sink) = collect(&ctx);
+    assert!(sink.records.is_empty());
+    assert_eq!((outcome.state, outcome.detail), (CoverageState::DeniedLocally, Some(DetailCode::Denied)));
+    assert_eq!(allowance(&outcome), (CapabilityState::DisabledBySetting, Some("denied_locally".into())));
+
+    // An unrelated deny leaves the statusline fallback reading when OAuth has no credential.
     let ctx = h.context_denying(vec![a.clone()], settings.clone(), &["allowance.codex_reader"]);
     let (outcome, sink) = collect(&ctx);
     assert_eq!(sink.records.len(), 1);
-    assert_eq!((outcome.state, outcome.detail), (CoverageState::Partial, Some(DetailCode::NotImplemented)));
+    assert_eq!(
+        (outcome.state, outcome.detail),
+        (CoverageState::Partial, Some(DetailCode::CredentialMissing))
+    );
     assert_eq!(allowance(&outcome), (CapabilityState::Partial, Some("reader_fallback_statusline".into())));
 }
 
@@ -672,8 +684,28 @@ fn oauth_usage_mode_falls_back_to_the_statusline_and_says_so() {
     let ctx = h.context_with(vec![confirmed(BINDING_A, "claude-primary", 'a')], settings);
     h.write_part("2026-09-11T23-1.json", &[sample(0, 20.0, Some(&hash('a')))]);
     let (outcome, sink) = collect(&ctx);
-    assert_eq!((outcome.state, outcome.detail), (CoverageState::Partial, Some(DetailCode::NotImplemented)));
+    assert_eq!(
+        (outcome.state, outcome.detail),
+        (CoverageState::Partial, Some(DetailCode::CredentialMissing))
+    );
     assert_eq!(sink.records.len(), 1, "the passive fallback still publishes the reading");
+    assert_eq!(allowance(&outcome), (CapabilityState::Partial, Some("reader_fallback_statusline".into())));
+}
+
+#[test]
+fn oauth_keepalive_still_falls_back_to_the_statusline_when_oauth_fails() {
+    let h = Harness::new();
+    let mut settings = CollectionSettings::defaults();
+    settings.allowance.claude_reader = ClaudeReader::OauthUsage;
+    settings.allowance.claude_oauth_keepalive = true;
+    let ctx = h.context_with(vec![confirmed(BINDING_A, "claude-primary", 'a')], settings);
+    h.write_part("2026-09-11T23-1.json", &[sample(0, 20.0, Some(&hash('a')))]);
+    let (outcome, sink) = collect(&ctx);
+    assert_eq!(
+        (outcome.state, outcome.detail),
+        (CoverageState::Partial, Some(DetailCode::CredentialMissing))
+    );
+    assert_eq!(sink.records.len(), 1, "keepalive does not replace the statusline fallback");
     assert_eq!(allowance(&outcome), (CapabilityState::Partial, Some("reader_fallback_statusline".into())));
 }
 
@@ -742,7 +774,8 @@ fn allowance_row(outcome: &Outcome) -> Option<(CapabilityState, Option<String>)>
 #[test]
 fn the_execution_adapters_report_the_embedded_row_for_codex_only() {
     let dir = tempfile::tempdir().unwrap();
-    // With the unimplemented app server selected, the embedded row is reported as a fallback.
+    // With app_server selected, the execution adapter still reports the embedded
+    // row as a fallback; the account adapter is the one that talks to app-server.
     let mut settings = CollectionSettings::defaults();
     settings.allowance.codex_reader = CodexReader::AppServer;
     let ctx = execution_context(&dir, settings);

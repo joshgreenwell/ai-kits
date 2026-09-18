@@ -32,8 +32,9 @@ export const companionCapabilitiesSchema = z.object({
   features: z.object({
     detail_levels: z.array(code).max(8), tool_detail: z.array(code).max(8), project_attribution: z.array(code).max(8),
     resource_attribution: z.boolean(), include_subagents: z.boolean(), hooks: z.array(code).max(8),
-    schedulers: z.array(z.enum(schedulers)).max(3), live_mode: z.boolean(), detailed_monthly_report: z.boolean(),
+    schedulers: z.array(z.enum(schedulers)).max(3),     live_mode: z.boolean(), detailed_monthly_report: z.boolean(),
     account_history: z.boolean(),
+    claude_oauth_keepalive: z.boolean().default(false),
   }).strict(),
   effective: z.object({
     settings_version_applied: counter, config_source: z.enum(['fetched', 'cached', 'defaults']), paused: z.boolean(),

@@ -118,7 +118,9 @@ choice! { DetailLevel { BucketsOnly = "buckets_only", Requests = "requests", Req
 choice! { ToolDetail { Off = "off", BuiltinOnly = "builtin_only", HashedCustom = "hashed_custom" } }
 choice! { ProjectAttribution { Off = "off", Hashed = "hashed" } }
 choice! {
-    /// `oauth_usage` keeps the statusline as a passive fallback.
+    /// `oauth_usage` keeps the statusline as a passive fallback. When
+    /// `claude_oauth_keepalive` is on, the companion may spawn Claude Code so
+    /// *it* refreshes its own store; Observatory never POSTs a refresh_token.
     ClaudeReader { Off = "off", Statusline = "statusline", OauthUsage = "oauth_usage" }
 }
 choice! { CodexReader { Off = "off", Embedded = "embedded", AppServer = "app_server", WebBackend = "web_backend" } }
@@ -168,6 +170,11 @@ pub struct AllowanceSettings {
     pub claude_reader: ClaudeReader,
     pub codex_reader: CodexReader,
     pub cursor_reader: CursorReader,
+    /// Off by default. When `claude_reader` is `oauth_usage`, spawn Claude Code
+    /// (`claude auth status`) so Claude Code refreshes its own OAuth store.
+    /// The companion never POSTs a refresh_token itself. Old documents omit it.
+    #[serde(default)]
+    pub claude_oauth_keepalive: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -303,6 +310,7 @@ impl CollectionSettings {
                 claude_reader: ClaudeReader::Statusline,
                 codex_reader: CodexReader::Embedded,
                 cursor_reader: CursorReader::Off,
+                claude_oauth_keepalive: false,
             },
             account_history: AccountHistorySettings {
                 cursor_usage_events: false,
@@ -351,8 +359,8 @@ impl CollectionSettings {
             Adapter::CursorExecution => {
                 (self.execution.cursor_local_state, "execution.cursor_local_state".to_owned())
             }
-            // The statusline reader (passive) and the OAuth reader (active, unimplemented) both
-            // belong to the account adapter; only `off` disables it.
+            // The statusline reader (passive) and the OAuth reader (active) both belong
+            // to the account adapter; only `off` disables it.
             Adapter::ClaudeAccount => (
                 self.allowance.claude_reader != ClaudeReader::Off,
                 format!("allowance.claude_reader.{}", self.allowance.claude_reader),
@@ -413,6 +421,7 @@ mod tests {
         assert!(merged.paused);
         assert_eq!(merged.allowance.claude_reader, ClaudeReader::OauthUsage);
         assert_eq!(merged.allowance.codex_reader, CodexReader::Off);
+        assert!(!merged.allowance.claude_oauth_keepalive, "an omitted keepalive stays off");
         assert_eq!(merged.cadence_minutes, Cadence::Sixty);
     }
 

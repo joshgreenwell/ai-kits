@@ -10,6 +10,7 @@ use observatory_contract::stable_json::stable_json;
 use serde_json::{Value, json};
 
 use crate::credentials::{CredentialPresence, claude_credential_presence};
+use crate::cursor_store;
 use crate::paths;
 
 /// A signed-in identity as shown to the user at setup, and its confirmed hash.
@@ -43,6 +44,8 @@ pub struct CursorDiscovery {
     pub state_db: Option<PathBuf>,
     pub tracking_db: Option<PathBuf>,
     pub present: bool,
+    pub credentials: CredentialPresence,
+    pub identity: Option<DisplayIdentity>,
 }
 
 /// One vault Obsidian lists in its registry. The path stays on this machine:
@@ -117,6 +120,15 @@ pub fn codex_identity(home: &Path) -> Option<DisplayIdentity> {
     })
 }
 
+/// The Cursor account from `cursorAuth.userId` in `state.vscdb`. The access token
+/// beside it is never retained here.
+pub fn cursor_identity(state_db: &Path) -> Option<DisplayIdentity> {
+    let identity = cursor_store::cursor_auth_identity(state_db).ok()?;
+    let account = identity.user_id?;
+    let label = identity.label.filter(|email| email.contains('@')).unwrap_or_else(|| short(&account));
+    Some(DisplayIdentity { label, evidence_hash: identity_hash("cursor", &account) })
+}
+
 fn short(id: &str) -> String {
     let count = id.chars().count();
     if count <= 8 { id.to_owned() } else { format!("…{}", id.chars().skip(count - 6).collect::<String>()) }
@@ -145,8 +157,64 @@ pub fn obsidian_vaults() -> Vec<ObsidianVault> {
     paths::obsidian_config_file().map(|path| obsidian_vaults_in(&path)).unwrap_or_default()
 }
 
-/// Searches `PATH` for an executable by name.
+/// Searches `PATH` for an executable by name, then well-known Codex or Claude
+/// Code install locations when looking up those names. Settings never name a path.
 pub fn find_executable(name: &str) -> Option<PathBuf> {
+    if let Some(found) = find_on_path(name) {
+        return Some(found);
+    }
+    if name == "codex" || name.eq_ignore_ascii_case("codex.exe") {
+        return find_codex_install();
+    }
+    if name == "claude" || name.eq_ignore_ascii_case("claude.exe") || name.eq_ignore_ascii_case("claude.cmd") {
+        return find_claude_install();
+    }
+    None
+}
+
+/// npm global (`%APPDATA%\npm`), `~/.local/bin`, and nvm symlink/bin dirs.
+/// Never a settings-named path.
+pub fn find_claude_install() -> Option<PathBuf> {
+    first_existing_claude(&claude_search_roots())
+}
+
+fn claude_search_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        roots.push(PathBuf::from(appdata).join("npm"));
+    }
+    if let Some(home) = paths::home_dir() {
+        roots.push(home.join(".local").join("bin"));
+    }
+    for key in ["NVM_SYMLINK", "NVM_BIN"] {
+        if let Some(dir) = std::env::var_os(key) {
+            roots.push(PathBuf::from(dir));
+        }
+    }
+    roots
+}
+
+fn claude_file_names() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["claude.cmd", "claude.exe", "claude"]
+    } else {
+        &["claude"]
+    }
+}
+
+fn first_existing_claude(roots: &[PathBuf]) -> Option<PathBuf> {
+    for root in roots {
+        for name in claude_file_names() {
+            let full = root.join(name);
+            if full.is_file() {
+                return Some(full);
+            }
+        }
+    }
+    None
+}
+
+fn find_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     let candidates: Vec<String> = if cfg!(windows) {
         vec![format!("{name}.exe"), format!("{name}.cmd"), format!("{name}.bat"), name.to_owned()]
@@ -162,6 +230,44 @@ pub fn find_executable(name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The Windows desktop install keeps `codex.exe` under hashed folders in
+/// `%LOCALAPPDATA%\OpenAI\Codex\bin`, which is not on PATH. The plugin copy
+/// under `~/.codex/plugins` is a fallback.
+pub fn find_codex_install() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if cfg!(windows)
+        && let Some(base) = std::env::var_os("LOCALAPPDATA")
+    {
+        let bin = PathBuf::from(base).join("OpenAI").join("Codex").join("bin");
+        candidates.extend(codex_exes_in_hashed_bin(&bin));
+    }
+    if let Some(home) = paths::home_dir() {
+        let name = if cfg!(windows) { "codex.exe" } else { "codex" };
+        let plugin = home.join(".codex").join("plugins").join(".plugin-appserver").join(name);
+        if plugin.is_file() {
+            candidates.push(plugin);
+        }
+        let unix = home.join(".local").join("bin").join("codex");
+        if unix.is_file() {
+            candidates.push(unix);
+        }
+    }
+    candidates.sort_by_key(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
+    candidates.pop()
+}
+
+fn codex_exes_in_hashed_bin(bin: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(bin) else { return found };
+    for entry in entries.flatten() {
+        let exe = entry.path().join(if cfg!(windows) { "codex.exe" } else { "codex" });
+        if exe.is_file() {
+            found.push(exe);
+        }
+    }
+    found
 }
 
 /// Discovers everything the companion knows how to read on this machine.
@@ -184,8 +290,16 @@ pub fn discover() -> Discovered {
     };
     let state_db = paths::cursor_state_db().filter(|path| path.is_file());
     let tracking_db = paths::cursor_tracking_db().filter(|path| path.is_file());
-    let cursor =
-        CursorDiscovery { present: state_db.is_some() || tracking_db.is_some(), state_db, tracking_db };
+    let cursor = CursorDiscovery {
+        present: state_db.is_some() || tracking_db.is_some(),
+        credentials: state_db
+            .as_deref()
+            .map(cursor_store::cursor_credential_presence)
+            .unwrap_or(CredentialPresence::Missing),
+        identity: state_db.as_deref().and_then(cursor_identity),
+        state_db,
+        tracking_db,
+    };
     let registry = paths::obsidian_config_file().filter(|path| path.is_file());
     let obsidian = ObsidianDiscovery {
         present: registry.is_some(),
@@ -238,6 +352,74 @@ mod tests {
         assert_eq!(identity.label, "account …567890");
         assert!(!format!("{identity:?}").contains("SECRET"));
         assert!(codex_identity(&dir.path().join("missing")).is_none());
+    }
+
+    #[test]
+    fn cursor_identity_hashes_the_user_id_and_drops_the_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.vscdb");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE ItemTable (key TEXT UNIQUE, value BLOB);").unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES ('cursorAuth', ?1)",
+            [r#"{"userId":"user-42","cachedEmail":"synthetic@example.test","accessToken":"SECRET-CURSOR"}"#],
+        )
+        .unwrap();
+        let identity = cursor_identity(&path).unwrap();
+        assert_eq!(identity.label, "synthetic@example.test");
+        assert_eq!(identity.evidence_hash, identity_hash("cursor", "user-42"));
+        assert!(!format!("{identity:?}").contains("SECRET"));
+    }
+
+    #[test]
+    fn cursor_identity_reads_split_itemtable_scalars() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.vscdb");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE ItemTable (key TEXT UNIQUE, value BLOB);").unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES ('adminSettings.cachedAuthId', ?1)",
+            ["auth_01SYNTHETICUSERIDVALUE"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES ('cursorAuth/cachedEmail', ?1)",
+            ["synthetic@example.test"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable(key, value) VALUES ('cursorAuth/accessToken', ?1)",
+            ["SECRET-CURSOR"],
+        )
+        .unwrap();
+        let identity = cursor_identity(&path).unwrap();
+        assert_eq!(identity.label, "synthetic@example.test");
+        assert_eq!(identity.evidence_hash, identity_hash("cursor", "auth_01SYNTHETICUSERIDVALUE"));
+        assert!(!format!("{identity:?}").contains("SECRET"));
+    }
+
+    #[test]
+    fn claude_install_is_the_first_existing_file_in_search_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let npm = dir.path().join("npm");
+        fs::create_dir(&npm).unwrap();
+        let missing = dir.path().join("empty");
+        fs::create_dir(&missing).unwrap();
+        let name = if cfg!(windows) { "claude.cmd" } else { "claude" };
+        let exe = npm.join(name);
+        fs::write(&exe, b"not-a-binary").unwrap();
+        assert_eq!(first_existing_claude(&[missing, npm.clone()]), Some(exe));
+        assert!(first_existing_claude(&[dir.path().join("absent")]).is_none());
+    }
+
+    #[test]
+    fn hashed_codex_bin_dirs_are_discovered() {
+        let dir = tempfile::tempdir().unwrap();
+        let hashed = dir.path().join("deadbeefcafe");
+        fs::create_dir(&hashed).unwrap();
+        let exe = hashed.join(if cfg!(windows) { "codex.exe" } else { "codex" });
+        fs::write(&exe, b"not-a-binary").unwrap();
+        assert_eq!(codex_exes_in_hashed_bin(dir.path()), vec![exe]);
     }
 
     #[test]

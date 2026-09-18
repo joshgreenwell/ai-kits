@@ -40,44 +40,56 @@
         "adapter": "claude_account",
         "implemented": true,
         "modes": [
-          "statusline"
+          "statusline",
+          "oauth_usage"
         ],
         "parser_version": "2.0.0+statusline1",
         "denied": false
       },
       {
         "adapter": "codex_account",
-        "implemented": false,
-        "modes": [],
-        "parser_version": "0",
+        "implemented": true,
+        "modes": [
+          "app_server"
+        ],
+        "parser_version": "2.0.0+appserver1",
         "denied": false
       },
       {
         "adapter": "cursor_execution",
-        "implemented": false,
-        "modes": [],
-        "parser_version": "0",
+        "implemented": true,
+        "modes": [
+          "cursor_local_state"
+        ],
+        "parser_version": "2.0.0+cursor-local1",
         "denied": false
       },
       {
         "adapter": "cursor_account",
-        "implemented": false,
-        "modes": [],
-        "parser_version": "0",
+        "implemented": true,
+        "modes": [
+          "usage_summary",
+          "dashboard_rpc"
+        ],
+        "parser_version": "2.0.0+cursor-hosted1",
         "denied": false
       },
       {
         "adapter": "anthropic_api",
-        "implemented": false,
-        "modes": [],
-        "parser_version": "0",
+        "implemented": true,
+        "modes": [
+          "anthropic_admin_api"
+        ],
+        "parser_version": "2.0.0+admin-usage1",
         "denied": false
       },
       {
         "adapter": "openai_api",
-        "implemented": false,
-        "modes": [],
-        "parser_version": "0",
+        "implemented": true,
+        "modes": [
+          "openai_admin_api"
+        ],
+        "parser_version": "2.0.0+admin-usage1",
         "denied": false
       }
     ],
@@ -106,7 +118,8 @@
       ],
       "live_mode": false,
       "detailed_monthly_report": true,
-      "account_history": false
+      "account_history": true,
+      "claude_oauth_keepalive": true
     },
     "effective": {
       "settings_version_applied": 7,

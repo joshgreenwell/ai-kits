@@ -19,7 +19,7 @@ pub fn host_name() -> String {
             return value.trim().to_owned();
         }
     }
-    std::process::Command::new("hostname")
+    observatory_core::process::command("hostname")
         .output()
         .ok()
         .filter(|output| output.status.success())

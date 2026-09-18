@@ -11,6 +11,17 @@ const tone: Record<WindowView['state'], 'soft' | 'soft-info' | 'soft-warning' | 
   measured: 'soft', blended: 'soft', historical: 'soft-info', learning: 'outline', stale: 'soft-warning', expired: 'soft-warning', history_only: 'outline',
 };
 
+function AlertBadges({ alerts }: { alerts: string[] }) {
+  const oauth = alerts.filter(alert => alert.startsWith('Claude OAuth'));
+  const identity = alerts.filter(alert => !alert.startsWith('Claude OAuth'));
+  return (
+    <>
+      {oauth.length ? <Badge variant="soft-warning" title={oauth.join(' ')}>OAuth failed</Badge> : null}
+      {identity.length ? <Badge variant="soft-warning" title={identity.join(' ')}>identity{identity.length > 1 ? ` · ${identity.length}` : ''}</Badge> : null}
+    </>
+  );
+}
+
 /**
  * One full-width expandable card per account (USG-023). The header shows the account, its latest
  * observation, and every visible window side by side (remaining, reset countdown, compact outlook);
@@ -31,8 +42,7 @@ export function AllowanceAccordion({ views, expanded, onExpandedChange, now, tim
               <span className="flex flex-wrap items-center gap-2">
                 <span className="text-base font-semibold">{view.account.label}</span>
                 <Badge variant="outline">{view.account.provider}</Badge>
-                {/* One badge however many alerts: the alerts themselves are listed in full below the header. */}
-                {view.alerts.length ? <Badge variant="soft-warning" title={view.alerts.join(' ')}>identity{view.alerts.length > 1 ? ` · ${view.alerts.length}` : ''}</Badge> : null}
+                <AlertBadges alerts={view.alerts} />
               </span>
               <span className="text-muted-foreground font-mono text-xs font-normal">
                 {view.latestObservation ? `last observation ${whenIn(view.latestObservation, timezone)}` : 'no readings yet'}{view.hiddenSpark ? ` · ${view.hiddenSpark} Spark ${view.hiddenSpark === 1 ? 'window' : 'windows'} hidden` : ''}

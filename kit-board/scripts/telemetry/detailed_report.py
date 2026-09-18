@@ -32,6 +32,13 @@ REQUIRED = ('totals', 'exclusive_composition', 'by_work_mode', 'by_project', 'by
             'top_root_tasks', 'daily', 'agent_orchestration', 'knowledge_brain', 'api_equivalent_cost')
 
 
+def hidden_process_kwargs():
+    """Windows analyzer children are console programs; do not give them a window."""
+    if sys.platform != 'win32':
+        return {}
+    return {'creationflags': getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)}
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
@@ -84,7 +91,7 @@ def build_envelope(connection, settings, publisher, month, period_state):
         if connection['provider'] == 'codex':
             launcher = analyzer.with_name('run_analyzer.ps1' if sys.platform == 'win32' else 'run_analyzer.sh')
             if not launcher.is_file(): raise ValueError('The supported Codex analyzer launcher is missing')
-            argv = (['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(launcher)]
+            argv = (['powershell', '-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', str(launcher)]
                     if sys.platform == 'win32' else ['bash', str(launcher)]) + ['--month', month]
             argv += ['--top', '10', '--format', 'json']
             if settings.get('codex_home'):
@@ -96,7 +103,8 @@ def build_envelope(connection, settings, publisher, month, period_state):
             raise ValueError('Unsupported report provider')
         with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
             completed = subprocess.run(argv, stdout=stdout, stderr=stderr, timeout=120, check=False,
-                                       env={**os.environ, 'TOKEN_REPORT_PYTHON': sys.executable, 'PYTHONIOENCODING': 'utf-8'})
+                                       env={**os.environ, 'TOKEN_REPORT_PYTHON': sys.executable, 'PYTHONIOENCODING': 'utf-8'},
+                                       **hidden_process_kwargs())
             if completed.returncode:
                 raise RuntimeError('Detailed analyzer failed; previous published report is retained')
             if connection['provider'] == 'codex':

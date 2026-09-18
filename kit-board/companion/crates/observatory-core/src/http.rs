@@ -95,18 +95,23 @@ pub struct Client {
     key: Option<Secret>,
 }
 
+/// A blocking ureq agent: platform TLS, no redirects, bounded timeouts, Observatory user-agent.
+pub fn blocking_agent(timeout: Duration) -> Agent {
+    let tls = TlsConfig::builder().root_certs(TLS_ROOTS).build();
+    Config::builder()
+        .tls_config(tls)
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .timeout_global(Some(timeout))
+        .user_agent(USER_AGENT)
+        .build()
+        .into()
+}
+
 impl Client {
     pub fn new(url: &str, key: Option<Secret>) -> Result<Client, HttpError> {
         let base = validate_base_url(url)?;
-        let tls = TlsConfig::builder().root_certs(TLS_ROOTS).build();
-        let config = Config::builder()
-            .tls_config(tls)
-            .max_redirects(0)
-            .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(45)))
-            .user_agent(USER_AGENT)
-            .build();
-        Ok(Client { agent: config.into(), base, key })
+        Ok(Client { agent: blocking_agent(Duration::from_secs(45)), base, key })
     }
 
     pub fn base(&self) -> &str {

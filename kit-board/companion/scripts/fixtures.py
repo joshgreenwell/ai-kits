@@ -562,12 +562,12 @@ def capabilities_document(**overrides) -> dict:
     adapters = [
         ("claude_execution", True, ["claude_local_logs"], "2.0.0+v1.1.0-detail5"),
         ("codex_execution", True, ["codex_local_history", "embedded"], "2.0.0+v1.1.0-detail5"),
-        ("claude_account", True, ["statusline"], "2.0.0+statusline1"),
-        ("codex_account", False, [], "0"),
-        ("cursor_execution", False, [], "0"),
-        ("cursor_account", False, [], "0"),
-        ("anthropic_api", False, [], "0"),
-        ("openai_api", False, [], "0"),
+        ("claude_account", True, ["statusline", "oauth_usage"], "2.0.0+statusline1"),
+        ("codex_account", True, ["app_server"], "2.0.0+appserver1"),
+        ("cursor_execution", True, ["cursor_local_state"], "2.0.0+cursor-local1"),
+        ("cursor_account", True, ["usage_summary", "dashboard_rpc"], "2.0.0+cursor-hosted1"),
+        ("anthropic_api", True, ["anthropic_admin_api"], "2.0.0+admin-usage1"),
+        ("openai_api", True, ["openai_admin_api"], "2.0.0+admin-usage1"),
     ]
     document = {
         "schema_version": 1,
@@ -580,7 +580,7 @@ def capabilities_document(**overrides) -> dict:
                      "tool_detail": ["off", "builtin_only", "hashed_custom"], "project_attribution": ["off", "hashed"],
                      "resource_attribution": True, "include_subagents": True, "hooks": ["claude_statusline"],
                      "schedulers": ["task_scheduler"], "live_mode": False, "detailed_monthly_report": True,
-                     "account_history": False},
+                     "account_history": True, "claude_oauth_keepalive": True},
         "effective": {"settings_version_applied": 7, "config_source": "fetched", "paused": False, "cadence_minutes": 60,
                       "detail_level": "requests_with_tools", "tool_detail": "builtin_only", "project_attribution": "hashed",
                       "include_subagents": True, "resource_attribution": "on", "resources_configured": 2,

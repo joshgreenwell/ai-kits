@@ -975,8 +975,9 @@ export function createUsageStore(getDatabase?: () => Sql) {
    * The v2-only read model behind /api/usage-v2 (the live page's cards read the compatibility view,
    * which unions the v1 browser samples). The current reading per (account, meter) is the newest
    * observation from an enabled binding of a live install whose reader is one this store recognizes
-   * (`statusline`, `embedded`, `web_backend`); an exact tie falls to reader rank in that order, and an
-   * unknown reader never outranks a known one. Freshness is the shared rule at the binding's cadence.
+   * (`statusline`, `oauth_usage`, `app_server`, `usage_summary`, `embedded`, `web_backend`,
+   * `dashboard_rpc`); an exact tie falls to reader rank in that order, and an unknown reader never
+   * outranks a known one. Freshness is the shared rule at the binding's cadence.
    */
   async function loadDashboard() {
     const db = await sql();
@@ -995,11 +996,20 @@ export function createUsageStore(getDatabase?: () => Sql) {
         SELECT r.account_id, r.meter_key, r.label, r.kind, r.value, r.unit, r.capacity, r.window_minutes, r.window_started_at, r.resets_at,
           r.raw_window_id, r.reader, r.basis, r.observed_at, r.binding_id, i.settings AS install_settings,
           row_number() OVER (PARTITION BY r.account_id, r.meter_key ORDER BY r.observed_at DESC,
-            CASE r.reader WHEN 'statusline' THEN 1 WHEN 'embedded' THEN 2 WHEN 'web_backend' THEN 3 END, r.received_at DESC, r.id DESC) AS rank
+            CASE r.reader
+              WHEN 'statusline' THEN 1
+              WHEN 'oauth_usage' THEN 2
+              WHEN 'app_server' THEN 3
+              WHEN 'usage_summary' THEN 4
+              WHEN 'embedded' THEN 5
+              WHEN 'web_backend' THEN 6
+              WHEN 'dashboard_rpc' THEN 7
+            END, r.received_at DESC, r.id DESC) AS rank
         FROM personal_hub.allowance_readings r
         JOIN personal_hub.companion_bindings b ON b.id = r.binding_id AND b.enabled
         JOIN personal_hub.companion_installs i ON i.id = b.install_id AND NOT i.disabled
-        WHERE r.observed_at >= now() - interval '35 days' AND r.reader IN ('statusline', 'embedded', 'web_backend'))
+        WHERE r.observed_at >= now() - interval '35 days' AND r.reader IN (
+          'statusline', 'oauth_usage', 'app_server', 'usage_summary', 'embedded', 'web_backend', 'dashboard_rpc'))
         SELECT account_id, meter_key, label, kind, value, unit, capacity, window_minutes, window_started_at, resets_at, raw_window_id, reader, basis,
           observed_at, binding_id, install_settings
         FROM ranked WHERE rank = 1 ORDER BY account_id, meter_key`,

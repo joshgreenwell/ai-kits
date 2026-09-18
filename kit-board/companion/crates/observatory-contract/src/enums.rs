@@ -426,7 +426,9 @@ string_enum! {
         ExecutableMissing = "executable_missing",
         /// The application sign-in was not found.
         CredentialMissing = "credential_missing",
-        /// The application sign-in has expired; the companion never refreshes it.
+        /// The application sign-in has expired. Observatory never POSTs a
+        /// refresh_token; `oauth_usage` plus keepalive may spawn Claude Code
+        /// so Claude Code refreshes its own store.
         CredentialExpired = "credential_expired",
         /// Identity evidence differs from the confirmed identity.
         IdentityChanged = "identity_changed",

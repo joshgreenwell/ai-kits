@@ -1,0 +1,23 @@
+{
+  "data": [
+    {
+      "start_time": 1700000000,
+      "end_time": 1700003600,
+      "results": [
+        {
+          "input_tokens": 120,
+          "input_cached_tokens": 40,
+          "output_tokens": 30,
+          "num_model_requests": 2,
+          "project_id": "proj_1",
+          "user_id": "user_1",
+          "api_key_id": "key_1",
+          "model": "gpt-4.1",
+          "service_tier": "default"
+        }
+      ]
+    }
+  ],
+  "has_more": false,
+  "next_page": null
+}

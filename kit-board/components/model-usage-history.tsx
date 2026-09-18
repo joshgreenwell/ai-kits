@@ -88,7 +88,7 @@ function useEffortSeries(accountId: string | undefined, enabled: boolean) {
     if (!enabled || !accountId) { setEffort(null); setError(null); setLoading(false); return; }
     const controller = new AbortController();
     setLoading(true); setError(null);
-    fetchPrivateJson<UsageQueryResult>(`/api/usage-query?preset=last_30_days&timezone=UTC&resolution=day&accounts=${encodeURIComponent(accountId)}`, controller.signal, USAGE_QUERY_TIMEOUT_MS, false)
+    fetchPrivateJson<UsageQueryResult>(`/api/usage-query?preset=last_30_days&timezone=UTC&resolution=day&accounts=${encodeURIComponent(accountId)}&section=requests`, controller.signal, USAGE_QUERY_TIMEOUT_MS, false)
       .then(result => { if (!controller.signal.aborted) setEffort(result.effort_series); })
       .catch(() => { if (!controller.signal.aborted) setError('Effort detail is temporarily unavailable. Hide and show the split to retry.'); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });

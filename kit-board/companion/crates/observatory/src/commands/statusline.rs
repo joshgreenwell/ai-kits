@@ -7,7 +7,7 @@
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{ExitCode, Stdio};
 
 use jiff::Timestamp;
 use observatory_core::config::CompanionConfig;
@@ -16,6 +16,7 @@ use observatory_core::inbox::{
     samples_from_statusline, summary_line, write_statusline_samples,
 };
 use observatory_core::paths::claude_config_file;
+use observatory_core::process;
 use serde_json::Value;
 
 use crate::cli::StatuslineArgs;
@@ -39,7 +40,7 @@ fn passthrough(dir: &Path) -> Option<String> {
 
 fn run_passthrough(command: &str, input: &[u8]) -> Option<String> {
     let mut child = if cfg!(windows) {
-        Command::new("cmd")
+        process::command("cmd")
             .args(["/C", command])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -47,7 +48,7 @@ fn run_passthrough(command: &str, input: &[u8]) -> Option<String> {
             .spawn()
             .ok()?
     } else {
-        Command::new("sh")
+        process::command("sh")
             .args(["-c", command])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

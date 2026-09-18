@@ -154,7 +154,21 @@ function AgentCard({ result, filters, onFiltersChange }: { result: UsageQueryRes
 }
 
 /** USG-021: the project and agent breakdowns, side by side on wide screens, each row a reversible filter. */
-export function ProjectAgentBreakdown({ result, filters, onFiltersChange }: { result: UsageQueryResult; filters: TokensFilters; onFiltersChange: (next: TokensFilters) => void }) {
+export function ProjectAgentBreakdown({ result, filters, onFiltersChange, loading }: { result: UsageQueryResult; filters: TokensFilters; onFiltersChange: (next: TokensFilters) => void; loading?: boolean }) {
+  if (loading) {
+    return (
+      <div className="grid gap-6 xl:grid-cols-2" data-testid="project-agent-breakdown" aria-busy="true">
+        <Card className="gap-0 overflow-hidden py-0" aria-label="Projects">
+          <CardHeader className="p-4"><CardTitle className="text-base">Projects</CardTitle></CardHeader>
+          <EmptyState title="Loading projects…" description="Reading request records in the selected range." className="m-4" />
+        </Card>
+        <Card className="gap-0 overflow-hidden py-0" aria-label="Agents">
+          <CardHeader className="p-4"><CardTitle className="text-base">Agents</CardTitle></CardHeader>
+          <EmptyState title="Loading agents…" description="Reading request records in the selected range." className="m-4" />
+        </Card>
+      </div>
+    );
+  }
   return (
     <div className="grid gap-6 xl:grid-cols-2" data-testid="project-agent-breakdown">
       <ProjectCard result={result} filters={filters} onFiltersChange={onFiltersChange} />
@@ -204,7 +218,18 @@ function KnowledgeSources({ result }: { result: UsageQueryResult }) {
 }
 
 /** USG-022: the final Tokens card - deduplicated tool invocations, their callers and outcomes, then the knowledge-source area. */
-export function ToolKnowledgeCard({ result }: { result: UsageQueryResult }) {
+export function ToolKnowledgeCard({ result, loading }: { result: UsageQueryResult; loading?: boolean }) {
+  if (loading) {
+    return (
+      <Card className="gap-0 overflow-hidden py-0" aria-label="Tool calls and knowledge sources" aria-busy="true">
+        <CardHeader className="p-4">
+          <CardTitle className="text-base">Tool calls and knowledge sources</CardTitle>
+          <CardDescription>Reported tool invocations in scope, who issued them, and which knowledge sources they reached.</CardDescription>
+        </CardHeader>
+        <EmptyState title="Loading tool calls…" description="Reading tool events and knowledge-source access in the selected range." className="m-4" />
+      </Card>
+    );
+  }
   const { tools, agents, headline } = result;
   const outcomes = Object.entries(tools.by_outcome).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
   const outcomesCollected = tools.outcome_coverage.classified > 0;

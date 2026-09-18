@@ -6,7 +6,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use observatory_contract::Provider;
@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use crate::config::LocalBinding;
 use crate::discovery::find_executable;
 use crate::paths::{home_dir, write_private};
+use crate::process;
 
 const MAX_ADAPTER_OUTPUT_BYTES: u64 = 256 * 1024;
 const MAX_FAILURE_CODE_CHARS: usize = 64;
@@ -114,7 +115,7 @@ pub fn run(
         .or_else(|| usable_interpreter("python3"))
         .or_else(|| usable_interpreter("python"));
     let Some(interpreter) = interpreter else { return failed("interpreter_missing") };
-    let mut command = Command::new(interpreter);
+    let mut command = process::command(interpreter);
     command.arg(&settings.script).arg("--config").arg(&connection);
     if dry_run {
         command.arg("--dry-run");

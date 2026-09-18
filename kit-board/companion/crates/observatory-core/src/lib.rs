@@ -6,8 +6,10 @@
 #![deny(unused_must_use)]
 
 pub mod adapter;
+pub mod claude_keepalive;
 pub mod config;
 pub mod credentials;
+pub mod cursor_store;
 pub mod detailed;
 pub mod discovery;
 pub mod effective;
@@ -16,6 +18,8 @@ pub mod inbox;
 pub mod lock;
 pub mod outbox;
 pub mod paths;
+pub mod process;
+pub mod provider_http;
 pub mod pyjson;
 pub mod resources;
 pub mod run;
