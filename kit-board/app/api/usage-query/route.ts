@@ -1,7 +1,7 @@
 import { requireSession } from '@/lib/auth';
 import { failure, privateHeaders } from '@/lib/http';
 import { parseUsageQuery, usageQuery } from '@/lib/usage-query';
-export const maxDuration = 15;
+export const maxDuration = 60;
 
 /** One filtered usage read for every Tokens card (USG-012): scope, headline, series, breakdowns, coverage, and historical fallback. */
 export async function GET(request: Request) {

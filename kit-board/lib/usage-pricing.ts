@@ -16,7 +16,7 @@ type Period = { effective_from?: string; effective_until?: string; rate_version?
 type ModelConfig = { aliases?: string[]; cache_write_input_multiplier?: number; cache_write_1h_input_multiplier?: number; full_context_window_at_standard_rates?: boolean; periods: Period[] };
 type ProviderCatalog = { catalog_version: string; currency: string; unit_tokens: number; long_context_threshold_tokens: number; provenance?: string;
   sources: { label: string; url: string }[]; rules?: Record<string, string>; models: Record<string, ModelConfig> };
-export type PricingCatalog = { openai: ProviderCatalog; anthropic: ProviderCatalog };
+export type PricingCatalog = { openai: ProviderCatalog; anthropic: ProviderCatalog; xai: ProviderCatalog };
 export type CatalogKey = keyof PricingCatalog;
 export const pricingCatalog = catalogJson as unknown as PricingCatalog;
 
@@ -59,15 +59,18 @@ const SUM_FIELDS = ['calls', 'total_tokens', 'input_tokens', 'cached_input_token
   'priced_tokens', 'unpriced_tokens', 'long_context_calls', 'assumed_standard_calls', 'assumed_cache_write_ttl_calls', 'priority_at_standard_calls'] as const;
 const round6 = (value: number) => Math.round(value * 1e6) / 1e6;
 
-/** Which catalog a provider's models price under; Cursor and unknown providers search both. */
+const catalogKeys = (catalog: PricingCatalog): CatalogKey[] => Object.keys(catalog) as CatalogKey[];
+
+/** Which catalog a provider's models price under; Cursor and unknown providers search every catalog. */
 export function providerCatalogKey(provider: string | null): CatalogKey | null {
   if (provider === 'codex' || provider === 'openai_api') return 'openai';
   if (provider === 'claude' || provider === 'anthropic_api') return 'anthropic';
+  if (provider === 'xai') return 'xai';
   return null;
 }
 
 export function catalogThresholds(catalog: PricingCatalog = pricingCatalog) {
-  return { openai: catalog.openai.long_context_threshold_tokens, anthropic: catalog.anthropic.long_context_threshold_tokens };
+  return { openai: catalog.openai.long_context_threshold_tokens, anthropic: catalog.anthropic.long_context_threshold_tokens, xai: catalog.xai.long_context_threshold_tokens };
 }
 
 /** The catalog a row prices under: the one holding its model, else the provider's default, else none. */
@@ -77,7 +80,7 @@ export function catalogForModel(provider: string | null, model: string | null, c
 }
 
 /** The context band the catalog prices by, from a request's logged input compared against each catalog's threshold. */
-export function contextBandFor(provider: string | null, model: string | null, over: { openai: boolean; anthropic: boolean }, catalog: PricingCatalog = pricingCatalog): 'short' | 'long' {
+export function contextBandFor(provider: string | null, model: string | null, over: { openai: boolean; anthropic: boolean; xai: boolean }, catalog: PricingCatalog = pricingCatalog): 'short' | 'long' {
   const key = catalogForModel(provider, model, catalog);
   return key !== null && over[key] ? 'long' : 'short';
 }
@@ -85,7 +88,7 @@ export function contextBandFor(provider: string | null, model: string | null, ov
 /** Exact or alias match first, as the analyzer does; then a dated Claude id (`-YYYYMMDD`) matches its undated model. */
 function findModel(catalog: PricingCatalog, provider: string | null, model: string): { key: CatalogKey; canonical: string; config: ModelConfig } | null {
   const normalized = model.trim().toLowerCase();
-  const keys: CatalogKey[] = providerCatalogKey(provider) ? [providerCatalogKey(provider)!] : ['openai', 'anthropic'];
+  const keys: CatalogKey[] = providerCatalogKey(provider) ? [providerCatalogKey(provider)!] : catalogKeys(catalog);
   const lookup = (name: string, within: CatalogKey[]) => {
     for (const key of within) {
       for (const [canonical, config] of Object.entries(catalog[key].models)) {
@@ -202,6 +205,11 @@ const OPENAI_ASSUMPTIONS = [
   'For pre-July 30 GPT-5.6 Priority traffic, the estimate applies the then-current 2.5x Priority multiplier.',
   'Per-request long-context rates apply when logged input exceeds 272K tokens.',
 ];
+const XAI_ASSUMPTIONS = [
+  'xAI rates are the public list prices read on September 17, 2026 and are applied to a request of any date; price changes before that date are not modeled.',
+  'Per-request long-context rates apply when logged input reaches 200K tokens.',
+  'Priority is priced at 2x standard list rates as published; batch, regional, and server-side tool-invocation surcharges are excluded.',
+];
 const ANTHROPIC_ASSUMPTIONS = [
   'Anthropic rates are the public list prices read on September 14, 2026 and are applied to a request of any date; price changes before that date are not modeled.',
   'Cache reads use each model’s cache-hit rate; cache writes use the 5-minute (1.25x) or 1-hour (2x) rate as recorded, and an unrecorded TTL is assumed 5-minute and counted.',
@@ -253,11 +261,12 @@ export function priceUsage(inputs: PricingInputRow[], catalog: PricingCatalog = 
     by_model: aggregate(rows, 'model'), by_reasoning_effort: aggregate(rows, 'reasoning_effort'), by_service_tier: aggregate(rows, 'service_tier'), by_model_effort_service_tier: rows,
     series: priceSeries(inputs, catalog),
     pricing_catalog: {
-      version: `openai ${catalog.openai.catalog_version}; anthropic ${catalog.anthropic.catalog_version}`,
-      versions: { openai: catalog.openai.catalog_version, anthropic: catalog.anthropic.catalog_version },
+      version: catalogKeys(catalog).map(key => `${key} ${catalog[key].catalog_version}`).join('; '),
+      versions: Object.fromEntries(catalogKeys(catalog).map(key => [key, catalog[key].catalog_version])) as Record<CatalogKey, string>,
       unit_tokens: catalog.openai.unit_tokens, long_context_threshold_tokens: catalogThresholds(catalog),
-      sources: [...catalog.openai.sources, ...catalog.anthropic.sources], provenance: { openai: catalog.openai.provenance ?? null, anthropic: catalog.anthropic.provenance ?? null },
+      sources: catalogKeys(catalog).flatMap(key => catalog[key].sources),
+      provenance: Object.fromEntries(catalogKeys(catalog).map(key => [key, catalog[key].provenance ?? null])) as Record<CatalogKey, string | null>,
     },
-    assumptions: [...GENERAL_ASSUMPTIONS, ...(used.has('openai') || !used.size ? OPENAI_ASSUMPTIONS : []), ...(used.has('anthropic') || !used.size ? ANTHROPIC_ASSUMPTIONS : [])],
+    assumptions: [...GENERAL_ASSUMPTIONS, ...(used.has('openai') || !used.size ? OPENAI_ASSUMPTIONS : []), ...(used.has('anthropic') || !used.size ? ANTHROPIC_ASSUMPTIONS : []), ...(used.has('xai') || !used.size ? XAI_ASSUMPTIONS : [])],
   };
 }

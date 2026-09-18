@@ -15,7 +15,7 @@ import { UsageInsightCards } from '@/components/usage-insight-cards';
 import { UsageFilterBar, type FilterOption, type FilterVocabulary } from '@/components/usage-filter-bar';
 import { UsageStatusLine } from '@/components/usage-status-line';
 import { useLiveData } from '@/components/telemetry-shared';
-import { fetchPrivateJson } from '@/lib/fetch-private-json';
+import { fetchPrivateJson, USAGE_QUERY_TIMEOUT_MS } from '@/lib/fetch-private-json';
 import type { UsageQueryResult } from '@/lib/usage-query';
 import {
   compactTokens, compositionView, exactTokens, parseTokensFilters, percent, queryString, seriesSummary, serializeTokensFilters, whenIn, type TokensFilters,
@@ -224,7 +224,7 @@ function TokensOverviewLiveInner() {
       if (document.hidden || inFlight || controller.signal.aborted) return;
       inFlight = true; setLoading(true); setNow(Date.now());
       try {
-        const next = await fetchPrivateJson<UsageQueryResult>(`/api/usage-query${query ? `?${query}` : ''}`, controller.signal);
+        const next = await fetchPrivateJson<UsageQueryResult>(`/api/usage-query${query ? `?${query}` : ''}`, controller.signal, USAGE_QUERY_TIMEOUT_MS, false);
         if (!controller.signal.aborted) { setResult(next); setResultQuery(query); setError(null); }
       } catch (caught) {
         if (!controller.signal.aborted) setError(caught instanceof Error && /\(4\d\d\)/.test(caught.message) ? 'The selected filters were not accepted. Adjust the period or remove a filter.' : 'Usage is temporarily unavailable. Retry, or wait for the next refresh.');
