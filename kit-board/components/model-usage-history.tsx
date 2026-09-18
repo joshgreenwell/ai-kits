@@ -8,7 +8,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { EmptyState, Stat, StatGroup } from '@/components/kit';
 import { UsageSeriesChart, modelColors, type ChartCategory, type ChartSeries } from '@/components/usage-series-chart';
 import { Choice, type LiveData, when } from '@/components/telemetry-shared';
-import { fetchPrivateJson } from '@/lib/fetch-private-json';
+import { fetchPrivateJson, USAGE_QUERY_TIMEOUT_MS } from '@/lib/fetch-private-json';
 import { quotaCycles, quotaOutlook } from '@/lib/telemetry-contract';
 import { meterLabel } from '@/lib/allowance-meters';
 import type { UsageQueryResult } from '@/lib/usage-query';
@@ -88,7 +88,7 @@ function useEffortSeries(accountId: string | undefined, enabled: boolean) {
     if (!enabled || !accountId) { setEffort(null); setError(null); setLoading(false); return; }
     const controller = new AbortController();
     setLoading(true); setError(null);
-    fetchPrivateJson<UsageQueryResult>(`/api/usage-query?preset=last_30_days&timezone=UTC&resolution=day&accounts=${encodeURIComponent(accountId)}`, controller.signal)
+    fetchPrivateJson<UsageQueryResult>(`/api/usage-query?preset=last_30_days&timezone=UTC&resolution=day&accounts=${encodeURIComponent(accountId)}`, controller.signal, USAGE_QUERY_TIMEOUT_MS, false)
       .then(result => { if (!controller.signal.aborted) setEffort(result.effort_series); })
       .catch(() => { if (!controller.signal.aborted) setError('Effort detail is temporarily unavailable. Hide and show the split to retry.'); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });

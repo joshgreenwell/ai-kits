@@ -1,5 +1,8 @@
+/** Tokens `/api/usage-query` scans request and tool detail; the default 8s bound is too tight after request-level collection. */
+export const USAGE_QUERY_TIMEOUT_MS = 45_000;
+
 /** Bounded GETs only. Retry a transient failure once; navigation aborts both attempts. */
-export async function fetchPrivateJson<T>(url: string, parent: AbortSignal, timeoutMs = 8000): Promise<T> {
+export async function fetchPrivateJson<T>(url: string, parent: AbortSignal, timeoutMs = 8000, retryTimeout = true): Promise<T> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const timeout = AbortSignal.timeout(timeoutMs);
     const signal = AbortSignal.any([parent, timeout]);
@@ -10,7 +13,7 @@ export async function fetchPrivateJson<T>(url: string, parent: AbortSignal, time
       return await response.json() as T;
     } catch (error) {
       if (parent.aborted) throw error;
-      if (attempt === 0 && (timeout.aborted || error instanceof TypeError)) continue;
+      if (attempt === 0 && (error instanceof TypeError || (retryTimeout && timeout.aborted))) continue;
       throw error;
     }
   }

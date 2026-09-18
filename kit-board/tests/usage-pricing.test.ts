@@ -9,11 +9,11 @@ const row = (overrides: Partial<PricingInputRow>): PricingInputRow => ({
 
 test('the catalog is the analyzer’s, with the Anthropic list prices beside it', () => {
   assert.equal(pricingCatalog.openai.catalog_version, '2026-09-13');
-  assert.deepEqual(catalogThresholds(), { openai: 272000, anthropic: 200000 });
+  assert.deepEqual(catalogThresholds(), { openai: 272000, anthropic: 200000, xai: 200000 });
   // The band follows the catalog the model prices under, not the provider that observed it.
-  const between = { openai: false, anthropic: true };   // logged input between 200,001 and 272,000
-  assert.deepEqual([contextBandFor('cursor', 'claude-sonnet-4-5', between), contextBandFor('cursor', 'gpt-5.6-sol', between), contextBandFor('codex', 'gpt-5.6-sol', between), contextBandFor('claude', 'unknown-model', between), contextBandFor(null, 'unknown-model', between)],
-    ['long', 'short', 'short', 'long', 'short']);
+  const between = { openai: false, anthropic: true, xai: false };   // logged input between 200,001 and 272,000
+  assert.deepEqual([contextBandFor('cursor', 'claude-sonnet-4-5', between), contextBandFor('cursor', 'gpt-5.6-sol', between), contextBandFor('codex', 'gpt-5.6-sol', between), contextBandFor('claude', 'unknown-model', between), contextBandFor(null, 'unknown-model', between), contextBandFor('cursor', 'grok-4.6', { ...between, xai: true })],
+    ['long', 'short', 'short', 'long', 'short', 'long']);
   assert.equal(pricingCatalog.openai.models['gpt-5.6-sol'].periods[1].rates.fast.short.input, 10);
   assert.equal(pricingCatalog.anthropic.models['claude-fable-5-1'].periods[0].rates.standard.short.cached_input, 0.25, 'Fable 5.1 cache reads at 0.025x');
   // Every Anthropic model that bills the full window carries a long band equal to its short band on every tier; every other model has none.
@@ -131,6 +131,17 @@ test('aggregations reconcile to the dimension rows and the catalog provenance tr
   ], 'the graph series keeps source price dates and reconciles model rows within each day');
   assert.equal(total(estimate.series), estimate.estimated_cost_usd);
   assert.equal(estimate.by_model.find(m => m.model === 'gpt-5.6-sol')?.calls, 2);
-  assert.deepEqual(estimate.pricing_catalog.versions, { openai: '2026-09-13', anthropic: '2026-09-14' });
+  assert.deepEqual(estimate.pricing_catalog.versions, { openai: '2026-09-13', anthropic: '2026-09-14', xai: '2026-09-17' });
   assert.ok(estimate.pricing_catalog.sources.length >= 8 && estimate.pricing_catalog.provenance.openai?.includes('verbatim'));
+});
+
+test('Cursor-reported Grok 4.6 prices from the xAI catalog; unknown models keep token columns unpriced', () => {
+  const grok = priceUsage([row({ provider: 'cursor', model: 'grok-4.6', service_tier: 'standard', reasoning: 0 })]);
+  assert.deepEqual([grok.estimated_cost_usd, grok.by_model[0].catalog, grok.priced_tokens, grok.unpriced_tokens], [2.6, 'xai', 1_100_000, 0]);
+  assert.equal(priceUsage([row({ provider: 'cursor', model: 'grok-4-6', service_tier: 'standard', reasoning: 0 })]).estimated_cost_usd, 2.6);
+  assert.equal(priceUsage([row({ provider: 'cursor', model: 'grok-4.6', service_tier: 'priority', reasoning: 0 })]).estimated_cost_usd, 5.2);
+  assert.equal(priceUsage([row({ provider: 'cursor', model: 'grok-4.6', service_tier: 'standard', context_band: 'long', reasoning: 0 })]).estimated_cost_usd, 5.2);
+  const unknown = priceUsage([row({ provider: 'cursor', model: 'composer-1', service_tier: 'standard', input_fresh: 800, input_cached: 200, output: 100, reasoning: 40, total_tokens: 1_100 })]).by_model[0];
+  assert.deepEqual([unknown.input_tokens, unknown.cached_input_tokens, unknown.output_tokens, unknown.total_tokens, unknown.unpriced_tokens, unknown.estimated_cost_usd, unknown.unpriced_reasons],
+    [1_000, 200, 100, 1_100, 1_100, 0, { model_not_in_catalog: 1_100 }]);
 });

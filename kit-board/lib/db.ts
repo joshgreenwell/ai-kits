@@ -11,12 +11,13 @@ function createDatabase() {
     prepare: false, max: 1, idle_timeout: 5, connect_timeout: 3, max_lifetime: 60,
     ssl: { rejectUnauthorized: true, ca: process.env.DATABASE_CA_CERT?.replace(/\\n/g, '\n') },
   });
+  // Usage reads materialize request/tool detail in one transaction; 5s aborted those after request-level collection.
   const queue = new DatabaseQueue(async () => {
     const failed = client; client = undefined;
     // Destroy the stalled connection before the next job. Do not retry writes:
     // a timed-out write may have committed and must use its idempotency receipt.
     if (failed) await failed.end({ timeout: 0 }).catch(() => {});
-  });
+  }, 45_000);
   // Keep postgres's parameterization and JSON/INSERT helpers. Only execution is
   // gated; a whole transaction owns the gate, including COMMIT or ROLLBACK.
   const sql = ((first: unknown, ...values: unknown[]) => {
@@ -26,7 +27,7 @@ function createDatabase() {
   sql.json = (...args) => current().json(...args);
   // Positional-parameter text queries take the same gate as tagged templates; values are still bound, never inlined.
   sql.unsafe = ((...args: Parameters<ReturnType<typeof postgres>['unsafe']>) => queue.run(() => Reflect.apply(current().unsafe, current(), args))) as typeof sql.unsafe;
-  sql.begin = ((...args: Parameters<ReturnType<typeof postgres>['begin']>) => queue.run(() => Reflect.apply(current().begin, undefined, args))) as typeof sql.begin;
+  sql.begin = ((...args: Parameters<ReturnType<typeof postgres>['begin']>) => queue.run(() => current().begin(...args))) as typeof sql.begin;
   sql.end = options => queue.run(async () => { const old = client; client = undefined; if (old) await old.end(options); });
   return sql;
 }

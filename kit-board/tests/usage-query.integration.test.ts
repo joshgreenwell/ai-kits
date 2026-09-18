@@ -245,3 +245,57 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     await sql.end({ timeout: 1 });
   }
 });
+
+maybe('provider account usage is the Tokens headline for Cursor and Admin API accounts and is not added to local hours', async () => {
+  const { createUsageQuery, parseUsageQuery } = await import('../lib/usage-query');
+  const sql = postgres(url!, options);
+  const layer = createUsageQuery(() => sql);
+  const suffix = randomUUID().slice(0, 8);
+  const claude = `q-local-${suffix}`, cursor = `q-cursor-${suffix}`;
+  const claudeSource = randomUUID(), cursorSource = randomUUID(), install = randomUUID(), claudeBinding = randomUUID(), cursorBinding = randomUUID();
+  try {
+    await sql`INSERT INTO personal_hub.usage_accounts (id, provider, label) VALUES (${claude}, 'claude', 'Claude local'), (${cursor}, 'cursor', 'Cursor hosted')`;
+    await sql`INSERT INTO personal_hub.telemetry_sources (id, account_id, machine_label, mode, key_hash, last_seen_at) VALUES
+      (${claudeSource}, ${claude}, 'host', 'companion', ${sha(randomUUID())}, '2026-09-03T00:00:00Z'),
+      (${cursorSource}, ${cursor}, 'host', 'companion', ${sha(randomUUID())}, '2026-09-03T00:00:00Z')`;
+    await sql`INSERT INTO personal_hub.companion_installs (id, machine_label, kind, platform, arch, key_hash) VALUES (${install}, 'host', 'companion', 'linux', 'amd64', ${sha(randomUUID())})`;
+    await sql`INSERT INTO personal_hub.companion_bindings (id, install_id, account_id, source_id, provider, identity_hash) VALUES
+      (${claudeBinding}, ${install}, ${claude}, ${claudeSource}, 'claude', ${sha('claude')}),
+      (${cursorBinding}, ${install}, ${cursor}, ${cursorSource}, 'cursor', ${sha('cursor')})`;
+    const hour = '2026-09-02T14:00:00Z';
+    const local = { session_hash: sha(`local:${suffix}`), hour, model: 'm1', input_tokens: 100, cached_tokens: 0, cache_write_tokens: 0, output_tokens: 0, total_tokens: 100, calls: 2 };
+    await sql`INSERT INTO personal_hub.token_bucket_revisions ${sql({ id: randomUUID(), account_id: claude, source_id: claudeSource, observed_at: hour, content_hash: hashOf(local), ...local })}`;
+    await sql`INSERT INTO personal_hub.account_usage_buckets ${sql({
+      id: randomUUID(), account_id: cursor, binding_id: cursorBinding, provider: 'cursor', adapter: 'cursor_account',
+      report_source: 'usage_events', bucket_start: hour, bucket_end: '2026-09-02T15:00:00Z', model: 'cursor-small',
+      dimensions_hash: sha(`dims:${suffix}`), requests: 3, input_tokens: 80, cached_tokens: 20, cache_write_tokens: 0,
+      output_tokens: 10, total_tokens: 110, unclassified_tokens: 0, token_state: 'complete', basis: 'reported',
+      observed_at: hour, content_hash: sha(`bucket:${suffix}`),
+    })}`;
+    await sql`INSERT INTO personal_hub.account_usage_buckets ${sql({
+      id: randomUUID(), account_id: cursor, binding_id: cursorBinding, provider: 'cursor', adapter: 'cursor_account',
+      report_source: 'cursor_usage_events', bucket_start: '2026-09-03T14:00:00Z', bucket_end: '2026-09-03T15:00:00Z',
+      model: 'grok-4.6', dimensions_hash: sha(`dims-grok:${suffix}`), requests: 1, input_tokens: 1000,
+      cached_tokens: 0, cache_write_tokens: 0, output_tokens: 100, unclassified_tokens: null,
+      token_state: 'complete', basis: 'reported', observed_at: '2026-09-03T14:00:00Z',
+      content_hash: sha(`bucket-grok:${suffix}`),
+    })}`;
+    const query = (accounts: string) => layer.usageQuery(parseUsageQuery(new URLSearchParams({ ...SEPTEMBER, accounts })), { now: NOW });
+    const both = await query(`${claude},${cursor}`);
+    assert.deepEqual([both.headline.total_tokens, both.headline.calls, both.headline.basis, both.headline.conversations],
+      [1310, 6, 'buckets', 1], 'local hours and hosted aggregates sit side by side, including hosted rows that stored no total');
+    assert.equal(both.headline.composition.input_fresh, 1180);
+    assert.equal(both.headline.composition.input_cached, 20);
+    const hosted = await query(cursor);
+    assert.deepEqual([hosted.headline.total_tokens, hosted.headline.calls, hosted.headline.conversations], [1210, 4, 0]);
+    const grok = hosted.cost.by_model.find(row => row.model === 'grok-4.6');
+    const unnamed = hosted.cost.by_model.find(row => row.model === 'cursor-small');
+    assert.equal(grok?.estimated_cost_usd, 0.0026);
+    assert.deepEqual([unnamed?.total_tokens, unnamed?.unpriced_tokens, unnamed?.estimated_cost_usd], [110, 110, 0]);
+    const localOnly = await query(claude);
+    assert.deepEqual([localOnly.headline.total_tokens, localOnly.headline.calls, localOnly.headline.conversations], [100, 2, 1]);
+    assert.ok(both.notes.some(note => note.includes('Provider-reported account usage')));
+  } finally {
+    await sql.end({ timeout: 1 });
+  }
+});

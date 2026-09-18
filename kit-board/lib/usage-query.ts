@@ -15,15 +15,17 @@ import { estimateEnvironment, type CohortInput, type EnvironmentalEstimate, type
  *
  * Source precedence follows the metric contract. Canonical hourly buckets are the headline token
  * and call authority for every slice, because no collection manifest has declared a slice complete
- * at request level. Request records supply the dimensions buckets lack (project, effort, surface,
- * agent); a filter on one of those dimensions narrows the headline to the request detail that
- * carries it and discloses the bucket tokens it cannot examine. Pricing follows the headline:
- * buckets already carry model, hour, and exclusive composition, which is enough to estimate at
- * assumed Standard on the short context band, with the Chicago calendar date of the hour choosing
- * the rate period. Request records add effort, tier, speed, cache-write TTL, and per-request
- * context band when they are the headline. Monthly snapshots are historical fallback only where
- * the hourly ledger has nothing for a crosswalked account and month, and are never expanded into
- * finer detail than they recorded.
+ * at request level. Local Claude and Codex hours come from `token_bucket_revisions`; Cursor hosted
+ * and Admin API aggregates come from `account_usage_buckets`. The two ledgers are unioned, never
+ * summed as if they were the same work. Request records supply the dimensions buckets lack (project,
+ * effort, surface, agent); a filter on one of those dimensions narrows the headline to the request
+ * detail that carries it and discloses the bucket tokens it cannot examine. Pricing follows the
+ * headline: buckets already carry model, hour, and exclusive composition, which is enough to
+ * estimate at assumed Standard on the short context band, with the Chicago calendar date of the
+ * hour choosing the rate period. Request records add effort, tier, speed, cache-write TTL, and
+ * per-request context band when they are the headline. Monthly snapshots are historical fallback
+ * only where the hourly ledger has nothing for a crosswalked account and month, and are never
+ * expanded into finer detail than they recorded.
  */
 type Sql = ReturnType<typeof postgres>;
 type Row = Record<string, unknown>;
@@ -126,6 +128,60 @@ class Params {
   add(value: unknown) { this.values.push(value as Bindable); return `$${this.values.length}`; }
 }
 
+function modelFilterSql(p: Params, q: UsageQuery, namedModels: string[], column: string): string {
+  if (!q.models.length) return '';
+  const parts = [
+    namedModels.length ? `${column} = ANY(${p.add(namedModels)}::text[])` : null,
+    q.models.includes(UNKNOWN) ? `${column} = 'unknown'` : null,
+  ].filter(Boolean);
+  return parts.length ? `AND (${parts.join(' OR ')})` : '';
+}
+
+/** Local hourly revisions unioned with provider-reported account buckets. Distinct accounts, never double-counted work. */
+function canonicalBucketCte(
+  p: Params, accounts: string[], startIso: string, endIso: string, q: UsageQuery, namedModels: string[],
+): string {
+  const localModel = modelFilterSql(p, q, namedModels, 't.model');
+  const providerModel = modelFilterSql(p, q, namedModels, `coalesce(nullif(u.model, ''), 'unknown')`);
+  return `local_canonical AS (
+      SELECT DISTINCT ON (t.account_id, t.session_hash, t.hour, t.model)
+        t.account_id, t.source_id, t.hour, t.hour + interval '1 hour' AS bucket_end, t.model, t.calls,
+        t.input_tokens, t.cached_tokens, t.cache_write_tokens, t.output_tokens, 0::bigint AS unclassified,
+        t.total_tokens, t.observed_at, 'local'::text AS origin
+      FROM personal_hub.token_bucket_revisions t
+      WHERE t.account_id = ANY(${p.add(accounts)}::text[])
+        AND t.hour >= ${p.add(startIso)}::timestamptz
+        AND t.hour + interval '1 hour' <= ${p.add(endIso)}::timestamptz
+        ${localModel}
+      ORDER BY t.account_id, t.session_hash, t.hour, t.model, t.calls DESC, t.total_tokens DESC, t.observed_at DESC, t.received_at DESC, t.id DESC
+    ), provider_canonical AS (
+      SELECT DISTINCT ON (u.account_id, u.report_source, u.bucket_start, u.bucket_end, u.dimensions_hash)
+        u.account_id, b.source_id, u.bucket_start AS hour, u.bucket_end,
+        coalesce(nullif(u.model, ''), 'unknown') AS model, coalesce(u.requests, 0) AS calls,
+        coalesce(u.input_tokens, 0) AS input_tokens, coalesce(u.cached_tokens, 0) AS cached_tokens,
+        coalesce(u.cache_write_tokens, 0) AS cache_write_tokens, coalesce(u.output_tokens, 0) AS output_tokens,
+        coalesce(u.unclassified_tokens, 0) AS unclassified,
+        coalesce(
+          u.total_tokens,
+          coalesce(u.input_tokens, 0) + coalesce(u.cached_tokens, 0)
+            + coalesce(u.cache_write_tokens, 0) + coalesce(u.output_tokens, 0)
+        ) AS total_tokens,
+        u.observed_at, 'provider'::text AS origin
+      FROM personal_hub.account_usage_buckets u
+      JOIN personal_hub.companion_bindings b ON b.id = u.binding_id
+      WHERE u.account_id = ANY(${p.add(accounts)}::text[])
+        AND u.bucket_start >= ${p.add(startIso)}::timestamptz
+        AND u.bucket_end <= ${p.add(endIso)}::timestamptz
+        ${providerModel}
+      ORDER BY u.account_id, u.report_source, u.bucket_start, u.bucket_end, u.dimensions_hash,
+        u.provider_refreshed_at DESC NULLS LAST, u.observed_at DESC, u.id DESC
+    ), canonical AS (
+      SELECT * FROM local_canonical
+      UNION ALL
+      SELECT * FROM provider_canonical
+    )`;
+}
+
 type Meta = {
   accounts: { id: string; provider: string; label: string }[];
   sources: { id: string; account_id: string; machine_label: string; mode: string }[];
@@ -192,7 +248,11 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // says how far the collectors have scanned. Absence before `from` or after `through` is missing data;
     // absence in between is a true zero for the collectors that exist.
     const rows = await db`SELECT a.id,
-        (SELECT min(t.hour) FROM personal_hub.token_bucket_revisions t WHERE t.account_id = a.id) AS observed_from,
+        (SELECT min(hour) FROM (
+          SELECT min(t.hour) AS hour FROM personal_hub.token_bucket_revisions t WHERE t.account_id = a.id
+          UNION ALL
+          SELECT min(u.bucket_start) FROM personal_hub.account_usage_buckets u WHERE u.account_id = a.id
+        ) observed) AS observed_from,
         greatest(
           (SELECT max(s.last_seen_at) FROM personal_hub.telemetry_sources s WHERE s.account_id = a.id),
           (SELECT max(cr.finished_at) FROM personal_hub.companion_runs cr JOIN personal_hub.companion_bindings b ON b.install_id = cr.install_id WHERE b.account_id = a.id)
@@ -294,34 +354,34 @@ export function createUsageQuery(getDatabase?: () => Sql) {
 
     // 1. Canonical buckets by period and model. A bucket counts only when it lies wholly inside the range,
     //    the current hour being the one exception while the range is anchored to now.
-    const bp = new Params();
-    const bucketWhere = [
-      `t.account_id = ANY(${bp.add(accounts)}::text[])`,
-      `t.hour >= ${bp.add(new Date(range.start).toISOString())}::timestamptz`,
-      `t.hour + interval '1 hour' <= ${bp.add(new Date(bucketEnd).toISOString())}::timestamptz`,
-    ];
     const namedModels = q.models.filter(v => v !== UNKNOWN);
-    if (q.models.length) bucketWhere.push(`(${[namedModels.length ? `t.model = ANY(${bp.add(namedModels)}::text[])` : null, q.models.includes(UNKNOWN) ? `t.model = 'unknown'` : null].filter(Boolean).join(' OR ')})`);
-    const bucketRows = accounts.length ? await db.unsafe(`WITH canonical AS (
-        SELECT DISTINCT ON (t.account_id, t.session_hash, t.hour, t.model) t.account_id, t.source_id, t.hour, t.model, t.calls,
-          t.input_tokens, t.cached_tokens, t.cache_write_tokens, t.output_tokens, t.total_tokens, t.observed_at
-        FROM personal_hub.token_bucket_revisions t
-        WHERE ${bucketWhere.join(' AND ')}
-        ORDER BY t.account_id, t.session_hash, t.hour, t.model, t.calls DESC, t.total_tokens DESC, t.observed_at DESC, t.received_at DESC, t.id DESC)
+    const startIso = new Date(range.start).toISOString();
+    const endIso = new Date(bucketEnd).toISOString();
+    const bp = new Params();
+    const bucketRows = accounts.length ? await db.unsafe(`WITH ${canonicalBucketCte(bp, accounts, startIso, endIso, q, namedModels)}
       SELECT account_id, model, ${periodExpr('hour', q.resolution, bp, tz)} AS period_start, ${periodExpr('hour', 'day', bp, tz)} AS day_start,
         sum(calls)::float8 AS calls, sum(input_tokens)::float8 AS input_fresh, sum(cached_tokens)::float8 AS input_cached,
-        sum(cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, 0::float8 AS unclassified,
+        sum(cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, sum(unclassified)::float8 AS unclassified,
         sum(total_tokens)::float8 AS total_tokens, max(hour) AS last_hour, max(observed_at) AS last_observed,
-        count(*) FILTER (WHERE hour + interval '1 hour' > ${bp.add(new Date(now).toISOString())}::timestamptz)::int AS partial_buckets
+        count(*) FILTER (WHERE bucket_end > ${bp.add(new Date(now).toISOString())}::timestamptz)::int AS partial_buckets,
+        bool_or(origin = 'provider') AS has_provider
       FROM canonical ${q.machines.length ? `WHERE source_id = ANY(${bp.add(q.machines)}::uuid[])` : ''}
       GROUP BY 1, 2, 3, 4 ORDER BY 3, 1, 2`, bp.values) : [];
     // Buckets straddling a custom range end are excluded rather than prorated; say how many.
     const sp = new Params();
-    const straddleModel = q.models.length ? `AND (${[namedModels.length ? `t.model = ANY(${sp.add(namedModels)}::text[])` : null, q.models.includes(UNKNOWN) ? `t.model = 'unknown'` : null].filter(Boolean).join(' OR ')})` : '';
-    const [straddle] = accounts.length ? await db.unsafe(`SELECT count(DISTINCT (t.account_id, t.session_hash, t.hour, t.model))::int AS buckets
-        FROM personal_hub.token_bucket_revisions t WHERE t.account_id = ANY(${sp.add(accounts)}::text[]) ${straddleModel}
-          AND ((t.hour < ${sp.add(new Date(range.start).toISOString())}::timestamptz AND t.hour + interval '1 hour' > ${sp.add(new Date(range.start).toISOString())}::timestamptz)
-            OR (t.hour < ${sp.add(new Date(bucketEnd).toISOString())}::timestamptz AND t.hour + interval '1 hour' > ${sp.add(new Date(bucketEnd).toISOString())}::timestamptz))`, sp.values) : [{ buckets: 0 }];
+    const straddleLocalModel = modelFilterSql(sp, q, namedModels, 't.model');
+    const straddleProviderModel = modelFilterSql(sp, q, namedModels, `coalesce(nullif(u.model, ''), 'unknown')`);
+    const [straddle] = accounts.length ? await db.unsafe(`SELECT (
+        (SELECT count(DISTINCT (t.account_id, t.session_hash, t.hour, t.model))::int
+          FROM personal_hub.token_bucket_revisions t WHERE t.account_id = ANY(${sp.add(accounts)}::text[]) ${straddleLocalModel}
+            AND ((t.hour < ${sp.add(startIso)}::timestamptz AND t.hour + interval '1 hour' > ${sp.add(startIso)}::timestamptz)
+              OR (t.hour < ${sp.add(endIso)}::timestamptz AND t.hour + interval '1 hour' > ${sp.add(endIso)}::timestamptz)))
+        +
+        (SELECT count(DISTINCT (u.account_id, u.report_source, u.bucket_start, u.bucket_end, u.dimensions_hash))::int
+          FROM personal_hub.account_usage_buckets u WHERE u.account_id = ANY(${sp.add(accounts)}::text[]) ${straddleProviderModel}
+            AND ((u.bucket_start < ${sp.add(startIso)}::timestamptz AND u.bucket_end > ${sp.add(startIso)}::timestamptz)
+              OR (u.bucket_start < ${sp.add(endIso)}::timestamptz AND u.bucket_end > ${sp.add(endIso)}::timestamptz)))
+      )::int AS buckets`, sp.values) : [{ buckets: 0 }];
     // Conversations under the bucket basis are the distinct sessions among the canonical buckets in scope.
     const cp0 = new Params();
     const [bucketSessions] = accounts.length ? await db.unsafe(`WITH canonical AS (
@@ -334,129 +394,149 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       SELECT count(DISTINCT session_hash)::int AS conversations FROM canonical ${q.machines.length ? `WHERE source_id = ANY(${cp0.add(q.machines)}::uuid[])` : ''}`, cp0.values) : [{ conversations: 0 }];
     const bucketConversations = num(bucketSessions.conversations);
     if (num(straddle.buckets) > 0) notes.push(`${num(straddle.buckets)} hourly bucket(s) straddling a range edge are excluded rather than prorated.`);
+    if (bucketRows.some(row => row.has_provider)) {
+      notes.push('Provider-reported account usage is included for Cursor and organization API accounts and is not added to local Claude or Codex hourly buckets.');
+    }
 
-    // 2. Requests: one canonical row per logical request; grouped several ways from the same CTE.
-    const rp = new Params();
-    const cte = requestCte(rp, q, accounts, range);
-    const useRequests = cte.detailFilters;
-    const requestPeriodRows = accounts.length ? await db.unsafe(`WITH ${cte.text}
-      SELECT r.matches, r.account_id, r.model_actual AS model, ${periodExpr('r.activity_at', q.resolution, rp, tz)} AS period_start, ${compositionSelect()},
-        max(r.observed_at) AS last_observed
-      FROM requests r GROUP BY 1, 2, 3, 4 ORDER BY 4, 3`, rp.values) : [];
-    const pp = new Params(); const pcte = requestCte(pp, q, accounts, range);
-    const projectRows = accounts.length ? await db.unsafe(`WITH ${pcte.text}
-      SELECT coalesce(r.project_state, 'unknown') AS state, r.project_id, r.project_label, ${compositionSelect()}
-      FROM requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY total_tokens DESC NULLS LAST`, pp.values) : [];
-    const ap = new Params(); const acte = requestCte(ap, q, accounts, range);
-    const agentRows = accounts.length ? await db.unsafe(`WITH ${acte.text}
-      SELECT r.agent_key, coalesce(r.agent_class, 'unknown') AS agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.model_actual AS model,
-        CASE WHEN r.agent_identity_basis IS NULL THEN 'unattributed' WHEN r.agent_class = 'main' OR r.agent_depth = 0 THEN 'main'
-             WHEN r.agent_depth > 0 OR r.parent_agent_key IS NOT NULL THEN 'subagent' ELSE 'unattributed' END AS role,
-        ${compositionSelect()}
-      FROM requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY total_tokens DESC NULLS LAST`, ap.values) : [];
-    const cp = new Params(); const ccte = requestCte(cp, q, accounts, range);
-    // When requests are the headline, context band and rate date come from each request, not a group average.
-    // Each request is compared against both catalogs' thresholds here; the band is chosen once the model's catalog is known.
+    // 2–5. Canonical requests once, then cheap group-bys. Rebuilding the ranked CTE for every card
+    // timed out after request-with-tools collection (statement bound 5s, browser bound 8s).
+    const useRequests = detailFilters.length > 0;
     const thresholds = catalogThresholds();
     const loggedInput = 'coalesce(r.input_fresh_tokens, 0) + coalesce(r.input_cached_tokens, 0) + coalesce(r.input_cache_write_tokens, 0)';
-    const requestPricingRows = useRequests && accounts.length ? await db.unsafe(`WITH ${ccte.text}
-      SELECT r.provider, r.model_actual AS model, r.reasoning_effort, r.service_tier, r.speed, r.context_window_tokens, r.cache_write_ttl, r.token_state,
-        (${loggedInput} > ${cp.add(thresholds.openai)}::bigint) AS over_openai, (${loggedInput} > ${cp.add(thresholds.anthropic)}::bigint) AS over_anthropic,
-        to_char(r.activity_at AT TIME ZONE ${cp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date, ${compositionSelect()}
-      FROM requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ORDER BY total_tokens DESC NULLS LAST`, cp.values) : [];
+    const rangeStartIso = new Date(range.start).toISOString();
+    const rangeEndIso = new Date(range.end).toISOString();
+    const widenStartIso = new Date(range.start - 7 * 24 * HOUR).toISOString();
+    const widenEndIso = new Date(range.end + 7 * 24 * HOUR).toISOString();
+    const toolUnsupported: string[] = [];
+    if (q.models.length) toolUnsupported.push('models');
+    if (useRequests) toolUnsupported.push('detail filters apply through the calling request; invocations without a retained caller request are excluded');
+
+    const emptyDetail = {
+      requestPeriodRows: [] as Row[], projectRows: [] as Row[], agentRows: [] as Row[], requestPricingRows: [] as Row[],
+      effortRows: [] as Row[], toolRows: [] as Row[], knowledgeRows: [] as Row[],
+      knowledgeTotal: { distinct_invocations: 0 } as Row,
+      agentEvidence: { spawns: 0, observed_children: 0, conversations: 0 } as Row,
+    };
+    const detail = accounts.length ? await db.begin(async tx => {
+      await tx.unsafe(`SET LOCAL statement_timeout = '40s'`);
+      const rp = new Params();
+      const cte = requestCte(rp, q, accounts, range);
+      await tx.unsafe(`CREATE TEMP TABLE _usage_requests ON COMMIT DROP AS WITH ${cte.text} SELECT * FROM requests`, rp.values);
+      await tx.unsafe(`CREATE INDEX _usage_requests_join ON _usage_requests (account_id, semantic_key)`);
+
+      const periodP = new Params();
+      const requestPeriodRows = await tx.unsafe(`
+        SELECT r.matches, r.account_id, r.model_actual AS model, ${periodExpr('r.activity_at', q.resolution, periodP, tz)} AS period_start, ${compositionSelect()},
+          max(r.observed_at) AS last_observed
+        FROM _usage_requests r GROUP BY 1, 2, 3, 4 ORDER BY 4, 3`, periodP.values);
+
+      const projectRows = await tx.unsafe(`
+        SELECT coalesce(r.project_state, 'unknown') AS state, r.project_id, r.project_label, ${compositionSelect()}
+        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY total_tokens DESC NULLS LAST`);
+
+      const agentRows = await tx.unsafe(`
+        SELECT r.agent_key, coalesce(r.agent_class, 'unknown') AS agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.model_actual AS model,
+          CASE WHEN r.agent_identity_basis IS NULL THEN 'unattributed' WHEN r.agent_class = 'main' OR r.agent_depth = 0 THEN 'main'
+               WHEN r.agent_depth > 0 OR r.parent_agent_key IS NOT NULL THEN 'subagent' ELSE 'unattributed' END AS role,
+          ${compositionSelect()}
+        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY total_tokens DESC NULLS LAST`);
+
+      const cp = new Params();
+      const requestPricingRows = useRequests ? await tx.unsafe(`
+        SELECT r.provider, r.model_actual AS model, r.reasoning_effort, r.service_tier, r.speed, r.context_window_tokens, r.cache_write_ttl, r.token_state,
+          (${loggedInput} > ${cp.add(thresholds.openai)}::bigint) AS over_openai, (${loggedInput} > ${cp.add(thresholds.anthropic)}::bigint) AS over_anthropic, (${loggedInput} > ${cp.add(thresholds.xai)}::bigint) AS over_xai,
+          to_char(r.activity_at AT TIME ZONE ${cp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date, ${compositionSelect()}
+        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 ORDER BY total_tokens DESC NULLS LAST`, cp.values) : [];
+
+      const effortP = new Params();
+      const effortRows = await tx.unsafe(`
+        SELECT coalesce(r.model_actual, '${UNKNOWN}') AS model, coalesce(r.reasoning_effort, '${UNKNOWN}') AS effort, ${periodExpr('r.activity_at', q.resolution, effortP, tz)} AS period_start,
+          sum(r.observed_total_tokens)::float8 AS total_tokens, count(*)::int AS calls
+        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY 3`, effortP.values);
+
+      const tp = new Params();
+      const toolRows = await tx.unsafe(`WITH canonical_invocations AS (
+          SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.tool_name, t.tool_class, t.tool_namespace, t.caller_agent_key, t.caller_request_key, t.outcome, t.session_hash, t.observed_at, b.source_id
+          FROM personal_hub.tool_events t JOIN personal_hub.companion_bindings b ON b.id = t.binding_id
+          WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${tp.add(accounts)}::text[])
+            AND t.observed_at >= ${tp.add(widenStartIso)}::timestamptz AND t.observed_at < ${tp.add(widenEndIso)}::timestamptz
+          ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
+        ), invocations AS (
+          SELECT * FROM canonical_invocations
+          WHERE observed_at >= ${tp.add(rangeStartIso)}::timestamptz AND observed_at < ${tp.add(rangeEndIso)}::timestamptz
+            ${q.machines.length ? `AND source_id = ANY(${tp.add(q.machines)}::uuid[])` : ''}
+            ${q.agents.length ? `AND caller_agent_key = ANY(${tp.add(q.agents)}::text[])` : ''}
+        ), results AS (
+          SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.outcome
+          FROM personal_hub.tool_events t WHERE t.event_kind = 'result' AND t.account_id = ANY(${tp.add(accounts)}::text[])
+            AND t.observed_at >= ${tp.add(widenStartIso)}::timestamptz AND t.observed_at < ${tp.add(widenEndIso)}::timestamptz
+          ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
+        ), joined AS (
+          SELECT i.*, coalesce(res.outcome, i.outcome) AS final_outcome, r.model_actual AS caller_model, r.agent_name AS caller_name, r.agent_class AS caller_class, r.matches
+          FROM invocations i LEFT JOIN results res ON res.account_id = i.account_id AND res.invocation_key = i.invocation_key
+          LEFT JOIN _usage_requests r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key)
+        SELECT tool_name, tool_class, tool_namespace, caller_agent_key, caller_name, caller_class, caller_model, final_outcome AS outcome,
+          (caller_request_key IS NOT NULL) AS has_caller_request, count(*)::int AS invocations
+        FROM joined ${useRequests ? 'WHERE matches' : ''} GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9`, tp.values);
+
+      const kp = new Params();
+      const knowledgeRows = await tx.unsafe(`WITH accesses AS (
+          SELECT a.account_id, a.invocation_key, a.access_kind, a.current_configuration, a.source_id, a.source_label, a.source_state, a.identity_id
+          FROM personal_hub.resource_access_source_resolution a
+          WHERE a.account_id = ANY(${kp.add(accounts)}::text[]) AND a.observed_at >= ${kp.add(rangeStartIso)}::timestamptz AND a.observed_at < ${kp.add(rangeEndIso)}::timestamptz
+        ), invocations AS (
+          SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.session_hash, t.caller_agent_key
+          FROM personal_hub.tool_events t WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${kp.add(accounts)}::text[])
+            AND t.observed_at >= ${kp.add(widenStartIso)}::timestamptz AND t.observed_at < ${kp.add(widenEndIso)}::timestamptz
+          ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC)
+        SELECT a.source_id, a.source_label, coalesce(a.source_state, 'unknown') AS state, CASE WHEN a.source_id IS NULL THEN a.identity_id END AS identity_id,
+          count(*) FILTER (WHERE a.current_configuration)::int AS accesses, count(*) FILTER (WHERE NOT a.current_configuration)::int AS earlier_configuration_accesses,
+          count(DISTINCT a.invocation_key) FILTER (WHERE a.current_configuration)::int AS distinct_invocations,
+          count(DISTINCT i.session_hash) FILTER (WHERE a.current_configuration)::int AS distinct_sessions,
+          count(DISTINCT i.caller_agent_key) FILTER (WHERE a.current_configuration)::int AS distinct_agents,
+          count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'read')::int AS kind_read,
+          count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'search')::int AS kind_search,
+          count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'write')::int AS kind_write,
+          count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'unknown')::int AS kind_unknown
+        FROM accesses a LEFT JOIN invocations i ON i.account_id = a.account_id AND i.invocation_key = a.invocation_key
+        GROUP BY 1, 2, 3, 4 ORDER BY accesses DESC`, kp.values);
+      const [knowledgeTotal] = await tx.unsafe(`SELECT count(DISTINCT a.invocation_key)::int AS distinct_invocations
+        FROM personal_hub.resource_access_source_resolution a WHERE a.account_id = ANY($1::text[]) AND a.current_configuration AND a.observed_at >= $2::timestamptz AND a.observed_at < $3::timestamptz`,
+        [accounts, rangeStartIso, rangeEndIso]);
+
+      const gp = new Params();
+      const [agentEvidence] = await tx.unsafe(`WITH events AS (
+          SELECT DISTINCT ON (e.account_id, e.semantic_key) e.event_kind, e.agent_key, e.outcome
+          FROM personal_hub.agent_events e WHERE e.account_id = ANY(${gp.add(accounts)}::text[])
+            AND e.observed_at >= ${gp.add(rangeStartIso)}::timestamptz AND e.observed_at < ${gp.add(rangeEndIso)}::timestamptz
+          ORDER BY e.account_id, e.semantic_key, e.observed_at DESC, e.received_at DESC, e.id DESC)
+        SELECT (SELECT count(*)::int FROM events WHERE event_kind = 'spawn') AS spawns,
+          (SELECT count(DISTINCT r.session_hash)::int FROM _usage_requests r WHERE r.matches) AS conversations,
+          (SELECT count(DISTINCT agent_key)::int FROM (
+            SELECT agent_key FROM events WHERE event_kind IN ('start', 'resume', 'finish') AND agent_key IS NOT NULL
+            UNION SELECT r.agent_key FROM _usage_requests r WHERE r.matches AND r.agent_key IS NOT NULL AND (r.agent_depth > 0 OR r.parent_agent_key IS NOT NULL)) children) AS observed_children`, gp.values);
+
+      return {
+        requestPeriodRows, projectRows, agentRows, requestPricingRows, effortRows, toolRows, knowledgeRows,
+        knowledgeTotal: knowledgeTotal ?? { distinct_invocations: 0 },
+        agentEvidence: agentEvidence ?? { spawns: 0, observed_children: 0, conversations: 0 },
+      };
+    }) : emptyDetail;
+    const {
+      requestPeriodRows, projectRows, agentRows, requestPricingRows, effortRows, toolRows, knowledgeRows,
+      knowledgeTotal, agentEvidence,
+    } = detail;
+
     // Hourly buckets already have model, Chicago date, and exclusive composition. Missing tier is assumed
     // Standard; the hour is not a single request, so the short context band is used rather than a summed input.
     const bpp = new Params();
-    const bucketPriceWhere = [
-      `t.account_id = ANY(${bpp.add(accounts)}::text[])`,
-      `t.hour >= ${bpp.add(new Date(range.start).toISOString())}::timestamptz`,
-      `t.hour + interval '1 hour' <= ${bpp.add(new Date(bucketEnd).toISOString())}::timestamptz`,
-    ];
-    if (q.models.length) bucketPriceWhere.push(`(${[namedModels.length ? `t.model = ANY(${bpp.add(namedModels)}::text[])` : null, q.models.includes(UNKNOWN) ? `t.model = 'unknown'` : null].filter(Boolean).join(' OR ')})`);
-    const bucketPricingRows = !useRequests && accounts.length ? await db.unsafe(`WITH canonical AS (
-        SELECT DISTINCT ON (t.account_id, t.session_hash, t.hour, t.model) t.account_id, t.source_id, t.hour, t.model, t.calls,
-          t.input_tokens, t.cached_tokens, t.cache_write_tokens, t.output_tokens, t.total_tokens
-        FROM personal_hub.token_bucket_revisions t
-        WHERE ${bucketPriceWhere.join(' AND ')}
-        ORDER BY t.account_id, t.session_hash, t.hour, t.model, t.calls DESC, t.total_tokens DESC, t.observed_at DESC, t.received_at DESC, t.id DESC)
+    const bucketPricingRows = !useRequests && accounts.length ? await db.unsafe(`WITH ${canonicalBucketCte(bpp, accounts, startIso, endIso, q, namedModels)}
       SELECT account_id, model, to_char(hour AT TIME ZONE ${bpp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date,
         sum(calls)::float8 AS calls, sum(input_tokens)::float8 AS input_fresh, sum(cached_tokens)::float8 AS input_cached,
-        sum(cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, 0::float8 AS unclassified,
+        sum(cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, sum(unclassified)::float8 AS unclassified,
         sum(total_tokens)::float8 AS total_tokens
       FROM canonical ${q.machines.length ? `WHERE source_id = ANY(${bpp.add(q.machines)}::uuid[])` : ''}
       GROUP BY 1, 2, 3 ORDER BY total_tokens DESC NULLS LAST`, bpp.values) : [];
-    // Effort is a request-only dimension: the hourly ledger records a model but never how hard it was asked to think.
-    const ep = new Params(); const ecte = requestCte(ep, q, accounts, range);
-    const effortRows = accounts.length ? await db.unsafe(`WITH ${ecte.text}
-      SELECT coalesce(r.model_actual, '${UNKNOWN}') AS model, coalesce(r.reasoning_effort, '${UNKNOWN}') AS effort, ${periodExpr('r.activity_at', q.resolution, ep, tz)} AS period_start,
-        sum(r.observed_total_tokens)::float8 AS total_tokens, count(*)::int AS calls
-      FROM requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY 3`, ep.values) : [];
-
-    // 3. Tools, callers, and outcomes: one invocation identity counts once; the newest result names its outcome.
-    const tp = new Params(); const tcte = requestCte(tp, q, accounts, range);
-    const toolUnsupported: string[] = [];
-    if (q.models.length) toolUnsupported.push('models');
-    const toolRows = accounts.length ? await db.unsafe(`WITH ${tcte.text}, canonical_invocations AS (
-        SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.tool_name, t.tool_class, t.tool_namespace, t.caller_agent_key, t.caller_request_key, t.outcome, t.session_hash, t.observed_at, b.source_id
-        FROM personal_hub.tool_events t JOIN personal_hub.companion_bindings b ON b.id = t.binding_id
-        WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${tp.add(accounts)}::text[])
-          AND t.observed_at >= ${tp.add(new Date(range.start - 7 * 24 * HOUR).toISOString())}::timestamptz AND t.observed_at < ${tp.add(new Date(range.end + 7 * 24 * HOUR).toISOString())}::timestamptz
-        ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
-      ), invocations AS (
-        SELECT * FROM canonical_invocations
-        WHERE observed_at >= ${tp.add(new Date(range.start).toISOString())}::timestamptz AND observed_at < ${tp.add(new Date(range.end).toISOString())}::timestamptz
-          ${q.machines.length ? `AND source_id = ANY(${tp.add(q.machines)}::uuid[])` : ''}
-          ${q.agents.length ? `AND caller_agent_key = ANY(${tp.add(q.agents)}::text[])` : ''}
-      ), results AS (
-        SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.outcome
-        FROM personal_hub.tool_events t WHERE t.event_kind = 'result' AND t.account_id = ANY(${tp.add(accounts)}::text[])
-        ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
-      ), joined AS (
-        SELECT i.*, coalesce(res.outcome, i.outcome) AS final_outcome, r.model_actual AS caller_model, r.agent_name AS caller_name, r.agent_class AS caller_class, r.matches
-        FROM invocations i LEFT JOIN results res ON res.account_id = i.account_id AND res.invocation_key = i.invocation_key
-        LEFT JOIN requests r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key)
-      SELECT tool_name, tool_class, tool_namespace, caller_agent_key, caller_name, caller_class, caller_model, final_outcome AS outcome,
-        (caller_request_key IS NOT NULL) AS has_caller_request, count(*)::int AS invocations
-      FROM joined ${cte.detailFilters ? 'WHERE matches' : ''} GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9`, tp.values) : [];
-    if (cte.detailFilters) toolUnsupported.push('detail filters apply through the calling request; invocations without a retained caller request are excluded');
-
-    // 4. Knowledge sources: rows resolved under the current configuration, per mapped source or unassigned identity.
-    const kp = new Params();
-    const knowledgeRows = accounts.length ? await db.unsafe(`WITH accesses AS (
-        SELECT a.account_id, a.invocation_key, a.access_kind, a.current_configuration, a.source_id, a.source_label, a.source_state, a.identity_id
-        FROM personal_hub.resource_access_source_resolution a
-        WHERE a.account_id = ANY(${kp.add(accounts)}::text[]) AND a.observed_at >= ${kp.add(new Date(range.start).toISOString())}::timestamptz AND a.observed_at < ${kp.add(new Date(range.end).toISOString())}::timestamptz
-      ), invocations AS (
-        SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.session_hash, t.caller_agent_key
-        FROM personal_hub.tool_events t WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${kp.add(accounts)}::text[])
-        ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC)
-      SELECT a.source_id, a.source_label, coalesce(a.source_state, 'unknown') AS state, CASE WHEN a.source_id IS NULL THEN a.identity_id END AS identity_id,
-        count(*) FILTER (WHERE a.current_configuration)::int AS accesses, count(*) FILTER (WHERE NOT a.current_configuration)::int AS earlier_configuration_accesses,
-        count(DISTINCT a.invocation_key) FILTER (WHERE a.current_configuration)::int AS distinct_invocations,
-        count(DISTINCT i.session_hash) FILTER (WHERE a.current_configuration)::int AS distinct_sessions,
-        count(DISTINCT i.caller_agent_key) FILTER (WHERE a.current_configuration)::int AS distinct_agents,
-        count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'read')::int AS kind_read,
-        count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'search')::int AS kind_search,
-        count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'write')::int AS kind_write,
-        count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'unknown')::int AS kind_unknown
-      FROM accesses a LEFT JOIN invocations i ON i.account_id = a.account_id AND i.invocation_key = a.invocation_key
-      GROUP BY 1, 2, 3, 4 ORDER BY accesses DESC`, kp.values) : [];
-    const [knowledgeTotal] = accounts.length ? await db.unsafe(`SELECT count(DISTINCT a.invocation_key)::int AS distinct_invocations
-      FROM personal_hub.resource_access_source_resolution a WHERE a.account_id = ANY($1::text[]) AND a.current_configuration AND a.observed_at >= $2::timestamptz AND a.observed_at < $3::timestamptz`,
-      [accounts, new Date(range.start).toISOString(), new Date(range.end).toISOString()]) : [{ distinct_invocations: 0 }];
-
-    // 5. Agent lifecycle: spawn attempts and distinct observed children, from events and request rows together.
-    const gp = new Params(); const gcte = requestCte(gp, q, accounts, range);
-    const [agentEvidence] = accounts.length ? await db.unsafe(`WITH ${gcte.text}, events AS (
-        SELECT DISTINCT ON (e.account_id, e.semantic_key) e.event_kind, e.agent_key, e.outcome
-        FROM personal_hub.agent_events e WHERE e.account_id = ANY(${gp.add(accounts)}::text[])
-          AND e.observed_at >= ${gp.add(new Date(range.start).toISOString())}::timestamptz AND e.observed_at < ${gp.add(new Date(range.end).toISOString())}::timestamptz
-        ORDER BY e.account_id, e.semantic_key, e.observed_at DESC, e.received_at DESC, e.id DESC)
-      SELECT (SELECT count(*)::int FROM events WHERE event_kind = 'spawn') AS spawns,
-        (SELECT count(DISTINCT r.session_hash)::int FROM requests r WHERE r.matches) AS conversations,
-        (SELECT count(DISTINCT agent_key)::int FROM (
-          SELECT agent_key FROM events WHERE event_kind IN ('start', 'resume', 'finish') AND agent_key IS NOT NULL
-          UNION SELECT r.agent_key FROM requests r WHERE r.matches AND r.agent_key IS NOT NULL AND (r.agent_depth > 0 OR r.parent_agent_key IS NOT NULL)) children) AS observed_children`, gp.values) : [{ spawns: 0, observed_children: 0, conversations: 0 }];
 
     // 6. Monthly snapshots for the months the range touches, crosswalked to accounts where the operator mapped them.
     const months = monthsWithin(range, tz);
@@ -486,11 +566,12 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // and which (account, source month) pairs the hourly ledger covers at all.
     const mp = new Params();
     const mtz = `${mp.add(tz)}::text`;
-    const monthRows = accounts.length && months.length ? await db.unsafe(`WITH canonical AS (
-        SELECT DISTINCT ON (t.account_id, t.session_hash, t.hour, t.model) t.account_id, t.hour, t.calls, t.total_tokens
-        FROM personal_hub.token_bucket_revisions t WHERE t.account_id = ANY(${mp.add(accounts)}::text[])
-          AND t.hour >= ${mp.add(new Date(monthBounds(months[0], tz).start).toISOString())}::timestamptz AND t.hour < ${mp.add(new Date(monthBounds(months.at(-1)!, tz).end).toISOString())}::timestamptz
-        ORDER BY t.account_id, t.session_hash, t.hour, t.model, t.calls DESC, t.total_tokens DESC, t.observed_at DESC, t.received_at DESC, t.id DESC)
+    const monthRows = accounts.length && months.length ? await db.unsafe(`WITH ${canonicalBucketCte(
+        mp, accounts,
+        new Date(monthBounds(months[0], tz).start).toISOString(),
+        new Date(monthBounds(months.at(-1)!, tz).end).toISOString(),
+        { ...q, models: [] }, [],
+      )}
       SELECT account_id, to_char(hour AT TIME ZONE ${mtz}, 'YYYY-MM') AS month, sum(calls)::float8 AS calls, sum(total_tokens)::float8 AS raw_tokens
       FROM canonical GROUP BY 1, 2`, mp.values) : [];
     const cohortPopulation = new Map(monthRows.map(r => [`${r.account_id}|${r.month}`, { calls: num(r.calls), raw_tokens: num(r.raw_tokens) }]));
@@ -657,7 +738,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const detailNote = 'Request detail covers the canonical tokens linked to accepted request records; buckets remain the headline until a collection slice is declared complete and reconciled.';
     const pricing = useRequests
       ? requestPricingRows.map(row => pricingRowFromSql(row, {
-          context_band: contextBandFor((row.provider as string | null) ?? null, (row.model as string | null) ?? null, { openai: row.over_openai === true, anthropic: row.over_anthropic === true }),
+          context_band: contextBandFor((row.provider as string | null) ?? null, (row.model as string | null) ?? null, { openai: row.over_openai === true, anthropic: row.over_anthropic === true, xai: row.over_xai === true }),
           rate_date: (row.rate_date as string | null) ?? null,
         }))
       : bucketPricingRows.map(row => pricingRowFromSql(row, {

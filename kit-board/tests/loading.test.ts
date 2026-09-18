@@ -67,6 +67,8 @@ test('client retries a 503 once, bounds hanging reads, and respects navigation c
     // Keep the test event loop alive; AbortSignal.timeout itself uses an unref'ed timer.
     const keepAlive = delay(40);
     await assert.rejects(fetchPrivateJson('/api/test', new AbortController().signal, 5)); assert.equal(calls, 2);
+    calls = 0;
+    await assert.rejects(fetchPrivateJson('/api/test', new AbortController().signal, 5, false)); assert.equal(calls, 1);
     const navigation = new AbortController(); navigation.abort(); calls = 0;
     await assert.rejects(fetchPrivateJson('/api/test', navigation.signal, 5)); assert.equal(calls, 1);
     await keepAlive;
