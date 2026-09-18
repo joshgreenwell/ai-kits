@@ -26,7 +26,7 @@ serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 jiff = { version = "0.2", features = ["std"] }
-sha2 = "0.10"
+sha2 = "0.11"
 uuid = { version = "1", features = ["v4", "v5"] }
 plist = "1"
 thiserror = "2"
