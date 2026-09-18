@@ -18,7 +18,8 @@ import { useLiveData } from '@/components/telemetry-shared';
 import { fetchPrivateJson, USAGE_QUERY_TIMEOUT_MS } from '@/lib/fetch-private-json';
 import type { UsageQueryResult } from '@/lib/usage-query';
 import {
-  compactTokens, compositionView, exactTokens, parseTokensFilters, percent, queryString, seriesSummary, serializeTokensFilters, whenIn, type TokensFilters,
+  compactTokens, compositionView, exactTokens, mergeUsageQuerySection, parseTokensFilters, percent, queryString, seriesSummary, serializeTokensFilters, whenIn,
+  USAGE_QUERY_CACHE_TTL_MS, USAGE_QUERY_SECTIONS, type TokensFilters, type UsageQuerySection,
 } from '@/lib/usage-view';
 
 /** The agreed Tokens card order; every section below shares this filter bar and query result. */
@@ -36,10 +37,12 @@ export type TokensOverviewProps = {
   /** A refresh failed after a result was shown: the last good result stays up and is marked. */
   error: string | null; stale: boolean; loading: boolean; onRetry: () => void; now: number;
   status?: React.ReactNode;
+  /** Request and tool cards load after the headline; omit when the result already includes them. */
+  pending?: { requests?: boolean; tools?: boolean };
 };
 
-/** The Tokens overview from one query result; every number below the filter bar comes from that result. */
-export function TokensOverview({ filters, onFiltersChange, result, vocabulary, error, stale, loading, onRetry, now, status }: TokensOverviewProps) {
+/** The Tokens overview; headline cards can render before request and tool sections finish. */
+export function TokensOverview({ filters, onFiltersChange, result, vocabulary, error, stale, loading, onRetry, now, status, pending }: TokensOverviewProps) {
   // Agent chips take their names from the result itself: the registry has no agent vocabulary, and a drill-down chip should read like the row that made it.
   const labels = useMemo(() => ({
     accounts: Object.fromEntries(vocabulary.accounts.map(o => [o.value, o.label])), projects: Object.fromEntries(vocabulary.projects.map(o => [o.value, o.label])),
@@ -51,12 +54,13 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
   const merged = result?.historical.snapshots.filter(s => s.merged !== 'none') ?? [];
   const listedOnly = result?.historical.snapshots.filter(s => s.merged === 'none') ?? [];
   const detail = result?.request_detail;
+  const requestDetailPending = !!pending?.requests && !(detail && (detail.covered_tokens > 0 || detail.covered_calls > 0));
   const headline = result?.headline;
   // Labels follow the result's own resolution and zone, so bars from the last good result are never labeled with filters still in flight.
   const shown = { resolution: result?.series.resolution ?? filters.resolution, timezone: result?.scope.range.timezone ?? filters.timezone };
 
   return (
-    <div className="grid gap-6" aria-busy={loading}>
+    <div className="grid gap-6" aria-busy={loading || !!pending?.requests || !!pending?.tools}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <UsageFilterBar filters={filters} onChange={onFiltersChange} vocabulary={vocabulary} range={result?.scope.range ?? null} labels={labels} disabled={loading && !result} />
         {status}
@@ -165,8 +169,8 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
 
           <UsageInsightCards result={result} />
           <EnvironmentalImpact estimate={result.environment} />
-          <ProjectAgentBreakdown result={result} filters={filters} onFiltersChange={onFiltersChange} />
-          <ToolKnowledgeCard result={result} />
+          <ProjectAgentBreakdown result={result} filters={filters} onFiltersChange={onFiltersChange} loading={!!pending?.requests} />
+          <ToolKnowledgeCard result={result} loading={!!pending?.tools} />
 
           <Card className="gap-0 overflow-hidden py-0" aria-label="Coverage and sources">
             <CardHeader className="p-4">
@@ -174,7 +178,7 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
               <CardDescription>Where the figures come from and what they leave out.</CardDescription>
             </CardHeader>
             <StatGroup className="border-border border-y">
-              <Stat label="Request detail" value={percent(detail ? detail.coverage.applicable * detail.coverage.complete : null)} caption={detail ? `${exactTokens(detail.covered_tokens)} of ${exactTokens(detail.coverage.headline)} headline tokens carry request records` : ''} />
+              <Stat label="Request detail" value={requestDetailPending ? '…' : percent(detail ? detail.coverage.applicable * detail.coverage.complete : null)} caption={requestDetailPending ? 'reading request records in the selected range' : detail ? `${exactTokens(detail.covered_tokens)} of ${exactTokens(detail.coverage.headline)} headline tokens carry request records` : ''} />
               <Stat label="Monthly snapshots" value={merged.length ? exactTokens(headline.snapshot_tokens) : '0'} caption={merged.length ? `tokens merged from ${merged.length} snapshot${merged.length === 1 ? '' : 's'} where hourly history has nothing` : 'none merged into this scope'} />
               <Stat label="Range" value={result.scope.range.anchored_to_now ? 'to now' : 'closed'} caption={`${result.scope.range.preset.replaceAll('_', ' ')} · ${result.scope.range.timezone}`} />
             </StatGroup>
@@ -199,6 +203,21 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
 }
 
 type ProjectsRegistry = { projects: { id: string; label: string }[] };
+type SectionPending = { requests: boolean; tools: boolean };
+
+const clientCache = new Map<string, { expires: number; value: UsageQueryResult }>();
+function cacheKey(query: string, section: UsageQuerySection) { return `${query}|${section}`; }
+function readClientCache(query: string, section: UsageQuerySection) {
+  const key = cacheKey(query, section);
+  const hit = clientCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.value;
+  clientCache.delete(key);
+  return null;
+}
+function writeClientCache(query: string, section: UsageQuerySection, value: UsageQueryResult) {
+  if (clientCache.size >= 24) clientCache.delete(clientCache.keys().next().value!);
+  clientCache.set(cacheKey(query, section), { expires: Date.now() + USAGE_QUERY_CACHE_TTL_MS, value });
+}
 
 /** Owns the private URL state and the bounded poll; renders the overview from the last good result. */
 function TokensOverviewLiveInner() {
@@ -212,6 +231,7 @@ function TokensOverviewLiveInner() {
   const [resultQuery, setResultQuery] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState<SectionPending>({ requests: true, tools: true });
   const [now, setNow] = useState(0);
   const [projects, setProjects] = useState<ProjectsRegistry['projects']>([]);
   const live = useLiveData();
@@ -220,20 +240,70 @@ function TokensOverviewLiveInner() {
   useEffect(() => {
     const controller = new AbortController();
     let inFlight = false;
+    const filterError = (caught: unknown) => caught instanceof Error && /\(4\d\d\)/.test(caught.message)
+      ? 'The selected filters were not accepted. Adjust the period or remove a filter.'
+      : 'Usage is temporarily unavailable. Retry, or wait for the next refresh.';
+    const loadSection = async (section: UsageQuerySection) => {
+      const cached = readClientCache(query, section);
+      if (cached) return cached;
+      const params = new URLSearchParams(query);
+      params.set('section', section);
+      const value = await fetchPrivateJson<UsageQueryResult>(`/api/usage-query?${params}`, controller.signal, USAGE_QUERY_TIMEOUT_MS, false);
+      writeClientCache(query, section, value);
+      return value;
+    };
     const refresh = async () => {
       if (document.hidden || inFlight || controller.signal.aborted) return;
-      inFlight = true; setLoading(true); setNow(Date.now());
+      inFlight = true; setNow(Date.now());
+      const cached = Object.fromEntries(USAGE_QUERY_SECTIONS.map(section => [section, readClientCache(query, section)])) as Record<UsageQuerySection, UsageQueryResult | null>;
+      if (cached.overview && cached.requests && cached.tools) {
+        setResult(mergeUsageQuerySection(mergeUsageQuerySection(cached.overview, 'requests', cached.requests), 'tools', cached.tools));
+        setResultQuery(query); setError(null); setLoading(false); setPending({ requests: false, tools: false });
+        inFlight = false; return;
+      }
       try {
-        const next = await fetchPrivateJson<UsageQueryResult>(`/api/usage-query${query ? `?${query}` : ''}`, controller.signal, USAGE_QUERY_TIMEOUT_MS, false);
-        if (!controller.signal.aborted) { setResult(next); setResultQuery(query); setError(null); }
+        if (!cached.overview) setLoading(true);
+        const overview = cached.overview ?? await loadSection('overview');
+        if (controller.signal.aborted) return;
+        let merged = overview;
+        if (cached.requests) merged = mergeUsageQuerySection(merged, 'requests', cached.requests);
+        if (cached.tools) merged = mergeUsageQuerySection(merged, 'tools', cached.tools);
+        setResult(merged); setResultQuery(query); setError(null); setLoading(false);
+        setPending({ requests: !cached.requests, tools: !cached.tools });
+        try {
+          if (!cached.requests) {
+            const requests = await loadSection('requests');
+            if (controller.signal.aborted) return;
+            merged = mergeUsageQuerySection(merged, 'requests', requests);
+            setResult(merged);
+          }
+          setPending(current => ({ ...current, requests: false }));
+        } catch (caught) {
+          if (controller.signal.aborted) return;
+          setPending(current => ({ ...current, requests: false }));
+          setError(filterError(caught));
+        }
+        try {
+          if (!cached.tools) {
+            const tools = await loadSection('tools');
+            if (controller.signal.aborted) return;
+            merged = mergeUsageQuerySection(merged, 'tools', tools);
+            setResult(merged);
+          }
+          setPending(current => ({ ...current, tools: false }));
+        } catch (caught) {
+          if (controller.signal.aborted) return;
+          setPending(current => ({ ...current, tools: false }));
+          setError(filterError(caught));
+        }
       } catch (caught) {
-        if (!controller.signal.aborted) setError(caught instanceof Error && /\(4\d\d\)/.test(caught.message) ? 'The selected filters were not accepted. Adjust the period or remove a filter.' : 'Usage is temporarily unavailable. Retry, or wait for the next refresh.');
+        if (!controller.signal.aborted) setError(filterError(caught));
       } finally { inFlight = false; if (!controller.signal.aborted) setLoading(false); }
     };
     retry.current = () => { void refresh(); };
     const visible = () => { if (!document.hidden) void refresh(); };
     document.addEventListener('visibilitychange', visible);
-    void refresh(); const timer = setInterval(refresh, 60_000);
+    void refresh(); const timer = setInterval(refresh, USAGE_QUERY_CACHE_TTL_MS);
     return () => { controller.abort(); clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
   }, [query]);
 
@@ -273,6 +343,7 @@ function TokensOverviewLiveInner() {
   return (
     <TokensOverview filters={filters} onFiltersChange={onFiltersChange} result={result} vocabulary={vocabulary}
       error={error} stale={!!error && !!result} loading={loading || (result !== null && resultQuery !== query)} onRetry={() => retry.current()} now={now || Date.now()}
+      pending={resultQuery === query ? pending : { requests: true, tools: true }}
       status={<UsageStatusLine data={live.data} now={live.now} error={live.error} />} />
   );
 }

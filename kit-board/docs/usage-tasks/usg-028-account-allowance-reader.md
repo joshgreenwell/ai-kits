@@ -15,7 +15,7 @@ Refresh account windows through a verified supported account interface, reducing
 
 ## Current gap
 
-The account adapter and selectable app-server/web-backend reader paths are unimplemented.
+`app_server` is implemented in this checkout through `codex app-server`. `web_backend` stays unimplemented. No real authorized app-server reading has been stored or shown, so the task stays Planned.
 
 ## Acceptance criteria
 
@@ -33,11 +33,15 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Starting points
 
-- [companion/crates/observatory-adapters/src/stubs.rs](<../../companion/crates/observatory-adapters/src/stubs.rs>)
+- [companion/crates/observatory-adapters/src/codex_account.rs](<../../companion/crates/observatory-adapters/src/codex_account.rs>)
+- [companion/crates/observatory-core/src/process.rs](<../../companion/crates/observatory-core/src/process.rs>)
 - [companion/crates/observatory-adapters/src/readings.rs](<../../companion/crates/observatory-adapters/src/readings.rs>)
 - [docs/usage-coverage.md](<../../docs/usage-coverage.md>)
-- [lib/telemetry-contract.ts](<../../lib/telemetry-contract.ts>)
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+In source as of 2026-09-17. Status stays Planned: criterion 5 requires a real account reading stored and displayed before treating the setting as production-ready.
+
+- Decisions: `codex_account` talks to `codex app-server` with Content-Length JSON-RPC and NDJSON fallback, method `account/rateLimits/read`, including `rateLimitsByLimitId`. Meter keys stay `<limit_id>:<minutes>` so they match the embedded reader. Child processes start with `CREATE_NO_WINDOW`. Timeout is clamped to 1–15s of remaining run time. Emission is only to the single confirmed Codex identity; missing identity is `identity_changed`, not a fallback to the first binding. `web_backend` still preflights `not_implemented`. `codex_execution` continues to report the Codex `allowance` capability row, including `reader_fallback_embedded` while `app_server` is selected, because embedded remains a by-product of the rollout scan. `codex_account` does not emit its own allowance capability row.
+- Checks: parse-only fixture `tests/fixtures/usage-v2/provider/codex-rate-limits.json`. Collect tests do not spawn a live app-server.
+- Blocker: no real authorized app-server receipt. `web_backend` remains unimplemented.

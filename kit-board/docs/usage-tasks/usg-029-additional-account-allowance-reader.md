@@ -15,7 +15,7 @@ Provide a verified account-level allowance reader alongside statusline and brows
 
 ## Current gap
 
-The selectable account/OAuth reader is a stub, so enabling its setting does not supply readings.
+`oauth_usage` is implemented in this checkout. Enabling it still keeps the statusline reader as the documented fallback. No real authorized OAuth reading has been stored or shown, so the task stays Planned.
 
 ## Acceptance criteria
 
@@ -33,11 +33,15 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Starting points
 
-- [companion/crates/observatory-adapters/src/stubs.rs](<../../companion/crates/observatory-adapters/src/stubs.rs>)
+- [companion/crates/observatory-adapters/src/claude_account.rs](<../../companion/crates/observatory-adapters/src/claude_account.rs>)
 - [companion/crates/observatory-core/src/credentials.rs](<../../companion/crates/observatory-core/src/credentials.rs>)
 - [docs/usage-coverage.md](<../../docs/usage-coverage.md>)
 - [docs/usage-system.md](<../../docs/usage-system.md>)
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+In source as of 2026-09-17. Status stays Planned: criterion 5 needs an actual account reading and UI result.
+
+- Decisions: private `GET https://api.anthropic.com/api/oauth/usage` with the existing Claude Code sign-in. Observatory never POSTs a refresh_token; `allowance.claude_oauth_keepalive` may spawn Claude Code so *it* refreshes the store. Parser version stays `2.0.0+statusline1`. Emission is only to the confirmed Claude identity. `RunContext.claude_credentials_path` defaults to `None` so unit tests never hit Keychain or `.credentials.json`; `prepare()` sets the platform path. Missing credentials with statusline samples present is Partial / CredentialMissing, not a hard fail. Deny of `allowance.claude_reader.statusline` removes only the fallback; a prefix deny of `allowance.claude_reader` still stops the adapter. Queued statusline readings stay local under that deny even when the server selects `oauth_usage`.
+- Checks: parse fixture `tests/fixtures/usage-v2/provider/claude-oauth-usage.json` plus a `limits` array with `weekly_scoped`; adapter tests that `oauth_usage` plus a statusline-only deny still attempts OAuth rather than `DeniedLocally`.
+- Blocker: no real authorized OAuth receipt. The interface is private and can change without notice.

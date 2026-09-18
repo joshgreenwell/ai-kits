@@ -18,7 +18,7 @@ use observatory_contract::records::WindowMinutes;
 use observatory_contract::settings::{ClaudeReader, CodexReader};
 use observatory_contract::{
     Adapter, AllowanceKind, AllowanceReading, AllowanceUnit, Basis, CapabilityCoverage, CapabilityDimension,
-    CapabilityState, Channel, Code, MeterKey, Nullable, Reader, Real, Record, Stamp, Text, Uuid,
+    CapabilityState, Channel, Code, DetailCode, MeterKey, Nullable, Reader, Real, Record, Stamp, Text, Uuid,
 };
 use observatory_core::adapter::{BindingContext, IdentityState, RunContext, Sink, record_id};
 use observatory_core::inbox::{SidecarStatus, read_statusline_files, stale_after_minutes, window_minutes};
@@ -493,6 +493,10 @@ pub struct ClaudeAllowanceEvidence<'a> {
     pub hook: &'a HookStatus,
     pub now_seconds: f64,
     pub cadence_minutes: u64,
+    /// Readings emitted from the OAuth usage interface this run.
+    pub oauth_emitted: u64,
+    /// Why the OAuth call did not produce readings, when it was attempted.
+    pub oauth_detail: Option<DetailCode>,
 }
 
 /// The Claude `allowance` row, evidence first: samples bound, released, or held
@@ -501,6 +505,9 @@ pub struct ClaudeAllowanceEvidence<'a> {
 pub fn claude_allowance_capability(evidence: &ClaudeAllowanceEvidence<'_>) -> CapabilityCoverage {
     if evidence.reader == ClaudeReader::Off {
         return capability(CapabilityState::DisabledBySetting, Some("reader_off"));
+    }
+    if evidence.reader == ClaudeReader::OauthUsage && evidence.oauth_emitted > 0 {
+        return capability(CapabilityState::Complete, None);
     }
     let hook_ran = evidence.sidecar.is_some_and(|sidecar| {
         within_threshold(
@@ -537,6 +544,17 @@ pub fn claude_allowance_capability(evidence: &ClaudeAllowanceEvidence<'_>) -> Ca
         }
         let fresh = within_threshold(evidence.newest_bound, evidence.now_seconds, evidence.cadence_minutes);
         return capability(CapabilityState::Complete, (!fresh).then_some("no_recent_samples"));
+    }
+    if evidence.reader == ClaudeReader::OauthUsage {
+        let detail = match evidence.oauth_detail {
+            Some(DetailCode::CredentialExpired) => "credential_expired",
+            Some(DetailCode::CredentialMissing) | Some(DetailCode::HttpUnauthorized) => "credential_missing",
+            Some(DetailCode::IdentityChanged) => "identity_changed",
+            Some(DetailCode::HttpRateLimited) => "http_rate_limited",
+            Some(_) => "reader_unavailable",
+            None => "credential_missing",
+        };
+        return capability(CapabilityState::Partial, Some(detail));
     }
     match evidence.hook {
         HookStatus::NotInstalled => capability(CapabilityState::Unsupported, Some("hook_not_installed")),

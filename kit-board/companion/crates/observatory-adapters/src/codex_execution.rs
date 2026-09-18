@@ -3,7 +3,7 @@
 //! `requests` detail, request records; plus the embedded `rate_limits` of each
 //! `token_count` as `allowance.reading` with reader `embedded` and meter key
 //! `<limit_id>:<minutes>`. The `allowance` capability row reports the embedded
-//! reader (a fallback while an unimplemented reader is selected).
+//! reader (a fallback while `web_backend` is selected, which is still unimplemented).
 
 use observatory_contract::settings::{CodexReader, DetailLevel};
 use observatory_contract::{

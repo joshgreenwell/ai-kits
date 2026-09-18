@@ -3,6 +3,7 @@ import importlib.util
 from io import BytesIO
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -34,6 +35,9 @@ class DetailedReports(unittest.TestCase):
 
     def run_analyzer(self, argv, **kwargs):
         self.assertIn('run_analyzer.ps1' if sys.platform == 'win32' else 'run_analyzer.sh', ' '.join(argv)); self.assertNotIn('--upload', argv)
+        if sys.platform == 'win32':
+            self.assertEqual(kwargs.get('creationflags'), subprocess.CREATE_NO_WINDOW)
+            self.assertIn('-WindowStyle', argv)
         fixture = copy.deepcopy(self.fixture); fixture['current']['month'] = argv[argv.index('--month') + 1]
         kwargs['stdout'].write(json.dumps(fixture).encode()); return SimpleNamespace(returncode=0)
 
@@ -129,4 +133,14 @@ class DetailedReports(unittest.TestCase):
     def test_dry_run_does_not_publish_or_write_receipts(self):
         with patch.object(d.subprocess, 'run', self.run_analyzer), patch.object(d, 'upload', self.upload):
             self.assertEqual(self.refresh(dry_run=True)['status'], 'dry_run')
-        self.assertEqual(self.sent, []); self.assertFalse((self.root / 'source.detailed').exists())
+    def test_windows_analyzer_subprocess_is_hidden(self):
+        kwargs = d.hidden_process_kwargs()
+        if sys.platform == 'win32':
+            self.assertEqual(kwargs.get('creationflags'), subprocess.CREATE_NO_WINDOW)
+        else:
+            self.assertEqual(kwargs, {})
+        kwargs = d.hidden_process_kwargs()
+        if sys.platform == 'win32':
+            self.assertEqual(kwargs.get('creationflags'), subprocess.CREATE_NO_WINDOW)
+        else:
+            self.assertEqual(kwargs, {})

@@ -241,6 +241,22 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     const mtd = await query({ preset: 'month_to_date', start: '', end: '' });
     assert.deepEqual([mtd.scope.range.start, mtd.scope.range.end, mtd.scope.range.anchored_to_now, mtd.headline.total_tokens], ['2026-09-01T05:00:00.000Z', '2026-09-14T20:30:00.000Z', true, 615]);
     assert.equal(mtd.series.points.at(-1)?.state, 'partial');
+
+    // 8. Sectioned reads skip tables other cards own and stay inside the selected range.
+    const overview = await query({ section: 'overview' });
+    assert.equal(overview.headline.total_tokens, 615);
+    assert.equal(overview.tools.invocations, 0, 'overview does not scan tool events');
+    assert.deepEqual(overview.projects.rows, []);
+    assert.deepEqual(overview.effort_series.rows, []);
+    const requestsOnly = await query({ section: 'requests' });
+    assert.deepEqual(requestsOnly.projects.rows.map(r => [r.state, r.total_tokens]), [['project', 170], ['no_project', 40]]);
+    assert.equal(requestsOnly.tools.invocations, 0);
+    const toolsOnly = await query({ section: 'tools' });
+    assert.equal(toolsOnly.tools.invocations, 2);
+    assert.equal(toolsOnly.headline.total_tokens, 0, 'tools does not rescan the hourly ledger');
+    const projectOverview = await query({ projects: projectId, section: 'overview' });
+    assert.deepEqual([projectOverview.headline.total_tokens, projectOverview.headline.basis, projectOverview.projects.rows], [170, 'requests', []],
+      'detail filters still switch the overview headline without waiting on project rows');
   } finally {
     await sql.end({ timeout: 1 });
   }

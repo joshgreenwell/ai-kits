@@ -8,13 +8,14 @@ envelope v2 (`POST /api/v1/usage`) to the Observatory. It replaces `scripts/tele
 `#![forbid(unsafe_code)]`, no async runtime, SQLite statically linked, HTTPS through rustls with
 the platform trust store.
 
-**Status: core collection deployed; other readers unfinished.** `claude_execution` and
-`codex_execution` port `collect.py` v1.1.0 against a synthetic parity corpus. Other adapters
-are stubs at parser version `0`: current source reports a missing prerequisite or
-`not_implemented`, while older installed builds can report `failed / unrecognized_payload`.
-The server and unified schema are deployed, with Mac and Windows receipts verified on
-September 13. This does not prove complete backfill: the audit found substantial v1-only
-history. `run --dry-run --offline` exercises local collection without a network.
+**Status: core collection plus provider adapters in source.** `claude_execution` and
+`codex_execution` port `collect.py` v1.1.0 against a synthetic parity corpus. Account,
+Cursor, and Admin API adapters collect through documented interfaces (`+statusline1`,
+`+appserver1`, `+cursor-local1`, `+cursor-hosted1`, `+admin-usage1`). `web_backend` and the
+v2 browser adapters stay unimplemented. The server and unified schema are deployed, with Mac
+and Windows receipts verified on September 13 for local hours. Provider adapters still need a
+real authorized receipt before their backlog tasks are Done. `run --dry-run --offline`
+exercises local collection without a network.
 
 ## Install
 
@@ -50,9 +51,9 @@ steps, use [the operating guide](../docs/usage-collection.md#update-an-existing-
 | Command | What it does |
 | --- | --- |
 | `observatory connect --url <observatory> --code XXXX-XXXX [--label <machine>] [--since YYYY-MM-DD]` | Exchanges a one-time pairing code for an install id and key and writes `companion.json` (`0600`). `--since` sets the backfill start (default: the first day of the current UTC month); the first run pins it in state, so choose it before that run. The URL must be `https`, or `http` to `localhost`/`127.0.0.1`, with no userinfo; redirects are errors. |
-| `observatory setup [--yes] [--bind claude=claude-primary]... [--secrets]` | Discovers Claude Code, Codex, and Cursor stores; shows each signed-in identity; proposes bindings; offers each Obsidian vault from the application's own registry as a knowledge source (key `obsidian.<vault id>`, folder name as the local label; default no, skipped under `--yes`); asks once each about the private-interface readers, the Claude statusline hook (written into `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set, else `~/.claude/settings.json`; an existing statusline command is preserved as a passthrough), and the schedule; writes bindings and this install's settings override; runs a dry run, a first publish, and `service install`; offers to remove a v1 schedule. |
+| `observatory setup [--yes] [--bind claude=claude-primary]... [--secrets]` | Discovers Claude Code, Codex, and Cursor stores; shows each signed-in identity; proposes bindings; offers each Obsidian vault from the application's own registry as a knowledge source (key `obsidian.<vault id>`, folder name as the local label; default no, skipped under `--yes`); asks about the Claude statusline hook (written into `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set, else `~/.claude/settings.json`; an existing statusline command is preserved as a passthrough) and the schedule; leaves Cursor hosted readers off until Settings; writes bindings and this install's settings override; runs a dry run, a first publish, and `service install`; offers to remove a v1 schedule. |
 | `observatory run [--dry-run] [--offline]` | One collection cycle (below). |
-| `observatory service install\|uninstall\|status` | LaunchAgent `com.personal-observatory.companion.<install-id>`, Task Scheduler task `Personal Observatory Companion <install-id>`, or systemd user timer `personal-observatory-companion.timer`, at the effective cadence. Uninstall removes only what it installed. Every subcommand reads the installed job back (`schedule`: state, interval, whether it pins this config directory, `pending` against the desired cadence, and the action when it does not match) and install/uninstall post the capability report so the site sees the change at once. |
+| `observatory service install\|uninstall\|status` | LaunchAgent `com.personal-observatory.companion.<install-id>`, Task Scheduler task `Personal Observatory Companion <install-id>`, or systemd user timer `personal-observatory-companion.timer`, at the effective cadence. On Windows the job stays in the logged-on session and starts `observatory.exe` directly; the release binary is a Windows-subsystem process, so a scheduled run never opens a console. Uninstall removes only what it installed. Every subcommand reads the installed job back (`schedule`: state, interval, whether it pins this config directory, `pending` against the desired cadence, and the action when it does not match) and install/uninstall post the capability report so the site sees the change at once. |
 | `observatory statusline` | Claude Code statusline command: reads the statusline JSON on stdin, stamps each allowance sample with the signed-in account's identity hash, writes a part file to the inbox only when a reading changed or the fifteen-minute heartbeat is due, prints the same one-line summary `statusline.py` printed, always exits 0 (`Claude` on any failure). No network, no SQLite. |
 | `observatory hook claude\|cursor` | Tool hook receivers: append a bounded snapshot (event name, tool name, hashed session id) to the local inbox and exit 0. |
 | `observatory status` | Last run summary, outbox depth, last receipt, the schedule verdict (installed versus desired cadence), per-adapter state. |
@@ -118,8 +119,9 @@ The adapter keeps its own analyzers, state, artifacts, and usage-publisher crede
 | `inbox/claude-statusline-status.json` | the statusline sidecar beside the inbox, never inside it (`last_invocation_at`, `invocations`, `last_offered_at`, `offered_windows`, `offered_windows_ever`, `published_windows`, `last_published_at`; no session field) | same |
 | `inbox/claude-statusline-latest.json` | the hook's kept state beside the inbox: the last reading per identity stamp and window (`used_percent`, `resets_at`, `kept_at`), which tells a changed reading from a repeat | same |
 | `claude-identity-cache.json` | the hook's identity cache per Claude config file (`mtime_ns`, `size`, `evidence_hash` or null); no secret and no account uuid | same |
-| Claude Code stores read | `~/.claude/projects/**`, the config file (`$CLAUDE_CONFIG_DIR/.claude.json` when set, else `~/.claude.json`: the account, for display and for the statusline stamp), `~/.claude/settings.json` (the installed `statusLine.command`, read never written by a run), Keychain `Claude Code-credentials` (presence only in phase 1) | `%USERPROFILE%\.claude\projects`, `.claude\.credentials.json` (expiry only) |
+| Claude Code stores read | `~/.claude/projects/**`, the config file (`$CLAUDE_CONFIG_DIR/.claude.json` when set, else `~/.claude.json`: the account, for display and for the statusline stamp), `~/.claude/settings.json` (the installed `statusLine.command`, read never written by a run), Keychain `Claude Code-credentials` / `.claude/.credentials.json` (presence always; access token only for `oauth_usage`, never POSTed as a refresh; keepalive may spawn Claude Code so *it* refreshes the store, then the token is dropped after the call) | `%USERPROFILE%\.claude\projects`, `.claude\.credentials.json` |
 | Codex stores read | `~/.codex/sessions`, `~/.codex/archived_sessions`, `~/.codex/auth.json` (`tokens.account_id` only, for display) | same under `%USERPROFILE%` |
+| Cursor stores read | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` (identity from `cursorAuth.userId` or split `cursorAuth/*` / `adminSettings.cachedAuthId` scalars; session token only for hosted calls, never an Enterprise Admin key; local conversation token fields extracted in SQLite, bodies never loaded) | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` |
 
 Store paths are discovered at setup, can be overridden per binding in `companion.json`
 (`roots`, `codex_home`, `cursor_state_db`), and are never uploaded. `setup` copies a v1
@@ -182,7 +184,7 @@ before a local deny was added remains local while that rule is active; a resourc
 
 `allowance.claude_reader` needs one extra rule, because two readers share one adapter. `claude_account`
 runs the statusline reader whenever `allowance.claude_reader` is not `off`, and under `oauth_usage` the
-adapter's own gate names the unimplemented reader while the statusline still runs as the fallback. So
+adapter's own gate names the OAuth reader while the statusline still runs as the fallback. So
 `allowance.claude_reader.statusline`, or a dotted prefix of it, removes the statusline reader in either
 mode and keeps statusline readings already in the outbox on the machine. `allowance.claude_reader.oauth_usage`
 keeps its existing meaning as the adapter's gate under that mode.
@@ -193,12 +195,13 @@ keeps its existing meaning as the adapter's gate under that mode.
 | --- | --- | --- |
 | `claude_execution` | 1 | Ported. Buckets; nullable token accounting and recorded effort, tier, speed, reasoning, and cache TTL on `activity.request` at `detail_level` `requests`. The statusline inbox belongs to `claude_account`. |
 | `codex_execution` | 1 | Ported. Buckets; embedded `rate_limits` as `allowance.reading` (reader `embedded`, meter `<limit_id>:<minutes>`) and the Codex `allowance` capability row; nullable token accounting and recorded effort, context size, reasoning, and reported totals on `activity.request` at `requests`. |
-| `claude_account` | 2 | The Claude allowance meter (parser version `2.0.0+statusline1`). Ingests the statusline inbox, binds each sample by the identity stamped on it, quarantines what it cannot bind, and emits `allowance.reading` (reader `statusline`, meters `five_hour`, `seven_day`, and every model-scoped weekly window `seven_day_<model>`, labelled `Claude · weekly · <Model>`) plus the Claude `allowance` capability row. Its OAuth usage reader is still unimplemented: mode `oauth_usage` does the same statusline work and reports `partial` / `not_implemented`. |
-| `codex_account` | 2 | Stub. Preflight reports whether `codex` is on `PATH`. |
-| `cursor_execution`, `cursor_account` | 3 | Stubs. Preflight reports whether `state.vscdb` exists. |
-| `anthropic_api`, `openai_api` | 5 | Stubs. Preflight reports whether the key is in `secrets.json`. |
+| `claude_account` | 2 | The Claude allowance meter (parser version `2.0.0+statusline1`). Ingests the statusline inbox, binds each sample by the identity stamped on it, quarantines what it cannot bind, and emits `allowance.reading` (reader `statusline`, meters `five_hour`, `seven_day`, and every model-scoped weekly window `seven_day_<model>`, labelled `Claude · weekly · <Model>`) plus the Claude `allowance` capability row. Mode `oauth_usage` also calls `GET https://api.anthropic.com/api/oauth/usage` with the existing Claude Code sign-in. Observatory never POSTs a refresh_token; `allowance.claude_oauth_keepalive` (off by default) may spawn Claude Code (`claude auth status`) so Claude Code refreshes its own store. Statusline stays the documented fallback, reported as `reader_fallback_statusline` when OAuth fails. |
+| `codex_account` | 2 | App-server allowance via `codex app-server` JSON-RPC `account/rateLimits/read` (parser `2.0.0+appserver1`, reader `app_server`, meter `<limit_id>:<minutes>`). On Windows the desktop install under `%LOCALAPPDATA%\OpenAI\Codex\bin` is used when `codex` is not on PATH. `web_backend` stays unimplemented. |
+| `cursor_execution` | 3 | Local `state.vscdb` counters as `activity.request` on channel `local_db` (parser `2.0.0+cursor-local1`, product `cursor_ide`). Never billed, never hourly buckets, never a project from a timestamp. |
+| `cursor_account` | 3 | Hosted allowance (`GET https://cursor.com/api/usage-summary`, reader `usage_summary`; one meter per named `*PercentUsed` pool) and billed events (`POST https://cursor.com/api/dashboard/get-filtered-usage-events` with `Origin: https://cursor.com`, reader `dashboard_rpc`) using the Cursor session (parser `2.0.0+cursor-hosted1`). Event totals are the sum of present exclusive classes; the event `model` is stored as reported. Emits only to the confirmed Cursor identity. |
+| `anthropic_api`, `openai_api` | 5 | Admin usage and cost reports (parser `2.0.0+admin-usage1`) from `secrets.json`. Organization buckets and money entries; identity is none, so each runnable org binding receives a copy. |
 
-Stubs never make a network request, spawn a process, or read a credential.
+`web_backend` and the v2 browser adapters never make a network request, spawn a process, or read a credential.
 
 ### The Claude statusline reader
 
@@ -398,7 +401,7 @@ owner can veto any of them.
 - **`allowance_slots` payloads carry an extra `raw_window_id`** beside the six v1 fields; the
   parity test strips it before comparing.
 - **`run --offline`** skips the config fetch (benchmarks and CI); it is not a mode users need.
-- **Cursor identity is not read in phase 1**; its binding is created without evidence.
+- **Cursor identity is hashed from `cursorAuth.userId`** in `state.vscdb`. Hosted collection emits only to the single confirmed Cursor binding; an unconfirmed binding receives no hosted rows.
 - **The project key is an unsalted hash of the working directory.** A salt per install would
   stop a guessed path from being confirmed by hashing it, but it would also give the same
   directory a different key from every install and from the browser collector's future
@@ -406,14 +409,18 @@ owner can veto any of them.
   boundary that matters. The setting stays opt-in.
 - **Model-scoped weekly windows are accepted** wherever v1 accepted only `five_hour` and
   `seven_day`: the statusline hook publishes any `rate_limits.seven_day_<model>` entry with a
-  10080-minute window, and the inbox reader forwards it. The parity corpus contains only the two
-  pooled windows, so `expected.json` is unchanged. Each scoped window is its own meter on the
-  Observatory; it is never summed with the pooled weekly window.
+  10080-minute window, and also a top-level `limits` array (`weekly_scoped` → `seven_day_<slug>`),
+  the same shape Claude Code uses for Fable and other extra weekly caps, without opening the
+  website. The inbox reader forwards both. Extra-usage credits inherit the weekly reset. The
+  parity corpus contains only the two pooled windows, so `expected.json` is unchanged. Each
+  scoped window is its own meter on the Observatory; it is never summed with the pooled weekly
+  window.
 - **A reading's reset must fall inside its own window** (plus a day of slack; 90 days when the
   window length is unknown). The hook drops such a sample and the contract rejects the record on
   both sides: a far-future reset would otherwise pin the forecast card for weeks.
-- **Stub adapters report `prerequisite_missing` / `not_implemented`** once their prerequisites are
-  present instead of running and failing; `failed` is reserved for real errors.
+- **Stub and unimplemented adapters report `prerequisite_missing` / `not_implemented`** once their
+  prerequisites are present instead of running and failing; `failed` is reserved for real errors.
+  `web_backend` is the remaining account-reader stub.
 - **The detailed monthly report stays a Python adapter** run as a subprocess; porting the
   analyzers is out of scope, and the adapter already owns retries, artifacts, and the
   publisher credential.

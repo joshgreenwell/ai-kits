@@ -46,7 +46,7 @@ Neither is a code change. The first is now done:
 
 ### Follow-ups, not release gates (7 + 1 optional)
 
-[USG-027](usg-027-cursor-usage-collection.md), [USG-028](usg-028-account-allowance-reader.md), [USG-029](usg-029-additional-account-allowance-reader.md), [USG-030](usg-030-organization-usage-and-cost-reader.md), [USG-031](usg-031-additional-organization-usage-and-cost-reader.md), [USG-032](usg-032-cloud-and-browser-token-coverage.md), [USG-033](usg-033-environmental-methodology-research.md) remain Planned; [USG-034](usg-034-optional-compensation-budget.md) waits on the optional compensation-dollar decision. A setting that names one of these readers must never imply it collects: `oauth_usage`, `app_server`, `web_backend`, and both Cursor readers are stubs reporting `not_implemented`.
+[USG-027](usg-027-cursor-usage-collection.md), [USG-028](usg-028-account-allowance-reader.md), [USG-029](usg-029-additional-account-allowance-reader.md), [USG-030](usg-030-organization-usage-and-cost-reader.md), [USG-031](usg-031-additional-organization-usage-and-cost-reader.md), [USG-032](usg-032-cloud-and-browser-token-coverage.md), [USG-033](usg-033-environmental-methodology-research.md) remain Planned; [USG-034](usg-034-optional-compensation-budget.md) waits on the optional compensation-dollar decision. Adapters for Cursor local/hosted, Codex app-server, Claude OAuth, and OpenAI/Anthropic Admin usage/cost are implemented in this checkout; `web_backend` stays unimplemented. A setting that names one of those readers must never imply a production receipt: the tasks stay Planned until a real authorized account reading is stored and shown.
 
 
 ## Delivery scope
@@ -185,8 +185,8 @@ Every implementation task inherits these requirements:
 | Reset calendar/feed relocation and settings diagnostics | [USG-024](usg-024-reset-calendar-and-feed-relocation.md) |
 | End-to-end activation, scheduled evidence, backfill, and safe retirement | [USG-025](usg-025-activate-backfill-and-verify-release.md), [USG-026](usg-026-retire-redundant-usage-pipelines.md) |
 | Cursor readers | [USG-027](usg-027-cursor-usage-collection.md) |
-| Account allowance-reader stubs | [USG-028](usg-028-account-allowance-reader.md), [USG-029](usg-029-additional-account-allowance-reader.md) |
-| Organization API usage/cost-reader stubs | [USG-030](usg-030-organization-usage-and-cost-reader.md), [USG-031](usg-031-additional-organization-usage-and-cost-reader.md) |
+| Account allowance readers | [USG-028](usg-028-account-allowance-reader.md), [USG-029](usg-029-additional-account-allowance-reader.md) |
+| Organization API usage/cost | [USG-030](usg-030-organization-usage-and-cost-reader.md), [USG-031](usg-031-additional-organization-usage-and-cost-reader.md) |
 | Missing cloud/browser token sources | [USG-032](usg-032-cloud-and-browser-token-coverage.md) |
 | Better future environmental methodology | [USG-033](usg-033-environmental-methodology-research.md) |
 | Optional estimated compensation dollars | [USG-034](usg-034-optional-compensation-budget.md) |

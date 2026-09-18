@@ -4,6 +4,31 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
 
 ## Unreleased
 
+- Cursor hosted allowance splits Auto vs API from each named `*PercentUsed` field on
+  `/api/usage-summary` (skipping combined `totalPercentUsed` when those pools exist). Hosted
+  events store a token total equal to the exclusive classes present so Tokens can count them;
+  the event `model` is stored as reported. The statusline hook and Claude OAuth reader accept
+  Claude Code's `limits` array (`weekly_scoped` → `seven_day_<slug>`), so Fable's extra weekly
+  window does not require the website. Grok 4.6 list prices live in the xAI pricing catalog;
+  models without a rate still keep their token columns. `allowance.claude_oauth_keepalive`
+  (off by default) may spawn Claude Code invisibly (`claude auth status`) so Claude Code
+  refreshes its own OAuth store; Observatory never POSTs a refresh_token. `oauth_usage`
+  still falls back to statusline, and Connections / Allowances say so when OAuth failed.
+- Provider coverage (USG-027–031): Cursor local counters and hosted usage/allowance, Codex
+  app-server rate limits, Claude OAuth usage, and OpenAI/Anthropic Admin usage and cost. Parser
+  versions `+cursor-local1`, `+cursor-hosted1`, `+appserver1`, and `+admin-usage1`; Claude OAuth
+  keeps `+statusline1`. Cursor hosted reads `GET https://cursor.com/api/usage-summary` and
+  `POST /api/dashboard/get-filtered-usage-events` with `Origin: https://cursor.com`, and current
+  `state.vscdb` builds store session fields as split `cursorAuth/*` scalars. Codex app-server
+  speaks newline-delimited JSON and is discovered from the Windows desktop install when it is
+  not on PATH. `web_backend` stays unimplemented. Tokens query unions `account_usage_buckets`
+  with local hours without summing them as the same work. Tasks stay Planned until a real
+  authorized receipt exists.
+- Windows collection is silent: `service install` registers a Task Scheduler job that starts
+  `observatory.exe` directly (the previous `schtasks /TR` form can wrap the command in `cmd.exe`).
+  The release binary is a Windows-subsystem process, so the scheduled run itself has no window,
+  while a terminal still sees CLI output. Child analyzer processes (`python`, `powershell`) are
+  started with `CREATE_NO_WINDOW`.
 - Capability report: after every online run, and on `setup` / `service install` / `service uninstall`,
   the companion posts a strict `CapabilitiesDocument` (build, implemented adapter modes, features,
   effective settings, recognized deny entries, binding identity states, detailed-report status, the
@@ -40,8 +65,8 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
 - The Claude statusline allowance reader moved from `claude_execution` into `claude_account`
   (parser version `2.0.0+statusline1`, channel `hook_snapshot`, reader `statusline`; record ids
   unchanged). `allowance.claude_reader` now gates that adapter, `off` being the only value that stops
-  it; mode `oauth_usage` keeps the statusline reader running as the documented fallback and reports
-  `partial` / `not_implemented`. The local deny entry `allowance.claude_reader.statusline`, or a
+  it; mode `oauth_usage` also calls the private OAuth usage interface and keeps the statusline
+  reader running as the documented fallback. The local deny entry `allowance.claude_reader.statusline`, or a
   dotted prefix, removes the reader in either mode and holds queued statusline readings on the machine.
   `codex_execution` reports the Codex embedded row.
 - Allowance identity: `observatory statusline` stamps each sample with the account signed in when it

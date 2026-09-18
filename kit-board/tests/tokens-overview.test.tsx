@@ -240,6 +240,19 @@ test('an inconsistent composition withholds shares and a hourly series labels ho
   assert.match(renderToStaticMarkup(<TokensOverview filters={{ ...DEFAULT_FILTERS, resolution: 'hour' }} onFiltersChange={() => {}} result={hourly} vocabulary={vocabulary} error={null} stale={false} loading={false} onRetry={() => {}} now={0} />), /Sat, Sep 5 · 09:00 to 10:00: 100 tokens/);
 });
 
+test('request and tool cards wait instead of flashing empty while their section is still loading', () => {
+  const result = synthetic();
+  result.request_detail = { covered_tokens: 0, covered_calls: 0, coverage: coverage(2_000, 0, 0) };
+  const body = text(render({ result, pending: { requests: true, tools: true } }));
+  assert.match(body, /Loading projects/);
+  assert.match(body, /Loading agents/);
+  assert.match(body, /Loading tool calls/);
+  assert.doesNotMatch(body, /No project evidence in scope/);
+  assert.doesNotMatch(body, /No tool invocations in scope/);
+  assert.match(body, /Request detail … reading request records in the selected range/);
+  assert.match(body, /Observed tokens in the selected scope 2K/, 'the headline from overview stays visible');
+});
+
 test('cost/model tables preserve exact values and a large legend starts readable', () => {
   const result = synthetic();
   const colors = new Map([['m1', 'var(--chart-1)']]);

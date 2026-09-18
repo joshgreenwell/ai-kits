@@ -15,7 +15,7 @@ Collect actual organization API usage and cost where an intended account has the
 
 ## Current gap
 
-The organization adapter is a stub and its aggregate/money ledgers have no verified ingested data in the audit.
+The organization adapter is implemented in this checkout. Aggregate/money ledgers still have no verified ingested production data, so the task stays Planned.
 
 ## Acceptance criteria
 
@@ -33,11 +33,15 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Starting points
 
-- [companion/crates/observatory-adapters/src/stubs.rs](<../../companion/crates/observatory-adapters/src/stubs.rs>)
+- [companion/crates/observatory-adapters/src/openai_api.rs](<../../companion/crates/observatory-adapters/src/openai_api.rs>)
 - [lib/usage-contract.ts](<../../lib/usage-contract.ts>)
 - [lib/usage-store.ts](<../../lib/usage-store.ts>)
 - [docs/usage-coverage.md](<../../docs/usage-coverage.md>)
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+In source as of 2026-09-17. Status stays Planned: criterion 5 needs a real authorized organization-period receipt.
+
+- Decisions: `GET https://api.openai.com/v1/organization/usage/completions` and `/v1/organization/costs` with the Admin key from `secrets.json`. HTTPS only; 401/403 unauthorized, 429 rate limited. Checkpointed `PageCursor` JSON. `measures.input_tokens` is exclusive fresh because complete-state sums exclusive classes. Identity is none: each runnable org binding receives a copy. Codex ChatGPT-plan usage is not in these reports. Tokens query unions `account_usage_buckets` with local hours and never sums them as the same work. Parser `2.0.0+admin-usage1`.
+- Checks: parse fixtures `tests/fixtures/usage-v2/provider/openai-usage.json` and `openai-costs.json`. Collect tests do not hit the live Admin API.
+- Blocker: no real authorized organization receipt. An Admin key is required and is not present in the committed tree.

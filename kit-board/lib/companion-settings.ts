@@ -25,6 +25,7 @@ export const collectionSettingsSchema = z.object({
     claude_reader: z.enum(['off','statusline','oauth_usage']),   // oauth_usage keeps statusline as passive fallback
     codex_reader: z.enum(['off','embedded','app_server','web_backend']),
     cursor_reader: z.enum(['off','usage_summary','dashboard_rpc']),
+    claude_oauth_keepalive: z.boolean().default(false),          // spawn Claude Code so *it* refreshes OAuth; companion never POSTs a refresh
   }).strict(),
   account_history: z.object({ cursor_usage_events: z.boolean(), lookback_days: z.number().int().min(1).max(90) }).strict(),
   billing: z.object({ anthropic_admin_api: z.boolean(), openai_admin_api: z.boolean() }).strict(),
@@ -44,7 +45,7 @@ export const defaultCollectionSettings: CollectionSettings = {
   providers: { claude: true, codex: true, cursor: false, anthropic_api: false, openai_api: false },
   execution: { claude_local_logs: true, codex_local_history: true, cursor_local_state: true, include_subagents: true,
     detail_level: 'buckets_only', tool_detail: 'builtin_only', project_attribution: 'off' },
-  allowance: { claude_reader: 'statusline', codex_reader: 'embedded', cursor_reader: 'off' },
+  allowance: { claude_reader: 'statusline', codex_reader: 'embedded', cursor_reader: 'off', claude_oauth_keepalive: false },
   account_history: { cursor_usage_events: false, lookback_days: 30 },
   billing: { anthropic_admin_api: false, openai_admin_api: false },
   hooks: { claude_statusline: true, cursor_project_hooks: false },
@@ -56,7 +57,19 @@ export const defaultCollectionSettings: CollectionSettings = {
 export function mergeSettings(global?: Partial<CollectionSettings> | null, override?: InstallOverride | null): CollectionSettings {
   const clean = (value: Partial<CollectionSettings> | null | undefined) =>
     Object.fromEntries(Object.entries(value ?? {}).filter(([, v]) => v !== undefined)) as Partial<CollectionSettings>;
-  return { ...defaultCollectionSettings, ...clean(global), ...clean(override), schema_version: 1 };
+  const merged = { ...defaultCollectionSettings, ...clean(global), ...clean(override), schema_version: 1 as const };
+  // A present group still replaces that group; missing keys inside it keep the documented default
+  // so an older stored document without a newly added field still round-trips.
+  return {
+    ...merged,
+    providers: { ...defaultCollectionSettings.providers, ...merged.providers },
+    execution: { ...defaultCollectionSettings.execution, ...merged.execution },
+    allowance: { ...defaultCollectionSettings.allowance, ...merged.allowance },
+    account_history: { ...defaultCollectionSettings.account_history, ...merged.account_history },
+    billing: { ...defaultCollectionSettings.billing, ...merged.billing },
+    hooks: { ...defaultCollectionSettings.hooks, ...merged.hooks },
+    browser: { ...defaultCollectionSettings.browser, ...merged.browser },
+  };
 }
 
 export type Gate = { enabled: boolean; provider_enabled: boolean; mode_path: string };
@@ -122,9 +135,10 @@ export const settingsMatrix: { group: string; rows: SettingRow[] }[] = [
     { path: 'execution.project_attribution', label: 'Project attribution', kind: 'select', options: ['off', 'hashed'], note: 'hashed sends a hash of each request’s working directory, never the path; `observatory projects` on the machine maps hash to folder. Local and desktop sessions only; see docs/usage-coverage.md.', requires: { off: 'always', hashed: { feature: 'project_attribution', value: 'hashed' } } },
   ] },
   { group: 'Allowance readers', rows: [
-    { path: 'allowance.claude_reader', label: 'Claude reader', kind: 'select', options: ['off', 'statusline', 'oauth_usage'], note: 'oauth_usage would use your existing Claude Code sign-in (private interface); statusline stays as a fallback.', requires: { off: 'always', statusline: { adapter: 'claude_account', mode: 'statusline' }, oauth_usage: { adapter: 'claude_account', mode: 'oauth_usage' } } },
-    { path: 'allowance.codex_reader', label: 'Codex reader', kind: 'select', options: ['off', 'embedded', 'app_server', 'web_backend'], note: 'embedded reads the rate limits Codex writes into its rollouts; app_server would use the Codex CLI’s own login through its app-server.', requires: { off: 'always', embedded: { adapter: 'codex_execution', mode: 'embedded' }, app_server: { adapter: 'codex_account', mode: 'app_server' }, web_backend: { adapter: 'codex_account', mode: 'web_backend' } } },
-    { path: 'allowance.cursor_reader', label: 'Cursor reader', kind: 'select', options: ['off', 'usage_summary', 'dashboard_rpc'], note: 'usage_summary would use your existing Cursor sign-in (private interface).', requires: { off: 'always', usage_summary: { adapter: 'cursor_account', mode: 'usage_summary' }, dashboard_rpc: { adapter: 'cursor_account', mode: 'dashboard_rpc' } } },
+    { path: 'allowance.claude_reader', label: 'Claude reader', kind: 'select', options: ['off', 'statusline', 'oauth_usage'], note: 'oauth_usage reads allowance metadata (tokens, model, effort, windows) through your existing Claude Code sign-in. Observatory never POSTs a refresh token. Statusline stays as the fallback when OAuth fails, and Connections / Allowances say so.', requires: { off: 'always', statusline: { adapter: 'claude_account', mode: 'statusline' }, oauth_usage: { adapter: 'claude_account', mode: 'oauth_usage' } } },
+    { path: 'allowance.claude_oauth_keepalive', label: 'Keep Claude Code signed in', kind: 'switch', note: 'Only used when the Claude reader is oauth_usage. Spawns Claude Code invisibly (`claude auth status`) so Claude Code refreshes its own store. Off by default. Conversation text is never sent.', requires: { feature: 'claude_oauth_keepalive' } },
+    { path: 'allowance.codex_reader', label: 'Codex reader', kind: 'select', options: ['off', 'embedded', 'app_server', 'web_backend'], note: 'embedded reads the rate limits Codex writes into its rollouts; app_server uses the Codex CLI’s own login through its app-server. web_backend is not implemented.', requires: { off: 'always', embedded: { adapter: 'codex_execution', mode: 'embedded' }, app_server: { adapter: 'codex_account', mode: 'app_server' }, web_backend: { adapter: 'codex_account', mode: 'web_backend' } } },
+    { path: 'allowance.cursor_reader', label: 'Cursor reader', kind: 'select', options: ['off', 'usage_summary', 'dashboard_rpc'], note: 'usage_summary and dashboard_rpc use your existing Cursor sign-in (private interface). Local Cursor counters are not billed.', requires: { off: 'always', usage_summary: { adapter: 'cursor_account', mode: 'usage_summary' }, dashboard_rpc: { adapter: 'cursor_account', mode: 'dashboard_rpc' } } },
   ] },
   { group: 'Account history', rows: [
     { path: 'account_history.cursor_usage_events', label: 'Cursor usage events', kind: 'switch', requires: { feature: 'account_history' } },

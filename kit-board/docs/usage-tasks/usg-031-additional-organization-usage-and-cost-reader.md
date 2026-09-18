@@ -15,7 +15,7 @@ Collect actual organization API usage/cost with the provider's supported groupin
 
 ## Current gap
 
-The organization adapter is unimplemented; settings and contracts alone do not provide billed usage.
+The organization adapter is implemented in this checkout. Settings and contracts still do not by themselves provide billed production usage; the task stays Planned until a verified authorized receipt exists.
 
 ## Acceptance criteria
 
@@ -33,11 +33,15 @@ Apply the common completion requirements in the [backlog index](README.md). This
 
 ## Starting points
 
-- [companion/crates/observatory-adapters/src/stubs.rs](<../../companion/crates/observatory-adapters/src/stubs.rs>)
+- [companion/crates/observatory-adapters/src/anthropic_api.rs](<../../companion/crates/observatory-adapters/src/anthropic_api.rs>)
 - [lib/usage-contract.ts](<../../lib/usage-contract.ts>)
 - [lib/usage-store.ts](<../../lib/usage-store.ts>)
 - [docs/usage-coverage.md](<../../docs/usage-coverage.md>)
 
 ## Execution record
 
-Unstarted. Record changed files, decisions, focused checks, scoped receipts, and remaining blockers here when this task is executed.
+In source as of 2026-09-17. Status stays Planned: criterion 5 needs a verified authorized collection.
+
+- Decisions: `GET https://api.anthropic.com/v1/organizations/usage_report/messages` and `/v1/organizations/cost_report` with the Admin key from `secrets.json` (`anthropic-version: 2023-06-01`). HTTPS only; 401/403 unauthorized, 429 rate limited. Cost `amount` is a cents decimal string. Identity is none: each runnable org binding receives a copy. These reports are API spend only, never Pro or Max subscription usage. Parser `2.0.0+admin-usage1`.
+- Checks: parse fixtures `tests/fixtures/usage-v2/provider/anthropic-usage.json` and `anthropic-costs.json`. Collect tests do not hit the live Admin API.
+- Blocker: no real authorized organization receipt. An Admin key is required and is not present in the committed tree. Individual Console accounts cannot use this API.

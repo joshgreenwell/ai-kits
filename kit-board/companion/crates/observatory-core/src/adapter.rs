@@ -87,6 +87,10 @@ pub struct RunContext {
     /// Claude Code's settings file, read for the installed `statusLine.command`
     /// (never written by a run). Defaults to the profile's file; tests inject one.
     pub claude_settings_path: PathBuf,
+    /// Claude Code OAuth credentials. prepare sets the platform path; tests
+    /// leave this unset so unit tests never read a real sign-in or call the
+    /// private usage interface.
+    pub claude_credentials_path: Option<PathBuf>,
     pub dry_run: bool,
     pub deadline: Instant,
     cancel: Arc<AtomicBool>,
@@ -128,6 +132,7 @@ impl RunContext {
             statusline_inbox,
             hook_inbox,
             claude_settings_path,
+            claude_credentials_path: None,
             dry_run,
             deadline: Instant::now() + budget,
             cancel: Arc::new(AtomicBool::new(false)),
@@ -145,6 +150,13 @@ impl RunContext {
     /// it at a synthetic file so the hook status never depends on the machine.
     pub fn with_claude_settings_path(mut self, path: PathBuf) -> Self {
         self.claude_settings_path = path;
+        self
+    }
+
+    /// The Claude OAuth credentials file used at request time. Production
+    /// `prepare` sets the platform path; tests omit it.
+    pub fn with_claude_credentials_path(mut self, path: Option<PathBuf>) -> Self {
+        self.claude_credentials_path = path;
         self
     }
 

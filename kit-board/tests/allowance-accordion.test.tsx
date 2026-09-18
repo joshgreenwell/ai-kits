@@ -87,6 +87,14 @@ test('expanding an account reveals each window’s burn chart, forecast stats, a
   assert.match(codex, /· Spark</);
 });
 
+test('an OAuth fallback alert is labelled OAuth failed, not identity', () => {
+  const html = render(false, [], { 'claude-a': ['Claude OAuth usage failed on desk: Observatory fell back to the statusline hook.'] });
+  const card = html.slice(html.indexOf('data-testid="account-claude-a"'), html.indexOf('data-testid="account-codex-b"'));
+  assert.match(card, />OAuth failed</);
+  assert.doesNotMatch(card, />identity</);
+  assert.match(card, /fell back to the statusline hook/);
+});
+
 test('the burn chart keeps a newer history-only cycle faint and pauses the seed while stale', () => {
   const rows: LiveQuota[] = [
     q('claude-a', 'five_hour', 'Claude · 5h', '2026-09-09T08:00:00Z', 10, '2026-09-09T12:00:00Z', 300),

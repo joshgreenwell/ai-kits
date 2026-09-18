@@ -32,7 +32,7 @@ use crate::config::{CompanionConfig, ConfigError};
 use crate::discovery;
 use crate::effective::{Effective, effective};
 use crate::http::{Client, ConfigFetch, HttpError};
-use crate::inbox::{prune_statusline_files, statusline_reader_denied};
+use crate::inbox::{oauth_usage_reader_denied, prune_statusline_files, statusline_reader_denied};
 use crate::outbox;
 use crate::paths;
 use crate::pyjson::{digest, epoch_text};
@@ -264,7 +264,13 @@ fn local_identity(binding: &crate::config::LocalBinding) -> Option<Sha256Hex> {
             .or_else(paths::codex_home)
             .and_then(|home| discovery::codex_identity(&home))
             .map(|identity| identity.evidence_hash),
-        Provider::Cursor | Provider::AnthropicApi | Provider::OpenaiApi => None,
+        Provider::Cursor => binding
+            .cursor_state_db
+            .clone()
+            .or_else(paths::cursor_state_db)
+            .and_then(|path| discovery::cursor_identity(&path))
+            .map(|identity| identity.evidence_hash),
+        Provider::AnthropicApi | Provider::OpenaiApi => None,
     }
 }
 
@@ -458,7 +464,7 @@ pub fn prepare(config_dir: &Path, options: &RunOptions, take_lock: bool) -> Resu
     for warning in skipped {
         tracing::warn!(code = "resource_invalid", "{warning}");
     }
-    let ctx = ctx.with_resources(resources);
+    let ctx = ctx.with_resources(resources).with_claude_credentials_path(paths::claude_credentials_file());
     Ok(Prepared {
         offline: !options.fetch_config,
         config,
@@ -853,6 +859,13 @@ fn pending_records_for_agent_setting_with_limit(
                         && reading.adapter == AdapterId::ClaudeAccount
                         && reading.reader == Reader::Statusline
                         && local_policy.is_some_and(|policy| statusline_reader_denied(policy.deny))
+                    {
+                        continue;
+                    }
+                    if let Record::AllowanceReading(reading) = &record
+                        && reading.adapter == AdapterId::ClaudeAccount
+                        && reading.reader == Reader::OauthUsage
+                        && local_policy.is_some_and(|policy| oauth_usage_reader_denied(policy.deny))
                     {
                         continue;
                     }
@@ -1367,7 +1380,12 @@ fn build_modes(adapter: AdapterId, implemented: bool) -> Vec<Code> {
     codes(match adapter {
         AdapterId::ClaudeExecution => &["claude_local_logs"],
         AdapterId::CodexExecution => &["codex_local_history", "embedded"],
-        AdapterId::ClaudeAccount => &["statusline"],
+        AdapterId::ClaudeAccount => &["statusline", "oauth_usage"],
+        AdapterId::CodexAccount => &["app_server"],
+        AdapterId::CursorExecution => &["cursor_local_state"],
+        AdapterId::CursorAccount => &["usage_summary", "dashboard_rpc"],
+        AdapterId::AnthropicApi => &["anthropic_admin_api"],
+        AdapterId::OpenaiApi => &["openai_admin_api"],
         _ => &[],
     })
 }
@@ -1461,7 +1479,8 @@ pub fn capabilities_document(
         },
         live_mode: false,
         detailed_monthly_report: true,
-        account_history: false,
+        account_history: true,
+        claude_oauth_keepalive: true,
     };
     let fingerprint = digest(&serde_json::json!([adapter_rows, features]));
     let resource_attribution = if settings.execution.detail_level != DetailLevel::RequestsWithTools {

@@ -12,6 +12,8 @@ import { fetchPrivateJson } from '@/lib/fetch-private-json';
 import { readingFreshness } from '@/lib/allowance-freshness';
 import type { AdapterCoverage } from '@/lib/usage-contract';
 import type { InstallsSummary, InstallSummary } from '@/lib/usage-store';
+import { claudeOauthFailureNotice } from '@/lib/claude-oauth-notice';
+import type { CollectionSettings } from '@/lib/companion-settings';
 
 // The store's own summary shape is the client type, so a field the Connections page renders cannot drift from what the API returns.
 export type InstallsData = Pick<InstallsSummary, 'installs' | 'settings' | 'settings_version' | 'latest_companion_version'> & {
@@ -38,6 +40,28 @@ type Capability = NonNullable<AdapterCoverage['capabilities']>[number];
 const capabilityStatus: Record<Capability['state'], RunStatus> = {
   complete: 'validated', partial: 'incomplete', unsupported: 'incomplete', disabled_by_setting: 'disabled', unknown: 'incomplete',
 };
+
+function allowanceBadgeLabel(capability: { state: string; detail_code?: string | null }) {
+  if (capability.detail_code === 'reader_fallback_statusline') return `allowance ${capability.state} · OAuth failed, using statusline`;
+  if (capability.detail_code === 'credential_expired') return `allowance ${capability.state} · OAuth sign-in expired`;
+  if (capability.detail_code === 'credential_missing') return `allowance ${capability.state} · OAuth sign-in missing`;
+  return `allowance ${capability.state}${capability.detail_code ? ` (${capability.detail_code})` : ''}`;
+}
+
+function ClaudeOauthCallout({ install, global }: { install: InstallSummary; global: CollectionSettings }) {
+  const notice = claudeOauthFailureNotice(install, global);
+  if (!notice) return null;
+  return (
+    <Alert variant="warning">
+      <AlertTitle>{notice.title}</AlertTitle>
+      <AlertDescription>
+        {notice.body}{' '}
+        <Link href="/settings/collection" className="underline underline-offset-4">Collection settings</Link>
+        {' '}has Keep Claude Code signed in.
+      </AlertDescription>
+    </Alert>
+  );
+}
 
 /** The allowance capability row the provider's adapter reported in the latest run, if any. */
 function allowanceCapability(run: InstallSummary['latest_run'], provider: string) {
@@ -237,6 +261,7 @@ export function CompanionInstalls() {
                   />
                   <div className="grid gap-2 px-4 pb-3">
                     <HealthLadder install={install} />
+                    {data && <ClaudeOauthCallout install={install} global={data.settings} />}
                     {install.bindings.map(binding => {
                       const reading = allowanceReading(binding, install.cadence_minutes, now);
                       const capability = allowanceCapability(run, binding.provider);
@@ -251,8 +276,8 @@ export function CompanionInstalls() {
                           {reading ? `last allowance reading ${when(reading.observed_at)} (${reading.reader} · ${reading.stale ? 'stale' : 'fresh'})` : 'no readings yet'}
                         </span>
                         {capability && (
-                          <StatusBadge status={capabilityStatus[capability.state]} title={`${capability.adapter} · allowance ${capability.state}`}>
-                            allowance {capability.state}{capability.detail_code ? ` (${capability.detail_code})` : ''}
+                          <StatusBadge status={capabilityStatus[capability.state]} title={`${capability.adapter} · ${allowanceBadgeLabel(capability)}`}>
+                            {allowanceBadgeLabel(capability)}
                           </StatusBadge>
                         )}
                         {binding.v1_active.length > 0 && <Badge variant="soft-warning" title={binding.v1_active.map(v => v.machine_label).join(', ')}>v1 schedule still reporting for this account</Badge>}

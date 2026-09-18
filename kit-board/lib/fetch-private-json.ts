@@ -1,4 +1,4 @@
-/** Tokens `/api/usage-query` scans request and tool detail; the default 8s bound is too tight after request-level collection. */
+/** Tokens `/api/usage-query` still scans request and tool detail on those sections; the default 8s bound is too tight after request-level collection. */
 export const USAGE_QUERY_TIMEOUT_MS = 45_000;
 
 /** Bounded GETs only. Retry a transient failure once; navigation aborts both attempts. */

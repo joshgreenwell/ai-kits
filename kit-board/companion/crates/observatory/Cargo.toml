@@ -17,8 +17,12 @@ path = "src/main.rs"
 default = ["platform-tls"]
 platform-tls = ["observatory-core/platform-tls"]
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = "warn"
 
 [dependencies]
 observatory-contract.workspace = true

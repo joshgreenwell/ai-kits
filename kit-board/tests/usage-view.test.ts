@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_FILTERS, activeFilterChips, clearedFilters, compositionView, customRangeFromDates, hourlyAllowed, hourlyPossible, intervalLabel, parseTokensFilters, queryString, rangeDates, seriesSummary, serializeTokensFilters, whenIn,
+  DEFAULT_FILTERS, activeFilterChips, clearedFilters, compositionView, customRangeFromDates, hourlyAllowed, hourlyPossible, intervalLabel, mergeUsageQuerySection, parseTokensFilters, queryString, rangeDates, seriesSummary, serializeTokensFilters, whenIn,
 } from '../lib/usage-view';
+import type { UsageQueryResult } from '../lib/usage-query';
 
 test('the private URL round-trips the filter state and drops what it does not recognize', () => {
   assert.deepEqual(parseTokensFilters(new URLSearchParams('')), DEFAULT_FILTERS, 'a bare URL is the landing view: month to date, all accounts and projects, daily');
@@ -59,4 +60,31 @@ test('interval labels, series summary, and range helpers follow the display zone
   assert.deepEqual(customRangeFromDates('2026-09-01', '2026-09-07', tz), { start: '2026-09-01T05:00:00.000Z', end: '2026-09-08T05:00:00.000Z' }, 'the end date is inclusive');
   assert.equal(customRangeFromDates('2026-09-07', '2026-09-01', tz), null);
   assert.deepEqual(rangeDates({ start: '2026-09-01T05:00:00.000Z', end: '2026-09-08T05:00:00.000Z' }, tz), { start: '2026-09-01', end: '2026-09-07' });
+});
+
+test('sectioned usage results overlay only the tables that section owns', () => {
+  const emptyCoverage = { unit: 'tokens' as const, headline: 0, eligible: 0, classified: 0, applicable: 0, complete: 0, note: '' };
+  const base = {
+    headline: { total_tokens: 100 },
+    projects: { rows: [] },
+    agents: { rows: [] },
+    request_detail: { covered_tokens: 0 },
+    effort_series: { rows: [] },
+    tools: { invocations: 0 },
+    knowledge: { rows: [], distinct_invocations: 0, note: '' },
+  } as unknown as UsageQueryResult;
+  const requests = {
+    ...base,
+    projects: { rows: [{ state: 'project', label: 'Kit' }], coverage: emptyCoverage, registry: emptyCoverage },
+    request_detail: { covered_tokens: 40, covered_calls: 1, coverage: emptyCoverage },
+    effort_series: { rows: [{ model: 'm1', effort: 'high', points: [] }], coverage: emptyCoverage },
+    tools: { invocations: 9 },
+  } as unknown as UsageQueryResult;
+  const tools = { ...base, tools: { invocations: 3, by_tool: [] }, knowledge: { rows: [{ label: 'Vault' }], distinct_invocations: 1, note: '' } } as unknown as UsageQueryResult;
+  const merged = mergeUsageQuerySection(mergeUsageQuerySection(base, 'requests', requests), 'tools', tools);
+  assert.equal(merged.headline.total_tokens, 100);
+  assert.equal(merged.projects.rows[0].label, 'Kit');
+  assert.equal(merged.request_detail.covered_tokens, 40);
+  assert.equal(merged.tools.invocations, 3, 'tools overlay does not keep the requests placeholder');
+  assert.equal(merged.knowledge.rows[0].label, 'Vault');
 });

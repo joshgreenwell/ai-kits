@@ -1,0 +1,18 @@
+{
+  "data": [
+    {
+      "start_time": 1700000000,
+      "end_time": 1700086400,
+      "results": [
+        {
+          "object": "organization.costs.result",
+          "amount": { "value": 1.23, "currency": "usd" },
+          "line_item": "gpt-4.1",
+          "project_id": "proj_1"
+        }
+      ]
+    }
+  ],
+  "has_more": false,
+  "next_page": null
+}

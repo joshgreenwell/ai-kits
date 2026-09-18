@@ -3,7 +3,7 @@ import { failure, privateHeaders } from '@/lib/http';
 import { parseUsageQuery, usageQuery } from '@/lib/usage-query';
 export const maxDuration = 60;
 
-/** One filtered usage read for every Tokens card (USG-012): scope, headline, series, breakdowns, coverage, and historical fallback. */
+/** Filtered usage read for Tokens. `section=overview|requests|tools` skips tables other cards own; omit it for the full document. */
 export async function GET(request: Request) {
   try {
     await requireSession(); const started = performance.now();

@@ -14,7 +14,7 @@ excerpt-or-raw). No real account, session, prompt, path, or credential appears; 
 | `agent-detail/` | Focused synthetic local-history rows and sidecars for agent identity, lineage, lifecycle, role, model, depth, privacy, and token attribution | agent-lineage adapter tests |
 | `tool-detail/` | Focused synthetic local-history rows for tool invocations and results: several calls per request, built-in, MCP, function, and custom forms, wrappers, duplicates, explicit success/failure/denial, missing results, tool-only turns, caller joins, an unmapped form, and an overlong name | tool-invocation adapter tests |
 | `resource-detail/` | Focused synthetic local-history rows for knowledge-source access against two configured sources with nested roots: explicit path arguments, relative paths resolved from `cwd`/`workdir`, Windows and MSYS forms, `cd` chains, heredocs, opaque scripts, Codex `exec` `tools.*` calls and patch headers, MCP and URL connectors, directory-only false positives, failed/denied/missing results, a duplicate replay, and a subagent call; `PRIVATE SENTINEL` file names and `nested/inner` must never reach a record or the state database | resource-access adapter tests |
-| `provider/<provider>/*.json` | Sanitized provider responses captured by the owner's feasibility checks (section 0 of the handoff); absent until captured | adapter unit tests, browser normalizer tests |
+| `provider/*.json` | Synthetic sanitized provider responses for Cursor, Claude OAuth, Codex app-server, and Admin usage/cost parsers | adapter unit tests |
 
 Regenerate after changing the generator:
 

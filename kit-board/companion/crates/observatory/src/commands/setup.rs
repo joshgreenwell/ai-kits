@@ -1,9 +1,9 @@
 //! `setup`: discovers installed products and stores, reads each signed-in
 //! identity for display, proposes bindings, offers each Obsidian vault as a
-//! knowledge source, asks one question each for the private-interface readers,
-//! the statusline hook, and the schedule, writes bindings and this install's
-//! settings override, runs a dry run, a first publish, and `service install`,
-//! and offers to uninstall a v1 schedule.
+//! knowledge source, asks about the statusline hook and the schedule, writes
+//! bindings and this install's settings override, runs a dry run, a first
+//! publish, and `service install`, and offers to uninstall a v1 schedule.
+//! Hosted Cursor readers stay off until chosen in Settings.
 
 use std::fs;
 use std::path::Path;
@@ -307,8 +307,8 @@ pub fn setup(dir: &Path, args: SetupArgs) -> CommandResult {
     }
 
     // Readers, hook, and schedule: one question each.
-    // The private-interface readers (Claude OAuth usage, Cursor usage summary) are stubs in this
-    // build, so setup never offers them; the statusline and embedded readers need no question.
+    // Hosted readers stay off until chosen in Settings. Local Cursor counters collect when Cursor
+    // is enabled; statusline and embedded readers need no question.
     let mut over = InstallOverride::default();
     if bound.contains(&Provider::Cursor) {
         over.providers = Some(ProviderSwitches {
@@ -318,7 +318,7 @@ pub fn setup(dir: &Path, args: SetupArgs) -> CommandResult {
             anthropic_api: false,
             openai_api: false,
         });
-        println!("  Cursor allowance readers are not implemented in this build; the setting stays off");
+        println!("  Cursor hosted allowance stays off until you pick a reader in Settings");
     }
     if detailed_enabled {
         over.detailed_monthly_report = Some(true);

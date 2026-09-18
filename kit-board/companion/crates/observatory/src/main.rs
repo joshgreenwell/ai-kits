@@ -1,12 +1,15 @@
 //! `observatory`: the Personal Observatory companion. One static binary per
 //! machine that collects AI usage through internal adapters and publishes
 //! envelope v2 to the Observatory. Thin command functions over the library crates.
-#![forbid(unsafe_code)]
+#![cfg_attr(not(windows), forbid(unsafe_code))]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 #![deny(unused_must_use)]
 
 mod cli;
 mod commands;
 mod prompt;
+#[cfg(windows)]
+mod windows_console;
 
 use std::process::ExitCode;
 
@@ -15,6 +18,8 @@ use clap::Parser;
 use crate::cli::{Cli, Command};
 
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    windows_console::attach_parent();
     let cli = Cli::parse();
     // Hooks must cost about a millisecond: no tracing subscriber, no state.
     let fast_path = matches!(cli.command, Command::Statusline(_) | Command::Hook(_));

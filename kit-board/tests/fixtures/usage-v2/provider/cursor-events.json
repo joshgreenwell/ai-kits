@@ -1,0 +1,17 @@
+{
+  "usageEventsDisplay": [
+    {
+      "timestamp": "1725000000000",
+      "model": "composer-1",
+      "kind": "usage-based",
+      "tokenUsage": {
+        "inputTokens": 100,
+        "cacheReadTokens": 20,
+        "outputTokens": 10
+      },
+      "chargedCents": 4
+    }
+  ],
+  "totalUsageEventsCount": 1,
+  "page": 1
+}
