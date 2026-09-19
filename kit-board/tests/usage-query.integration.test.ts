@@ -254,6 +254,10 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     const toolsOnly = await query({ section: 'tools' });
     assert.equal(toolsOnly.tools.invocations, 2);
     assert.equal(toolsOnly.headline.total_tokens, 0, 'tools does not rescan the hourly ledger');
+    assert.deepEqual(toolsOnly.knowledge.rows, [], 'tools does not wait on knowledge-source resolution');
+    const knowledgeOnly = await query({ section: 'knowledge' });
+    assert.deepEqual(knowledgeOnly.knowledge.rows.map(r => [r.label, r.accesses]), [['Fixture vault', 1]]);
+    assert.equal(knowledgeOnly.tools.invocations, 0, 'knowledge does not rescan tool invocations');
     const projectOverview = await query({ projects: projectId, section: 'overview' });
     assert.deepEqual([projectOverview.headline.total_tokens, projectOverview.headline.basis, projectOverview.projects.rows], [170, 'requests', []],
       'detail filters still switch the overview headline without waiting on project rows');

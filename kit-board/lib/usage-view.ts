@@ -85,7 +85,7 @@ export function serializeTokensFilters(filters: TokensFilters): URLSearchParams 
 export const queryString = (filters: TokensFilters) => serializeTokensFilters(filters).toString();
 
 /** Matches `usageQuerySchema.section`. Kept here so the Tokens client never imports the query module. */
-export const USAGE_QUERY_SECTIONS = ['overview', 'requests', 'tools'] as const;
+export const USAGE_QUERY_SECTIONS = ['overview', 'requests', 'tools', 'knowledge'] as const;
 export type UsageQuerySection = (typeof USAGE_QUERY_SECTIONS)[number];
 /** Same TTL as the server process cache; HTTP stays no-store. */
 export const USAGE_QUERY_CACHE_TTL_MS = 5 * 60_000;
@@ -96,7 +96,8 @@ export function mergeUsageQuerySection(base: UsageQueryResult, section: UsageQue
   if (section === 'requests') {
     return { ...base, effort_series: part.effort_series, projects: part.projects, agents: part.agents, request_detail: part.request_detail };
   }
-  return { ...base, tools: part.tools, knowledge: part.knowledge };
+  if (section === 'tools') return { ...base, tools: part.tools };
+  return { ...base, knowledge: part.knowledge };
 }
 
 export function hourlyAllowed(range: { start: string; end: string }) {
