@@ -8,7 +8,7 @@ import {
 import { catalogThresholds, contextBandFor, priceUsage, type ApiEquivalentEstimate, type PricingInputRow } from './usage-pricing';
 import { estimateEnvironment, type CohortInput, type EnvironmentalEstimate, type StoredEstimate } from './environmental-estimate';
 
-export const USAGE_QUERY_SECTIONS = ['overview', 'requests', 'tools'] as const;
+export const USAGE_QUERY_SECTIONS = ['overview', 'requests', 'tools', 'knowledge'] as const;
 export type UsageQuerySection = (typeof USAGE_QUERY_SECTIONS)[number];
 /** Process-local coalescing only; HTTP responses stay private/no-store. */
 export const USAGE_QUERY_CACHE_TTL_MS = 5 * 60_000;
@@ -34,6 +34,12 @@ const USAGE_QUERY_CACHE_MAX = 96;
  * per-request context band when they are the headline. Monthly snapshots are historical fallback
  * only where the hourly ledger has nothing for a crosswalked account and month, and are never
  * expanded into finer detail than they recorded.
+ *
+ * Detail reads never window the whole ledger. They discover keys whose activity falls in the
+ * selected range, rank only those keys' revisions, and resolve project/knowledge identity from
+ * that key set instead of the global resolution views. Tools look up calling requests by the
+ * invocation set they already have; knowledge is its own section so a tool timeout cannot hold
+ * the knowledge card.
  */
 type Sql = ReturnType<typeof postgres>;
 type Row = Record<string, unknown>;
@@ -66,7 +72,7 @@ export const usageQuerySchema = z.object({
   projects: list(z.union([z.uuid(), z.enum(PROJECT_STATES)]), 50),
   agent_scope: z.enum(['all', 'main', 'subagent']).default('all'),
   agents: list(sha256, 50),
-  /** When set, skip tables other cards own. Omitted = the full result (tests and non-Tokens callers). */
+  /** When set, skip tables other cards own. Omitted = the full result (tests and non-Tokens callers). Knowledge is separate from tools so each can finish without the other. */
   section: z.enum(USAGE_QUERY_SECTIONS).optional(),
 }).strict();
 export type UsageQuery = z.infer<typeof usageQuerySchema>;
@@ -274,8 +280,69 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     return { accounts: clone(accounts) as unknown as Meta['accounts'], sources: clone(sources) as unknown as Meta['sources'], coverage: coverageByAccount };
   }
 
-  /** The canonical request population in range with bucket-level filters, plus whether each row matches the detail filters. */
-  function requestCte(p: Params, q: UsageQuery, accounts: string[], range: ResolvedRange) {
+  const rankBy = (alias: string) =>
+    `${CHANNEL_RANK.replaceAll(/\br\./g, `${alias}.`)}, ${IDENTITY_RANK.replaceAll(/\br\./g, `${alias}.`)}, ${alias}.observed_at DESC, ${alias}.received_at DESC, ${alias}.id DESC`;
+
+  /** Project identity for a discovered key set, matching `activity_request_project_resolution` without ranking the whole ledger. */
+  function projectResolvedCte(keysCte: string): string {
+    return `project_candidates AS (
+      SELECT r.account_id, r.semantic_key, r.binding_id, r.provider, r.channel, r.session_identity,
+        r.observed_at, r.received_at, r.id,
+        CASE
+          WHEN r.project_basis IN ('native','working_directory') AND r.project_key IS NOT NULL THEN r.project_basis
+          WHEN r.project_basis = 'none' THEN 'none'
+          WHEN r.project_basis IS NULL AND r.project_key IS NULL AND r.project_hash IS NOT NULL THEN 'working_directory'
+          ELSE 'unknown'
+        END AS effective_project_basis,
+        CASE
+          WHEN r.project_basis IN ('native','working_directory') AND r.project_key IS NOT NULL THEN r.project_key
+          WHEN r.project_basis IS NULL AND r.project_key IS NULL AND r.project_hash IS NOT NULL THEN r.project_hash
+          ELSE NULL
+        END AS effective_project_key
+      FROM personal_hub.activity_requests r
+      JOIN ${keysCte} k ON k.account_id = r.account_id AND k.semantic_key = r.semantic_key
+    ), project_ranked AS (
+      SELECT c.*, b.install_id,
+        row_number() OVER (
+          PARTITION BY c.account_id, c.semantic_key
+          ORDER BY
+            CASE c.effective_project_basis WHEN 'native' THEN 0 WHEN 'working_directory' THEN 1 WHEN 'none' THEN 2 ELSE 3 END,
+            ${rankBy('c')}
+        ) AS prank
+      FROM project_candidates c
+      JOIN personal_hub.companion_bindings b ON b.id = c.binding_id
+    ), project_resolved AS (
+      SELECT p.account_id, p.semantic_key,
+        CASE
+          WHEN p.effective_project_basis = 'none' THEN 'no_project'
+          WHEN p.effective_project_basis = 'unknown' THEN 'unknown'
+          WHEN i.id IS NULL THEN 'unknown'
+          WHEN m.project_id IS NULL THEN 'unassigned'
+          ELSE 'project'
+        END AS project_state,
+        m.project_id,
+        proj.label AS project_label
+      FROM project_ranked p
+      LEFT JOIN personal_hub.usage_project_identities i ON
+        (p.effective_project_basis = 'working_directory' AND i.basis = 'working_directory'
+          AND i.install_id = p.install_id AND i.evidence_key = p.effective_project_key)
+        OR
+        (p.effective_project_basis = 'native' AND i.basis = 'native'
+          AND i.account_id = p.account_id AND i.provider = p.provider AND i.evidence_key = p.effective_project_key)
+      LEFT JOIN LATERAL (
+        SELECT revision.project_id
+        FROM personal_hub.usage_project_mapping_revisions revision
+        WHERE revision.identity_id = i.id
+        ORDER BY revision.revision_order DESC
+        LIMIT 1
+      ) m ON true
+      LEFT JOIN personal_hub.usage_projects proj ON proj.id = m.project_id
+      WHERE p.prank = 1
+    )`;
+  }
+
+  /** Canonical requests for a key set. Discover in-range keys when `keysCte` is omitted; tools pass the invocation callers. */
+  function requestCte(p: Params, q: UsageQuery, accounts: string[], range: ResolvedRange, keysCte?: string) {
     const detail: string[] = [];
     const modelFilter = (column: string) => {
       const named = q.models.filter(m => m !== UNKNOWN);
@@ -308,29 +375,34 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // Revisions of one logical request are ranked over a window widened by a week on each side, so the
     // canonical row is chosen among all its revisions before the exact range, model, and machine filters apply.
     const widen = 7 * 24 * HOUR;
-    const scope = [
-      `r.account_id = ANY(${p.add(accounts)}::text[])`,
-      `r.activity_at >= ${p.add(new Date(range.start - widen).toISOString())}::timestamptz`,
-      `r.activity_at < ${p.add(new Date(range.end + widen).toISOString())}::timestamptz`,
-    ];
+    const keySource = keysCte ?? 'in_range_keys';
+    const discover = keysCte ? '' : `in_range_keys AS (
+      SELECT DISTINCT r.account_id, r.semantic_key
+      FROM personal_hub.activity_requests r
+      WHERE r.account_id = ANY(${p.add(accounts)}::text[])
+        AND r.activity_at >= ${p.add(new Date(range.start).toISOString())}::timestamptz
+        AND r.activity_at < ${p.add(new Date(range.end).toISOString())}::timestamptz
+    ), `;
     const post = [
       `activity_at >= ${p.add(new Date(range.start).toISOString())}::timestamptz`,
       `activity_at < ${p.add(new Date(range.end).toISOString())}::timestamptz`,
       ...(model ? [model.replaceAll('r.model_actual', 'model_actual')] : []),
       ...(q.machines.length ? [`source_id = ANY(${p.add(q.machines)}::uuid[])`] : []),
     ];
-    const text = `ranked AS (
+    const text = `${discover}${projectResolvedCte(keySource)}, ranked AS (
       SELECT r.id, r.account_id, r.provider, r.semantic_key, r.session_hash, r.model_actual, r.activity_at, r.observed_at, r.surface, r.reasoning_effort, r.service_tier, r.speed,
         r.context_window_tokens, r.cache_write_ttl, r.token_state, r.outcome,
         r.input_fresh_tokens, r.input_cached_tokens, r.input_cache_write_tokens, r.output_tokens, r.reasoning_tokens, r.unclassified_tokens, r.observed_total_tokens,
         r.agent_key, r.agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.agent_identity_basis,
         b.source_id, pr.project_state, pr.project_id, pr.project_label,
         ${detail.length ? `(${detail.join(' AND ')})` : 'true'} AS matches,
-        row_number() OVER (PARTITION BY r.account_id, r.semantic_key ORDER BY ${CHANNEL_RANK}, ${IDENTITY_RANK}, r.observed_at DESC, r.received_at DESC, r.id DESC) AS rank
+        row_number() OVER (PARTITION BY r.account_id, r.semantic_key ORDER BY ${rankBy('r')}) AS rank
       FROM personal_hub.activity_requests r
+      JOIN ${keySource} k ON k.account_id = r.account_id AND k.semantic_key = r.semantic_key
       JOIN personal_hub.companion_bindings b ON b.id = r.binding_id
-      LEFT JOIN personal_hub.activity_request_project_resolution pr ON pr.account_id = r.account_id AND pr.semantic_key = r.semantic_key
-      WHERE ${scope.join(' AND ')}
+      LEFT JOIN project_resolved pr ON pr.account_id = r.account_id AND pr.semantic_key = r.semantic_key
+      WHERE r.activity_at >= ${p.add(new Date(range.start - widen).toISOString())}::timestamptz
+        AND r.activity_at < ${p.add(new Date(range.end + widen).toISOString())}::timestamptz
     ), requests AS (SELECT * FROM ranked WHERE rank = 1 AND ${post.join(' AND ')})`;
     return { text, detailFilters: detail.length > 0 };
   }
@@ -366,15 +438,20 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const wantOverview = allSections || q.section === 'overview';
     const wantRequests = allSections || q.section === 'requests';
     const wantTools = allSections || q.section === 'tools';
+    const wantKnowledge = allSections || q.section === 'knowledge';
     // Overview is the hourly ledgers and snapshots. Requests own activity_requests group-bys.
-    // Tools own tool_events and knowledge. Detail filters make requests the headline, so overview
-    // then also ranks activity_requests — still skipping tool tables until that section runs.
+    // Tools own tool_events; knowledge owns resource accesses. Detail filters make requests the
+    // headline, so overview then also ranks activity_requests — still skipping tool tables.
     const needBuckets = wantOverview || wantRequests;
-    const needRequestTable = wantRequests || wantTools || (wantOverview && useRequests);
+    const needRequestTable = wantRequests || (wantOverview && useRequests);
     const needRequestPeriods = (wantOverview && useRequests) || wantRequests;
     const needRequestGroups = wantRequests;
     const needRequestPricing = wantOverview && useRequests;
     const needAgentEvidence = wantRequests || (wantOverview && useRequests);
+    const prepareRead = async (tx: { unsafe: Sql['unsafe'] }) => {
+      await tx.unsafe(`SET LOCAL statement_timeout = '20s'`);
+      await tx.unsafe(`SET LOCAL jit = off`);
+    };
 
     // 1. Canonical buckets by period and model. A bucket counts only when it lies wholly inside the range,
     //    the current hour being the one exception while the range is anchored to now.
@@ -422,8 +499,8 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       notes.push('Provider-reported account usage is included for Cursor and organization API accounts and is not added to local Claude or Codex hourly buckets.');
     }
 
-    // 2–5. Canonical requests once, then cheap group-bys. Rebuilding the ranked CTE for every card
-    // timed out after request-with-tools collection (statement bound 5s, browser bound 8s).
+    // 2–5. Rank only in-range request keys, then cheap group-bys. Tools and knowledge are their own
+    // transactions so they never rebuild the request ledger and can finish independently.
     const thresholds = catalogThresholds();
     const loggedInput = 'coalesce(r.input_fresh_tokens, 0) + coalesce(r.input_cached_tokens, 0) + coalesce(r.input_cache_write_tokens, 0)';
     const rangeStartIso = new Date(range.start).toISOString();
@@ -440,8 +517,8 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       knowledgeTotal: { distinct_invocations: 0 } as Row,
       agentEvidence: { spawns: 0, observed_children: 0, conversations: 0 } as Row,
     };
-    const detail = accounts.length && needRequestTable ? await db.begin(async tx => {
-      await tx.unsafe(`SET LOCAL statement_timeout = '40s'`);
+    const requestDetail = accounts.length && needRequestTable ? await db.begin(async tx => {
+      await prepareRead(tx);
       const rp = new Params();
       const cte = requestCte(rp, q, accounts, range);
       await tx.unsafe(`CREATE TEMP TABLE _usage_requests ON COMMIT DROP AS WITH ${cte.text} SELECT * FROM requests`, rp.values);
@@ -477,56 +554,6 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           sum(r.observed_total_tokens)::float8 AS total_tokens, count(*)::int AS calls
         FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY 3`, effortP.values) : [];
 
-      const tp = new Params();
-      const toolRows = wantTools ? await tx.unsafe(`WITH canonical_invocations AS (
-          SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.tool_name, t.tool_class, t.tool_namespace, t.caller_agent_key, t.caller_request_key, t.outcome, t.session_hash, t.observed_at, b.source_id
-          FROM personal_hub.tool_events t JOIN personal_hub.companion_bindings b ON b.id = t.binding_id
-          WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${tp.add(accounts)}::text[])
-            AND t.observed_at >= ${tp.add(widenStartIso)}::timestamptz AND t.observed_at < ${tp.add(widenEndIso)}::timestamptz
-          ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
-        ), invocations AS (
-          SELECT * FROM canonical_invocations
-          WHERE observed_at >= ${tp.add(rangeStartIso)}::timestamptz AND observed_at < ${tp.add(rangeEndIso)}::timestamptz
-            ${q.machines.length ? `AND source_id = ANY(${tp.add(q.machines)}::uuid[])` : ''}
-            ${q.agents.length ? `AND caller_agent_key = ANY(${tp.add(q.agents)}::text[])` : ''}
-        ), results AS (
-          SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.outcome
-          FROM personal_hub.tool_events t WHERE t.event_kind = 'result' AND t.account_id = ANY(${tp.add(accounts)}::text[])
-            AND t.observed_at >= ${tp.add(widenStartIso)}::timestamptz AND t.observed_at < ${tp.add(widenEndIso)}::timestamptz
-          ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
-        ), joined AS (
-          SELECT i.*, coalesce(res.outcome, i.outcome) AS final_outcome, r.model_actual AS caller_model, r.agent_name AS caller_name, r.agent_class AS caller_class, r.matches
-          FROM invocations i LEFT JOIN results res ON res.account_id = i.account_id AND res.invocation_key = i.invocation_key
-          LEFT JOIN _usage_requests r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key)
-        SELECT tool_name, tool_class, tool_namespace, caller_agent_key, caller_name, caller_class, caller_model, final_outcome AS outcome,
-          (caller_request_key IS NOT NULL) AS has_caller_request, count(*)::int AS invocations
-        FROM joined ${useRequests ? 'WHERE matches' : ''} GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9`, tp.values) : [];
-
-      const kp = new Params();
-      const knowledgeRows = wantTools ? await tx.unsafe(`WITH accesses AS (
-          SELECT a.account_id, a.invocation_key, a.access_kind, a.current_configuration, a.source_id, a.source_label, a.source_state, a.identity_id
-          FROM personal_hub.resource_access_source_resolution a
-          WHERE a.account_id = ANY(${kp.add(accounts)}::text[]) AND a.observed_at >= ${kp.add(rangeStartIso)}::timestamptz AND a.observed_at < ${kp.add(rangeEndIso)}::timestamptz
-        ), invocations AS (
-          SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.session_hash, t.caller_agent_key
-          FROM personal_hub.tool_events t WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${kp.add(accounts)}::text[])
-            AND t.observed_at >= ${kp.add(widenStartIso)}::timestamptz AND t.observed_at < ${kp.add(widenEndIso)}::timestamptz
-          ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC)
-        SELECT a.source_id, a.source_label, coalesce(a.source_state, 'unknown') AS state, CASE WHEN a.source_id IS NULL THEN a.identity_id END AS identity_id,
-          count(*) FILTER (WHERE a.current_configuration)::int AS accesses, count(*) FILTER (WHERE NOT a.current_configuration)::int AS earlier_configuration_accesses,
-          count(DISTINCT a.invocation_key) FILTER (WHERE a.current_configuration)::int AS distinct_invocations,
-          count(DISTINCT i.session_hash) FILTER (WHERE a.current_configuration)::int AS distinct_sessions,
-          count(DISTINCT i.caller_agent_key) FILTER (WHERE a.current_configuration)::int AS distinct_agents,
-          count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'read')::int AS kind_read,
-          count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'search')::int AS kind_search,
-          count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'write')::int AS kind_write,
-          count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'unknown')::int AS kind_unknown
-        FROM accesses a LEFT JOIN invocations i ON i.account_id = a.account_id AND i.invocation_key = a.invocation_key
-        GROUP BY 1, 2, 3, 4 ORDER BY accesses DESC`, kp.values) : [];
-      const [knowledgeTotal] = wantTools ? await tx.unsafe(`SELECT count(DISTINCT a.invocation_key)::int AS distinct_invocations
-        FROM personal_hub.resource_access_source_resolution a WHERE a.account_id = ANY($1::text[]) AND a.current_configuration AND a.observed_at >= $2::timestamptz AND a.observed_at < $3::timestamptz`,
-        [accounts, rangeStartIso, rangeEndIso]) : [{ distinct_invocations: 0 }];
-
       const gp = new Params();
       const [agentEvidence] = needAgentEvidence ? await tx.unsafe(`WITH events AS (
           SELECT DISTINCT ON (e.account_id, e.semantic_key) e.event_kind, e.agent_key, e.outcome
@@ -540,15 +567,115 @@ export function createUsageQuery(getDatabase?: () => Sql) {
             UNION SELECT r.agent_key FROM _usage_requests r WHERE r.matches AND r.agent_key IS NOT NULL AND (r.agent_depth > 0 OR r.parent_agent_key IS NOT NULL)) children) AS observed_children`, gp.values) : [emptyDetail.agentEvidence];
 
       return {
-        requestPeriodRows, projectRows, agentRows, requestPricingRows, effortRows, toolRows, knowledgeRows,
-        knowledgeTotal: knowledgeTotal ?? { distinct_invocations: 0 },
+        requestPeriodRows, projectRows, agentRows, requestPricingRows, effortRows,
         agentEvidence: agentEvidence ?? { spawns: 0, observed_children: 0, conversations: 0 },
       };
     }) : emptyDetail;
+
+    const toolRows = accounts.length && wantTools ? await db.begin(async tx => {
+      await prepareRead(tx);
+      const tp = new Params();
+      const callers = requestCte(tp, q, accounts, range, 'caller_keys');
+      return tx.unsafe(`WITH in_range_invocations AS (
+          SELECT DISTINCT t.account_id, t.invocation_key
+          FROM personal_hub.tool_events t
+          WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${tp.add(accounts)}::text[])
+            AND t.observed_at >= ${tp.add(rangeStartIso)}::timestamptz AND t.observed_at < ${tp.add(rangeEndIso)}::timestamptz
+        ), canonical_invocations AS (
+          SELECT DISTINCT ON (t.account_id, t.invocation_key)
+            t.account_id, t.invocation_key, t.tool_name, t.tool_class, t.tool_namespace, t.caller_agent_key, t.caller_request_key, t.outcome, t.session_hash, t.observed_at, b.source_id
+          FROM personal_hub.tool_events t
+          JOIN in_range_invocations k ON k.account_id = t.account_id AND k.invocation_key = t.invocation_key
+          JOIN personal_hub.companion_bindings b ON b.id = t.binding_id
+          WHERE t.event_kind = 'invocation'
+            AND t.observed_at >= ${tp.add(widenStartIso)}::timestamptz AND t.observed_at < ${tp.add(widenEndIso)}::timestamptz
+          ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
+        ), invocations AS (
+          SELECT * FROM canonical_invocations
+          WHERE observed_at >= ${tp.add(rangeStartIso)}::timestamptz AND observed_at < ${tp.add(rangeEndIso)}::timestamptz
+            ${q.machines.length ? `AND source_id = ANY(${tp.add(q.machines)}::uuid[])` : ''}
+            ${q.agents.length ? `AND caller_agent_key = ANY(${tp.add(q.agents)}::text[])` : ''}
+        ), results AS (
+          SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.outcome
+          FROM personal_hub.tool_events t
+          JOIN invocations i ON i.account_id = t.account_id AND i.invocation_key = t.invocation_key
+          WHERE t.event_kind = 'result'
+            AND t.observed_at >= ${tp.add(widenStartIso)}::timestamptz AND t.observed_at < ${tp.add(widenEndIso)}::timestamptz
+          ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
+        ), caller_keys AS (
+          SELECT DISTINCT account_id, caller_request_key AS semantic_key
+          FROM invocations WHERE caller_request_key IS NOT NULL
+        ), ${callers.text},
+        joined AS (
+          SELECT i.*, coalesce(res.outcome, i.outcome) AS final_outcome, r.model_actual AS caller_model, r.agent_name AS caller_name, r.agent_class AS caller_class, r.matches
+          FROM invocations i LEFT JOIN results res ON res.account_id = i.account_id AND res.invocation_key = i.invocation_key
+          LEFT JOIN requests r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key)
+        SELECT tool_name, tool_class, tool_namespace, caller_agent_key, caller_name, caller_class, caller_model, final_outcome AS outcome,
+          (caller_request_key IS NOT NULL) AS has_caller_request, count(*)::int AS invocations
+        FROM joined ${useRequests ? 'WHERE matches' : ''} GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9`, tp.values);
+    }) : [];
+
+    const knowledgeDetail = accounts.length && wantKnowledge ? await db.begin(async tx => {
+      await prepareRead(tx);
+      const kp = new Params();
+      await tx.unsafe(`CREATE TEMP TABLE _usage_accesses ON COMMIT DROP AS
+        WITH in_range_accesses AS (
+          SELECT DISTINCT a.account_id, a.semantic_key
+          FROM personal_hub.resource_accesses a
+          WHERE a.account_id = ANY(${kp.add(accounts)}::text[])
+            AND a.observed_at >= ${kp.add(rangeStartIso)}::timestamptz AND a.observed_at < ${kp.add(rangeEndIso)}::timestamptz
+        ), canonical_accesses AS (
+          SELECT DISTINCT ON (a.account_id, a.semantic_key)
+            a.account_id, a.binding_id, a.invocation_key, a.resource_key, a.configuration_version, a.access_kind, a.observed_at, a.semantic_key
+          FROM personal_hub.resource_accesses a
+          JOIN in_range_accesses k ON k.account_id = a.account_id AND k.semantic_key = a.semantic_key
+          ORDER BY a.account_id, a.semantic_key, a.observed_at DESC, a.received_at DESC, a.id DESC
+        )
+        SELECT c.account_id, c.invocation_key, c.access_kind,
+          (c.configuration_version IS NOT DISTINCT FROM i.configuration_version) AS current_configuration,
+          m.source_id, s.label AS source_label,
+          CASE WHEN i.id IS NULL THEN 'unknown' WHEN m.source_id IS NULL THEN 'unassigned' ELSE 'source' END AS source_state,
+          CASE WHEN m.source_id IS NULL THEN i.id END AS identity_id
+        FROM canonical_accesses c
+        JOIN personal_hub.companion_bindings b ON b.id = c.binding_id
+        LEFT JOIN personal_hub.usage_knowledge_source_identities i
+          ON i.install_id = b.install_id AND i.resource_key = c.resource_key
+        LEFT JOIN LATERAL (
+          SELECT revision.source_id
+          FROM personal_hub.usage_knowledge_source_mapping_revisions revision
+          WHERE revision.identity_id = i.id
+          ORDER BY revision.revision_order DESC
+          LIMIT 1
+        ) m ON true
+        LEFT JOIN personal_hub.usage_knowledge_sources s ON s.id = m.source_id
+        WHERE c.observed_at >= ${kp.add(rangeStartIso)}::timestamptz AND c.observed_at < ${kp.add(rangeEndIso)}::timestamptz`, kp.values);
+      const ip = new Params();
+      const knowledgeRows = await tx.unsafe(`WITH invocations AS (
+          SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.session_hash, t.caller_agent_key
+          FROM personal_hub.tool_events t
+          JOIN (SELECT DISTINCT account_id, invocation_key FROM _usage_accesses) k ON k.account_id = t.account_id AND k.invocation_key = t.invocation_key
+          WHERE t.event_kind = 'invocation'
+            AND t.observed_at >= ${ip.add(widenStartIso)}::timestamptz AND t.observed_at < ${ip.add(widenEndIso)}::timestamptz
+          ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC)
+        SELECT a.source_id, a.source_label, coalesce(a.source_state, 'unknown') AS state, a.identity_id,
+          count(*) FILTER (WHERE a.current_configuration)::int AS accesses, count(*) FILTER (WHERE NOT a.current_configuration)::int AS earlier_configuration_accesses,
+          count(DISTINCT a.invocation_key) FILTER (WHERE a.current_configuration)::int AS distinct_invocations,
+          count(DISTINCT i.session_hash) FILTER (WHERE a.current_configuration)::int AS distinct_sessions,
+          count(DISTINCT i.caller_agent_key) FILTER (WHERE a.current_configuration)::int AS distinct_agents,
+          count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'read')::int AS kind_read,
+          count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'search')::int AS kind_search,
+          count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'write')::int AS kind_write,
+          count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'unknown')::int AS kind_unknown
+        FROM _usage_accesses a LEFT JOIN invocations i ON i.account_id = a.account_id AND i.invocation_key = a.invocation_key
+        GROUP BY 1, 2, 3, 4 ORDER BY accesses DESC`, ip.values);
+      const [knowledgeTotal] = await tx.unsafe(`SELECT count(DISTINCT invocation_key)::int AS distinct_invocations FROM _usage_accesses WHERE current_configuration`);
+      return { knowledgeRows, knowledgeTotal: knowledgeTotal ?? { distinct_invocations: 0 } };
+    }) : { knowledgeRows: emptyDetail.knowledgeRows, knowledgeTotal: emptyDetail.knowledgeTotal };
+
     const {
-      requestPeriodRows, projectRows, agentRows, requestPricingRows, effortRows, toolRows, knowledgeRows,
-      knowledgeTotal, agentEvidence,
-    } = detail;
+      requestPeriodRows, projectRows, agentRows, requestPricingRows, effortRows, agentEvidence,
+    } = requestDetail;
+    const { knowledgeRows, knowledgeTotal } = knowledgeDetail;
 
     // Hourly buckets already have model, Chicago date, and exclusive composition. Missing tier is assumed
     // Standard; the hour is not a single request, so the short context band is used rather than a summed input.

@@ -218,7 +218,7 @@ function KnowledgeSources({ result }: { result: UsageQueryResult }) {
 }
 
 /** USG-022: the final Tokens card - deduplicated tool invocations, their callers and outcomes, then the knowledge-source area. */
-export function ToolKnowledgeCard({ result, loading }: { result: UsageQueryResult; loading?: boolean }) {
+export function ToolKnowledgeCard({ result, loading, knowledgeLoading }: { result: UsageQueryResult; loading?: boolean; knowledgeLoading?: boolean }) {
   if (loading) {
     return (
       <Card className="gap-0 overflow-hidden py-0" aria-label="Tool calls and knowledge sources" aria-busy="true">
@@ -226,7 +226,7 @@ export function ToolKnowledgeCard({ result, loading }: { result: UsageQueryResul
           <CardTitle className="text-base">Tool calls and knowledge sources</CardTitle>
           <CardDescription>Reported tool invocations in scope, who issued them, and which knowledge sources they reached.</CardDescription>
         </CardHeader>
-        <EmptyState title="Loading tool calls…" description="Reading tool events and knowledge-source access in the selected range." className="m-4" />
+        <EmptyState title="Loading tool calls…" description="Reading tool events in the selected range." className="m-4" />
       </Card>
     );
   }
@@ -289,7 +289,13 @@ export function ToolKnowledgeCard({ result, loading }: { result: UsageQueryResul
           </div>
         </div>
       </div>
-      <KnowledgeSources result={result} />
+      {knowledgeLoading
+        ? (
+          <section className="border-border grid gap-3 border-t p-4" aria-label="Knowledge sources" aria-busy="true">
+            <EmptyState title="Loading knowledge sources…" description="Reading classified access in the selected range." />
+          </section>
+        )
+        : <KnowledgeSources result={result} />}
       <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed" data-testid="tools-footnote">
         Tool invocations, model calls, and agent spawns are three different counts and are never summed. {tools.caller_coverage.note} {tools.outcome_coverage.note} Tool events follow the requests that issued them through the account, project, machine, and agent filters; a model filter cannot be applied to them where no calling request is recorded.
       </p>

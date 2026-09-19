@@ -1,5 +1,5 @@
-/** Tokens `/api/usage-query` still scans request and tool detail on those sections; the default 8s bound is too tight after request-level collection. */
-export const USAGE_QUERY_TIMEOUT_MS = 45_000;
+/** Tokens `/api/usage-query` ranks in-range keys per section; 25s covers a cold statement without a second retry wait. */
+export const USAGE_QUERY_TIMEOUT_MS = 25_000;
 
 /** Bounded GETs only. Retry a transient failure once; navigation aborts both attempts. */
 export async function fetchPrivateJson<T>(url: string, parent: AbortSignal, timeoutMs = 8000, retryTimeout = true): Promise<T> {

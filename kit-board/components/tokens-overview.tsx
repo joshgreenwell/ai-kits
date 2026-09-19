@@ -37,8 +37,8 @@ export type TokensOverviewProps = {
   /** A refresh failed after a result was shown: the last good result stays up and is marked. */
   error: string | null; stale: boolean; loading: boolean; onRetry: () => void; now: number;
   status?: React.ReactNode;
-  /** Request and tool cards load after the headline; omit when the result already includes them. */
-  pending?: { requests?: boolean; tools?: boolean };
+  /** Request, tool, and knowledge cards load after the headline; omit when the result already includes them. */
+  pending?: { requests?: boolean; tools?: boolean; knowledge?: boolean };
 };
 
 /** The Tokens overview; headline cards can render before request and tool sections finish. */
@@ -60,7 +60,7 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
   const shown = { resolution: result?.series.resolution ?? filters.resolution, timezone: result?.scope.range.timezone ?? filters.timezone };
 
   return (
-    <div className="grid gap-6" aria-busy={loading || !!pending?.requests || !!pending?.tools}>
+    <div className="grid gap-6" aria-busy={loading || !!pending?.requests || !!pending?.tools || !!pending?.knowledge}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <UsageFilterBar filters={filters} onChange={onFiltersChange} vocabulary={vocabulary} range={result?.scope.range ?? null} labels={labels} disabled={loading && !result} />
         {status}
@@ -170,7 +170,7 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
           <UsageInsightCards result={result} />
           <EnvironmentalImpact estimate={result.environment} />
           <ProjectAgentBreakdown result={result} filters={filters} onFiltersChange={onFiltersChange} loading={!!pending?.requests} />
-          <ToolKnowledgeCard result={result} loading={!!pending?.tools} />
+          <ToolKnowledgeCard result={result} loading={!!pending?.tools} knowledgeLoading={!!pending?.knowledge} />
 
           <Card className="gap-0 overflow-hidden py-0" aria-label="Coverage and sources">
             <CardHeader className="p-4">
@@ -203,7 +203,7 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
 }
 
 type ProjectsRegistry = { projects: { id: string; label: string }[] };
-type SectionPending = { requests: boolean; tools: boolean };
+type SectionPending = { requests: boolean; tools: boolean; knowledge: boolean };
 
 const clientCache = new Map<string, { expires: number; value: UsageQueryResult }>();
 function cacheKey(query: string, section: UsageQuerySection) { return `${query}|${section}`; }
@@ -215,7 +215,7 @@ function readClientCache(query: string, section: UsageQuerySection) {
   return null;
 }
 function writeClientCache(query: string, section: UsageQuerySection, value: UsageQueryResult) {
-  if (clientCache.size >= 24) clientCache.delete(clientCache.keys().next().value!);
+  if (clientCache.size >= 32) clientCache.delete(clientCache.keys().next().value!);
   clientCache.set(cacheKey(query, section), { expires: Date.now() + USAGE_QUERY_CACHE_TTL_MS, value });
 }
 
@@ -231,7 +231,7 @@ function TokensOverviewLiveInner() {
   const [resultQuery, setResultQuery] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [pending, setPending] = useState<SectionPending>({ requests: true, tools: true });
+  const [pending, setPending] = useState<SectionPending>({ requests: true, tools: true, knowledge: true });
   const [now, setNow] = useState(0);
   const [projects, setProjects] = useState<ProjectsRegistry['projects']>([]);
   const live = useLiveData();
@@ -256,46 +256,38 @@ function TokensOverviewLiveInner() {
       if (document.hidden || inFlight || controller.signal.aborted) return;
       inFlight = true; setNow(Date.now());
       const cached = Object.fromEntries(USAGE_QUERY_SECTIONS.map(section => [section, readClientCache(query, section)])) as Record<UsageQuerySection, UsageQueryResult | null>;
-      if (cached.overview && cached.requests && cached.tools) {
-        setResult(mergeUsageQuerySection(mergeUsageQuerySection(cached.overview, 'requests', cached.requests), 'tools', cached.tools));
-        setResultQuery(query); setError(null); setLoading(false); setPending({ requests: false, tools: false });
+      const overlay = (base: UsageQueryResult) => USAGE_QUERY_SECTIONS.slice(1).reduce(
+        (result, section) => cached[section] ? mergeUsageQuerySection(result, section, cached[section]!) : result, base,
+      );
+      if (cached.overview && cached.requests && cached.tools && cached.knowledge) {
+        setResult(overlay(cached.overview));
+        setResultQuery(query); setError(null); setLoading(false); setPending({ requests: false, tools: false, knowledge: false });
         inFlight = false; return;
       }
       try {
         if (!cached.overview) setLoading(true);
         const overview = cached.overview ?? await loadSection('overview');
         if (controller.signal.aborted) return;
-        let merged = overview;
-        if (cached.requests) merged = mergeUsageQuerySection(merged, 'requests', cached.requests);
-        if (cached.tools) merged = mergeUsageQuerySection(merged, 'tools', cached.tools);
-        setResult(merged); setResultQuery(query); setError(null); setLoading(false);
-        setPending({ requests: !cached.requests, tools: !cached.tools });
-        try {
-          if (!cached.requests) {
-            const requests = await loadSection('requests');
-            if (controller.signal.aborted) return;
-            merged = mergeUsageQuerySection(merged, 'requests', requests);
-            setResult(merged);
+        const merged = { current: overlay(overview) };
+        setResult(merged.current); setResultQuery(query); setError(null); setLoading(false);
+        setPending({ requests: !cached.requests, tools: !cached.tools, knowledge: !cached.knowledge });
+        const later: UsageQuerySection[] = ['requests', 'tools', 'knowledge'];
+        await Promise.all(later.map(async section => {
+          if (cached[section]) {
+            setPending(current => ({ ...current, [section]: false }));
+            return;
           }
-          setPending(current => ({ ...current, requests: false }));
-        } catch (caught) {
-          if (controller.signal.aborted) return;
-          setPending(current => ({ ...current, requests: false }));
-          setError(filterError(caught));
-        }
-        try {
-          if (!cached.tools) {
-            const tools = await loadSection('tools');
+          try {
+            const part = await loadSection(section);
             if (controller.signal.aborted) return;
-            merged = mergeUsageQuerySection(merged, 'tools', tools);
-            setResult(merged);
+            merged.current = mergeUsageQuerySection(merged.current, section, part);
+            setResult(merged.current);
+          } catch (caught) {
+            if (!controller.signal.aborted) setError(filterError(caught));
+          } finally {
+            if (!controller.signal.aborted) setPending(current => ({ ...current, [section]: false }));
           }
-          setPending(current => ({ ...current, tools: false }));
-        } catch (caught) {
-          if (controller.signal.aborted) return;
-          setPending(current => ({ ...current, tools: false }));
-          setError(filterError(caught));
-        }
+        }));
       } catch (caught) {
         if (!controller.signal.aborted) setError(filterError(caught));
       } finally { inFlight = false; if (!controller.signal.aborted) setLoading(false); }
@@ -343,7 +335,7 @@ function TokensOverviewLiveInner() {
   return (
     <TokensOverview filters={filters} onFiltersChange={onFiltersChange} result={result} vocabulary={vocabulary}
       error={error} stale={!!error && !!result} loading={loading || (result !== null && resultQuery !== query)} onRetry={() => retry.current()} now={now || Date.now()}
-      pending={resultQuery === query ? pending : { requests: true, tools: true }}
+      pending={resultQuery === query ? pending : { requests: true, tools: true, knowledge: true }}
       status={<UsageStatusLine data={live.data} now={live.now} error={live.error} />} />
   );
 }

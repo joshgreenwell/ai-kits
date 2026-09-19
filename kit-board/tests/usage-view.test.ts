@@ -80,11 +80,12 @@ test('sectioned usage results overlay only the tables that section owns', () => 
     effort_series: { rows: [{ model: 'm1', effort: 'high', points: [] }], coverage: emptyCoverage },
     tools: { invocations: 9 },
   } as unknown as UsageQueryResult;
-  const tools = { ...base, tools: { invocations: 3, by_tool: [] }, knowledge: { rows: [{ label: 'Vault' }], distinct_invocations: 1, note: '' } } as unknown as UsageQueryResult;
-  const merged = mergeUsageQuerySection(mergeUsageQuerySection(base, 'requests', requests), 'tools', tools);
+  const tools = { ...base, tools: { invocations: 3, by_tool: [] }, knowledge: { rows: [{ label: 'Ignored' }] } } as unknown as UsageQueryResult;
+  const knowledge = { ...base, knowledge: { rows: [{ label: 'Vault' }], distinct_invocations: 1, note: '' } } as unknown as UsageQueryResult;
+  const merged = mergeUsageQuerySection(mergeUsageQuerySection(mergeUsageQuerySection(base, 'requests', requests), 'tools', tools), 'knowledge', knowledge);
   assert.equal(merged.headline.total_tokens, 100);
   assert.equal(merged.projects.rows[0].label, 'Kit');
   assert.equal(merged.request_detail.covered_tokens, 40);
   assert.equal(merged.tools.invocations, 3, 'tools overlay does not keep the requests placeholder');
-  assert.equal(merged.knowledge.rows[0].label, 'Vault');
+  assert.equal(merged.knowledge.rows[0].label, 'Vault', 'knowledge is its own overlay, not carried on the tools section');
 });
