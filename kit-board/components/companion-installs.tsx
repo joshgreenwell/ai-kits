@@ -189,7 +189,11 @@ export function CompanionInstalls() {
                   <Badge variant={remaining > 0 ? 'soft' : 'outline'}>{remaining > 0 ? `expires in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}` : 'expired'}</Badge>
                 </div>
                 {remaining > 0 && (code.kind === 'browser' ? (
-                  <p className="text-muted-foreground text-xs leading-relaxed">Open the browser collector’s options page and paste the code. Then confirm each site you want collected.</p>
+                  <p className="text-muted-foreground text-xs leading-relaxed">
+                    In the browser profile that is signed into claude.ai, open the options page of the <em>Personal Observatory · Claude quota</em> extension
+                    (version 2.0.0, loaded unpacked from <code>browser/claude-quota</code>), paste this code under <em>Pair</em>, then find the signed-in Claude account and
+                    bind one organization to an Observatory account id. The install appears below after its first upload. Setup and per-profile cutover: <code>browser/claude-quota/README.md</code>.
+                  </p>
                 ) : (
                   <>
                     <pre className="bg-muted border-border text-muted-foreground overflow-x-auto rounded-lg border p-3 font-mono text-xs">{`observatory connect --url ${origin} --code ${code.code}\nobservatory setup`}</pre>
@@ -242,7 +246,9 @@ export function CompanionInstalls() {
                       {run && <span className="mt-0.5 block">{run.accepted_buckets} buckets · {run.accepted_records} records accepted · {run.rejected_records} rejected</span>}
                       {run && Object.keys(install.accepted_by_type).length > 0 && <span className="mt-0.5 block">{acceptedByTypeText(install.accepted_by_type)}</span>}
                       <span className="mt-0.5 block">
-                        {install.capabilities.current
+                        {install.kind === 'browser'
+                          ? `browser collector · reads allowance windows from the signed-in claude.ai tab at the ${install.cadence_minutes} min cadence while the profile is open · no capability document (health comes from each run's coverage and the readings ledger)`
+                          : install.capabilities.current
                           ? `capabilities reported ${when(install.capabilities.reported_at)} by ${install.capabilities.document?.companion_version} · build ${install.capabilities.digest?.slice(0, 12)} · schedule ${install.schedule.state}${install.schedule.installed_interval_minutes !== null ? ` every ${install.schedule.installed_interval_minutes} min` : ''}${install.schedule.config_dir_pinned === false ? ' · config dir not pinned' : ''} · queue ${install.capabilities.document?.queue.records_pending ?? 0} pending, ${install.capabilities.document?.queue.outbox_envelopes ?? 0} envelopes · backfill since ${install.capabilities.document?.backfill.since ?? '—'}${install.capabilities.document?.backfill.complete ? '' : ' (in progress)'}`
                           : install.capabilities.reason === 'never_reported' ? 'no capability report yet: update the companion and run it once' : `capability report not current (${install.capabilities.reason}${install.capabilities.document ? `, from ${install.capabilities.document.companion_version} ${when(install.capabilities.reported_at)}` : ''})`}
                       </span>
@@ -306,7 +312,7 @@ export function CompanionInstalls() {
           </ListRows>
         ) : (
           <div className="p-4">
-            <EmptyState title="No companion installs yet" description="Issue a pairing code above, then run `observatory connect` and `observatory setup` on the machine. Installs appear here after their first publish." />
+            <EmptyState title="No companion installs yet" description="Issue a pairing code above, then run `observatory connect` and `observatory setup` on the machine, or pair the browser collector from its options page. Installs appear here after their first publish." />
           </div>
         )}
       </Card>
