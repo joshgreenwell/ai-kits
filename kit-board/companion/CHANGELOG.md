@@ -4,6 +4,17 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
 
 ## Unreleased
 
+- Outbox: a body the Observatory refuses on its content (a 4xx other than 401, 403, 408, or
+  429, or a receipt the companion cannot read) no longer blocks the queue forever. The upload
+  bisects it (coverage first, then halves) until the refused record or bucket stands alone,
+  marks that record `http_<status>` or `invalid_receipt` locally (never retried, like a
+  server rejection), records a refused bucket as published at its refused digest so it stays
+  local until its totals change, drops the isolated body, and continues with the rest of the
+  queue. At most 24 bisections per queued body per run; accepted halves are acknowledged, so
+  the body rebuilt next run only carries what is still unacknowledged. Transport failures,
+  5xx, 408, and 429 still stop the run and retain everything; 401 and 403 stop it because no
+  other body would be accepted. The run summary's `publication` (shown by `status`) gains
+  `rejected_bodies`, `isolated_records`, `isolated_buckets`, `splits`, and `rejection`.
 - Cursor hosted allowance splits Auto vs API from each named `*PercentUsed` field on
   `/api/usage-summary` (skipping combined `totalPercentUsed` when those pools exist). Hosted
   events store a token total equal to the exclusive classes present so Tokens can count them;

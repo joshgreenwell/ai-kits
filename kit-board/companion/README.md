@@ -95,7 +95,12 @@ so the analyzer step skips interpreters under `WindowsApps`; name another one in
    bucket only when its digest changed since the last receipt.
 7. Batch buckets (400), records (1000), and coverage into envelopes under 2 MB; write them to the
    outbox; upload in order; store receipts; delete acknowledged bodies. Per-record rejections are
-   marked with the server's reason and never retried.
+   marked with the server's reason and never retried. A transport failure, 5xx, 408, or 429
+   stops the upload and retains the queue; a 401 or 403 stops it too. Any other 4xx, or an
+   unreadable receipt, is a refusal of that body's content: the body is bisected (coverage
+   first) until the refused record or bucket stands alone, that record is marked
+   `http_<status>` (or `invalid_receipt`) locally, a refused bucket is recorded as published at
+   its refused digest, and the rest of the queue still uploads.
 8. When `detailed_monthly_report` is on, run the v1 analyzer adapter for each binding that names
    it (five-minute budget each; status codes only).
 9. Write a run summary (`status`, `doctor`, `logs/companion.log`).
