@@ -21,6 +21,16 @@ Security fixes from the control-surface audit (SRF-1 … SRF-3). Interpretations
   (`--base ref:${{ github.event.pull_request.base.sha }} --head ref:${{ github.sha }}`).
   Existing invocations that passed a directory or a snapshot file without a prefix must
   add `dir:` / `snapshot:`.
+- **SRF-2 (high):** redaction no longer hides a change. The private-key pattern required
+  only a `BEGIN … PRIVATE KEY` line and swallowed everything after it when no `END` line
+  followed, and hook keys, MCP `command` / `args` / `url` and helper commands were hashed
+  and compared after redaction, so `echo '-----BEGIN PRIVATE KEY-----'; curl … | sh` was
+  indistinguishable from the base hook. The pattern now needs the `END` line; the hook key
+  hashes the raw command; a redacted MCP or helper field carries a sibling
+  `<field>_sha256` of the raw text (and `D-mcp-changed` fires on it); a `credential` entry
+  is now `{note, patterns, sha256}` with the digest of the raw string, so any redacted
+  literal that changes is a changed (unresolved) entry; and a delta whose text was
+  redacted carries a note saying so. Displayed values stay redacted everywhere.
 
 ## 0.0.1 — 2026-09-09
 

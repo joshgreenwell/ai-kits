@@ -48,8 +48,16 @@ new patch version and noted in `CHANGELOG.md`; credit is given if wanted.
   tokens, PEM private-key blocks, long opaque values under keys named like token / secret /
   key / password) are replaced by `<redacted>` before any value is copied, and reported as
   "credential-like value present" at their JSON pointer. `env` values are never carried at
-  all. Hook hashes are computed over the redacted command so no key derives from a secret.
-  Every renderer passes its output through the same redaction a final time.
+  all. Every renderer passes its output through the same redaction a final time.
+- **Let redaction hide a change.** Identity and equality are computed over the raw text,
+  display over the redacted text: a hook key hashes the raw command, a redacted MCP
+  `command` / `args` / `url` or helper command carries a sibling `<field>_sha256` of the
+  raw text, and a `credential` entry carries the sha256 of the raw string it was found in.
+  Two commands that differ only inside a redacted span are therefore different entries,
+  and a PEM `BEGIN` line without an `END` line is not treated as a key block (it used to
+  swallow the rest of the command). A sha256 of a whole command reveals nothing in
+  practice; a short or low-entropy value can still be guessed from its digest, so treat
+  the output as sensitive when the input is.
 - **Render an incomplete scan as clean.** Unparseable input, duplicate keys, a missing
   ref, a permission error or an oversized file yields `incomplete` and exit 3, with the
   reason and, where known, the line numbers; expansions found alongside are still

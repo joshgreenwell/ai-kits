@@ -17,7 +17,9 @@
  *  - Slack tokens (`xox[baprs]-…`)
  *  - `Bearer <token>` (the token is redacted, the word `Bearer` is kept);
  *    `Bearer ${VAR}` is a variable reference, not a literal, and is left alone
- *  - PEM private key blocks (`-----BEGIN … PRIVATE KEY-----` through the END line)
+ *  - PEM private key blocks (`-----BEGIN … PRIVATE KEY-----` through the matching END
+ *    line; a BEGIN line without an END line is not a key block and is left alone, so
+ *    that a fake header cannot hide the rest of a command)
  *  - inline `token=…` / `secret=…` / `password=…` / `api_key=…` assignments (16+ chars)
  *  - generic: a whole string value of 32+ hex or base64 characters that sits
  *    under a key whose name contains token / secret / key / password /
@@ -48,7 +50,7 @@ interface LiteralPattern {
 const LITERAL_PATTERNS: readonly LiteralPattern[] = [
   {
     name: "private-key-block",
-    re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+    re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
     keepPrefix: false,
   },
   { name: "aws-access-key-id", re: /\bAKIA[0-9A-Z]{16}\b/g, keepPrefix: false },

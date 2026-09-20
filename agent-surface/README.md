@@ -249,15 +249,15 @@ the diff classifies the deltas.
 | --- | --- | --- |
 | `perm` | `perm:<allow\|ask\|deny>:<canonical rule>` | `{raw, rule, tool, spec, wildcard}` |
 | `mode` | `mode:defaultMode`, `mode:disableBypassPermissionsMode` | `{raw, mode}` |
-| `hook` | `hook:<event>:<matcher>:<sha256(command)>` | `{event, matcher, type, command, prompt, timeout}`; one per hook command, recorded and hashed, never executed |
+| `hook` | `hook:<event>:<matcher>:<sha256(command)>` | `{event, matcher, type, command, prompt, timeout}`; one per hook command, recorded and hashed, never executed. The hash is of the raw command; the displayed `command` is redacted, and a redacted field gains a sibling `command_sha256` / `prompt_sha256` of the raw text |
 | `mcp` | `mcp:<server-name>` | `{transport, type_raw, command, args, url, env_keys, header_keys, extra}`; env and header values are never carried |
 | `dir` | `dir:<path>` (from `permissions.additionalDirectories`) | `{raw, path}` |
 | `sandbox` | `sandbox:<key>` | the value as written |
 | `env_key` | `env_key:<NAME>` (from top-level `env`) | always `"<redacted>"` |
-| `helper` | `helper:<apiKeyHelper\|awsAuthRefresh\|awsCredentialExport\|otelHeadersHelper>` | `{command}` |
+| `helper` | `helper:<apiKeyHelper\|awsAuthRefresh\|awsCredentialExport\|otelHeadersHelper>` | `{command}`, plus `command_sha256` of the raw text when the displayed command was redacted |
 | `plugin_flag` | `plugin_flag:<enabledPlugins\|enableAllProjectMcpServers\|disableAllHooks\|enabledMcpjsonServers\|disabledMcpjsonServers>` | as written; the two server lists carry `{raw, names}` |
 | `unknown` | `unknown:<json_pointer>` | the value as written (redacted); any key the extractor does not model, never dropped |
-| `credential` | `credential:<json_pointer>` | `"credential-like value present"`; the literal is replaced by `<redacted>` everywhere |
+| `credential` | `credential:<json_pointer>` | `{note: "credential-like value present", patterns, sha256}`; the literal is replaced by `<redacted>` everywhere, and `sha256` is the digest of the raw string it was found in, so a literal that changes is a changed entry |
 
 Rule strings are canonicalized so that a reformat never looks like a change
 (`Bash(npm run:*)` and `Bash(npm run *)` share one key; `Bash(npm run)` is a different,
@@ -268,7 +268,13 @@ with exit 3, and an `origin.sha` that is not a commit id is dropped rather than 
 
 Credential-like literals (`sk-…`, `AKIA…`, GitHub and Slack tokens, `Bearer …`, PEM
 private keys, long opaque values under keys named like token/secret/key/password) are
-detected by `src/redact.ts`, which every renderer reuses.
+detected by `src/redact.ts`, which every renderer reuses. Redaction changes what is
+displayed, never what is compared: entry identity and semantic equality are computed over
+the raw text (a hook key hashes the raw command; a redacted MCP `command`, `args` or `url`
+and a redacted helper command carry a sibling `<field>_sha256` of the raw text; a
+`credential` entry carries the digest of the raw string), so two commands that differ only
+inside a redacted span are still different entries. A PEM `BEGIN` line without its `END`
+line is not a key block and is not redacted.
 
 ## Diff shape (`--json`)
 

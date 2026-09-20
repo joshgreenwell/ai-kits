@@ -6,7 +6,7 @@
  *
  *   perm:<allow|ask|deny>:<canonical rule>      value {raw, rule, tool, spec, wildcard}
  *   mode:defaultMode | mode:disableBypassPermissionsMode   value {raw, mode} (mode duplicates raw so a mode change survives the raw-free semantic comparison)
- *   hook:<event>:<matcher>:<sha256(command)>    value {event, matcher, type, command, prompt, timeout}
+ *   hook:<event>:<matcher>:<sha256(raw command)>   value {event, matcher, type, command, prompt, timeout}
  *   mcp:<server-name>                           value {transport, type_raw, command, args, url, env_keys, header_keys, extra}
  *   dir:<path>                                  value {raw, path}
  *   sandbox:<key>                               value = the JSON value as written
@@ -15,7 +15,7 @@
  *   plugin_flag:<enabledPlugins|enableAllProjectMcpServers|disableAllHooks
  *               |enabledMcpjsonServers|disabledMcpjsonServers>                     value as written / {raw, names}
  *   unknown:<json_pointer>                      value = the JSON value as written (redacted)
- *   credential:<json_pointer>                   value "credential-like value present"
+ *   credential:<json_pointer>                   value {note: "credential-like value present", patterns, sha256(raw string)}
  *
  * Every entry carries `file`, `line`, `json_pointer` and `source_sha`.
  * `breadth`, `direction` and `tier` are left `unknown` / `unknown` /
@@ -26,8 +26,13 @@
  *    strings and never executed;
  *  - `env` values and MCP `env` / `headers` values never reach an entry;
  *  - credential-like literals are redacted before any value is copied, so
- *    no entry (and no key) carries one; the hook hash is computed over the
- *    redacted command text for the same reason;
+ *    no entry (and no key) carries one. Identity is still computed over the
+ *    raw text: the hook key hashes the raw command, a redacted `command`,
+ *    `args`, `url` or helper field gets a sibling `<field>_sha256` of the
+ *    raw text, and a credential entry carries the sha256 of the raw string
+ *    it was found in. A sha256 of a whole command reveals nothing, and
+ *    without it two commands that differ only inside a redacted span would
+ *    compare equal (SRF-2);
  *  - unknown keys are surfaced as `unknown` entries, never dropped;
  *  - a shape the extractor cannot use (non-string rule, non-object server,
  *    …) is reported as `incomplete` for that pointer while every other
@@ -92,9 +97,37 @@ function describe(value: JsonValue | undefined): string {
   return typeof value;
 }
 
-/** SHA-256 hex digest of a UTF-8 string. Used for hook identity only. */
+/** SHA-256 hex digest of a UTF-8 string. Used for entry identity (hook keys, redacted-field digests). */
 export function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+/** Digest of a raw value that redaction altered: the string itself, or the JSON of a list. */
+function rawDigest(value: JsonValue): string {
+  return sha256Hex(typeof value === "string" ? value : JSON.stringify(value));
+}
+
+/** The value at an RFC 6901 pointer of `root`, or `undefined`. */
+function valueAt(root: JsonValue, pointer: string): JsonValue | undefined {
+  let current: JsonValue | undefined = root;
+  if (pointer === "") {
+    return current;
+  }
+  for (const token of pointer.split("/").slice(1)) {
+    const key = token.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (Array.isArray(current)) {
+      const index = Number(key);
+      current = Number.isInteger(index) && index >= 0 ? current[index] : undefined;
+    } else if (isObject(current)) {
+      current = current[key];
+    } else {
+      return undefined;
+    }
+    if (current === undefined) {
+      return undefined;
+    }
+  }
+  return current;
 }
 
 /** Stable order: key, then file, then json_pointer (code-unit comparison). */
@@ -119,6 +152,8 @@ class DocumentExtractor {
   readonly entries: Entry[] = [];
   readonly incomplete: Incomplete[] = [];
   readonly notes: string[] = [];
+  /** The parsed document before redaction; read only to compute digests, never copied. */
+  private raw: JsonValue = null;
 
   constructor(
     private readonly doc: Document,
@@ -127,6 +162,31 @@ class DocumentExtractor {
 
   line(pointer: string): number | null {
     return this.doc.parsed.pointers.get(pointer)?.line ?? null;
+  }
+
+  /** The raw string at `pointer`, or `null` when there is none. */
+  rawString(pointer: string): string | null {
+    const value = valueAt(this.raw, pointer);
+    return typeof value === "string" ? value : null;
+  }
+
+  /**
+   * Add `<field>_sha256` to `value` for every named field whose displayed
+   * (redacted) text differs from the raw text at `<pointer>/<field>`, so a
+   * change inside a redacted span is still a change. The digest is of the
+   * raw text; the raw text itself is never copied.
+   */
+  digestRedacted(value: Record<string, JsonValue>, pointer: string, fields: readonly string[]): void {
+    for (const field of fields) {
+      const shown = value[field];
+      const raw = valueAt(this.raw, `${pointer}/${field}`);
+      if (shown === undefined || shown === null || raw === undefined || raw === null) {
+        continue;
+      }
+      if (JSON.stringify(shown) !== JSON.stringify(raw)) {
+        value[`${field}_sha256`] = rawDigest(raw);
+      }
+    }
   }
 
   add(kind: EntryKind, key: string, value: JsonValue, pointer: string): void {
@@ -154,6 +214,7 @@ class DocumentExtractor {
     if (raw === undefined) {
       return; // discovery already reported the parse failure
     }
+    this.raw = raw;
     const redacted = redactTree(raw);
     if (!isObject(redacted.value)) {
       this.fail("", `top level is ${describe(redacted.value)}, expected an object`);
@@ -163,7 +224,13 @@ class DocumentExtractor {
       this.extractSettings(redacted.value);
     }
     for (const finding of redacted.findings) {
-      this.add("credential", `credential:${finding.pointer}`, CREDENTIAL_PRESENT, finding.pointer);
+      const text = this.rawString(finding.pointer);
+      this.add(
+        "credential",
+        `credential:${finding.pointer}`,
+        { note: CREDENTIAL_PRESENT, patterns: [...finding.patterns], sha256: text === null ? null : sha256Hex(text) },
+        finding.pointer,
+      );
     }
   }
 
@@ -314,24 +381,22 @@ class DocumentExtractor {
     const command = hook["command"];
     const prompt = hook["prompt"];
     const timeout = hook["timeout"];
-    const text = typeof command === "string" ? command : typeof prompt === "string" ? prompt : null;
+    // Identity comes from the raw text (the redacted tree has the same shape and types).
+    const text = typeof command === "string" ? this.rawString(`${pointer}/command`) : typeof prompt === "string" ? this.rawString(`${pointer}/prompt`) : null;
     if (text === null) {
       this.fail(pointer, `hook has no string command or prompt (command is ${describe(command)})`);
       return;
     }
-    this.add(
-      "hook",
-      `hook:${event}:${matcher ?? ""}:${sha256Hex(text)}`,
-      {
-        event,
-        matcher,
-        type: typeof type === "string" ? type : null,
-        command: typeof command === "string" ? command : null,
-        prompt: typeof prompt === "string" ? prompt : null,
-        timeout: typeof timeout === "number" ? timeout : null,
-      },
-      pointer,
-    );
+    const value: Record<string, JsonValue> = {
+      event,
+      matcher,
+      type: typeof type === "string" ? type : null,
+      command: typeof command === "string" ? command : null,
+      prompt: typeof prompt === "string" ? prompt : null,
+      timeout: typeof timeout === "number" ? timeout : null,
+    };
+    this.digestRedacted(value, pointer, ["command", "prompt"]);
+    this.add("hook", `hook:${event}:${matcher ?? ""}:${sha256Hex(text)}`, value, pointer);
   }
 
   private extractEnv(value: JsonValue, pointer: string): void {
@@ -370,7 +435,12 @@ class DocumentExtractor {
       this.fail(pointer, `${key} is ${describe(value)}, expected a command string`);
       return;
     }
-    this.add("helper", `helper:${key}`, { command: value }, pointer);
+    const helper: Record<string, JsonValue> = { command: value };
+    const raw = this.rawString(pointer);
+    if (raw !== null && raw !== value) {
+      helper["command_sha256"] = sha256Hex(raw);
+    }
+    this.add("helper", `helper:${key}`, helper, pointer);
   }
 
   private extractPluginFlag(key: string, value: JsonValue, pointer: string): void {
@@ -459,22 +529,19 @@ class DocumentExtractor {
         }
       }
     }
-    this.add(
-      "mcp",
-      `mcp:${name}`,
-      {
-        name,
-        transport,
-        type_raw: typeof typeRaw === "string" ? typeRaw : null,
-        command: typeof command === "string" ? command : null,
-        args: argList,
-        url: typeof url === "string" ? url : null,
-        env_keys: isObject(env) ? Object.keys(env).sort() : null,
-        header_keys: isObject(headers) ? Object.keys(headers).sort() : null,
-        extra: Object.keys(extra).length === 0 ? null : extra,
-      },
-      pointer,
-    );
+    const value: Record<string, JsonValue> = {
+      name,
+      transport,
+      type_raw: typeof typeRaw === "string" ? typeRaw : null,
+      command: typeof command === "string" ? command : null,
+      args: argList,
+      url: typeof url === "string" ? url : null,
+      env_keys: isObject(env) ? Object.keys(env).sort() : null,
+      header_keys: isObject(headers) ? Object.keys(headers).sort() : null,
+      extra: Object.keys(extra).length === 0 ? null : extra,
+    };
+    this.digestRedacted(value, pointer, ["command", "args", "url"]);
+    this.add("mcp", `mcp:${name}`, value, pointer);
   }
 }
 

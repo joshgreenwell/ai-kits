@@ -104,7 +104,7 @@
           "pattern": "^(perm|mode|hook|mcp|dir|sandbox|env_key|helper|plugin_flag|unknown|credential):"
         },
         "value": {
-          "description": "Normalized value. Shape depends on kind (see src/entries.ts). Never carries an env value or a credential-like literal; those are replaced by \"<redacted>\"."
+          "description": "Normalized value. Shape depends on kind (see src/entries.ts). Never carries an env value or a credential-like literal; those are replaced by \"<redacted>\". Identity survives redaction: a hook key hashes the raw command, a redacted command/args/url field has a sibling <field>_sha256 of the raw text, and a credential entry carries the sha256 of the raw string it was found in."
         },
         "breadth": {
           "description": "Breadth of a perm rule; null for every other kind. Set by the interpretations (CS-C); \"unknown\" until then.",

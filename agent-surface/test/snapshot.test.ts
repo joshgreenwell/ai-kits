@@ -222,7 +222,11 @@ describe("snapshot: credential literal never reaches the output (JG-150)", () =>
     const snapshot = parseSnapshot(runCli(["snapshot", "HEAD", "--json"], repo.dir).stdout);
     const credentials = snapshot.entries.filter((entry) => entry.kind === "credential");
     assert.equal(credentials.length, 10);
-    assert.ok(credentials.every((entry) => entry.value === "credential-like value present"));
+    for (const entry of credentials) {
+      const value = entry.value as { note: string; patterns: string[]; sha256: string };
+      assert.equal(value.note, "credential-like value present");
+      assert.match(value.sha256, /^[0-9a-f]{64}$/, entry.key);
+    }
   });
 });
 

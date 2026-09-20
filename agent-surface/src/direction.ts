@@ -251,7 +251,29 @@ function boolValue(entry: Entry | null): boolean | null {
   return entry !== null && typeof entry.value === "boolean" ? entry.value : null;
 }
 
-const MCP_TRANSPORT_FIELDS = ["transport", "command", "args", "url"] as const;
+const MCP_TRANSPORT_FIELDS = ["transport", "command", "args", "url", "command_sha256", "args_sha256", "url_sha256"] as const;
+
+/**
+ * Note for a delta whose entries carry `<field>_sha256` digests: a
+ * credential-like literal was redacted from the displayed text, and the
+ * comparison used the sha256 of the raw text instead (SRF-2).
+ */
+export function redactionNotes(base: Entry | null, head: Entry | null): string[] {
+  const fields = new Set<string>();
+  for (const entry of [base, head]) {
+    if (entry !== null && isObject(entry.value)) {
+      for (const name of Object.keys(entry.value)) {
+        if (name.endsWith("_sha256")) {
+          fields.add(name.slice(0, -"_sha256".length));
+        }
+      }
+    }
+  }
+  if (fields.size === 0) {
+    return [];
+  }
+  return [`credential-like literal redacted in ${[...fields].sort().join(", ")}; compared by sha256 of the raw text, never printed`];
+}
 
 function field(entry: Entry, name: string): JsonValue | null {
   return isObject(entry.value) ? (entry.value[name] ?? null) : null;
@@ -330,6 +352,11 @@ export function classifyDirection(change: ChangeKind, kind: EntryKind, key: stri
   if (change === "moved") {
     return result("D-moved");
   }
+  const classified = classifyByKind(change, kind, key, base, head);
+  return { ...classified, notes: [...classified.notes, ...redactionNotes(base, head)] };
+}
+
+function classifyByKind(change: Exclude<ChangeKind, "moved">, kind: EntryKind, key: string, base: Entry | null, head: Entry | null): DirectionResult {
   switch (kind) {
     case "perm": {
       const subject = head ?? base;

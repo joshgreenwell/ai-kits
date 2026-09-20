@@ -380,7 +380,14 @@ describe("redaction in every renderer (JG-159)", () => {
       assert.ok(text.includes(CREDENTIAL_PRESENT), "finding reported");
       assert.ok(text.includes("<redacted>"), "value redacted");
     }
-    const json = JSON.parse(outputs[1]?.stdout ?? "") as { unresolved: Array<{ kind: string; key: string }> };
+    const json = JSON.parse(outputs[1]?.stdout ?? "") as { unresolved: Array<{ kind: string; key: string; head: { value: { note: string; sha256: string } } | null }> };
+    for (const delta of json.unresolved.filter((item) => item.kind === "credential")) {
+      assert.equal(delta.head?.value.note, CREDENTIAL_PRESENT, delta.key);
+      assert.match(delta.head?.value.sha256 ?? "", /^[0-9a-f]{64}$/, `${delta.key} carries the digest of the raw string, never the string`);
+    }
+    const snapshot = JSON.parse(outputs[4]?.stdout ?? "") as { entries: Array<{ kind: string; key: string; value: { sha256?: string } | string }> };
+    const digests = snapshot.entries.filter((entry) => entry.kind === "credential").map((entry) => (typeof entry.value === "object" ? entry.value.sha256 : undefined));
+    assert.ok(digests.length >= 9 && digests.every((digest) => /^[0-9a-f]{64}$/.test(digest ?? "")), "snapshot --json credential entries carry digests");
     const credentialKeys = json.unresolved.filter((delta) => delta.kind === "credential").map((delta) => delta.key).sort();
     assert.ok(credentialKeys.includes("credential:/env/EXAMPLE_API_KEY"), credentialKeys.join(", "));
     assert.ok(credentialKeys.includes("credential:/env/EXAMPLE_AWS_KEY"));
