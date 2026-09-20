@@ -63,4 +63,14 @@ one control per loader (dual `gen_ai` names, missing usage, malformed
 records, multi-page merge, hex-ID and large-integer preservation). Fixture
 hygiene and a no-network wheel smoke test run in CI.
 
+### Fixed
+
+- OTLP detection: a Collector `file`-exporter output whose first line alone
+  exceeds the 64 KiB detection head was claimed by `otlp-json` (tried first)
+  and failed with `invalid JSON: Extra data` (exit 3). `otlp-json` now scans
+  ahead (bounded at 8 MiB) for a second non-blank line before taking a
+  newline-free head as a single document, and `otlp-jsonl` accepts a first
+  line longer than the head by file size rather than decoded length, so such
+  files load as `otlp-jsonl`.
+
 [0.0.1]: https://github.com/joshgreenwell/ai-kits/releases/tag/agentlint-v0.0.1

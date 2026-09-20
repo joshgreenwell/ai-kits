@@ -55,6 +55,16 @@ SCOPE_NAMESPACE = "otlp"
 """``Event.scope`` namespace holding ``trace_id`` and ``operation_name``."""
 
 _HEAD_BYTES = 65536
+"""How much of a file ``detect`` reads before deciding on its shape."""
+
+_LINE_SCAN_BYTES = 8 * 1024 * 1024
+"""How far past the head ``detect`` looks for a line break when the head holds none.
+
+A Collector file-exporter line can be far longer than the head (one envelope
+with hundreds of spans), so a head without a newline is either a compact
+single-document file or the first of several lines. Only the file itself can
+tell; the scan is bounded so detection stays cheap on a huge single-line file.
+"""
 _ENVELOPE_MARKERS = ('"resourceSpans"', '"instrumentationLibrarySpans"')
 
 
@@ -189,15 +199,54 @@ def read_head(path: Path) -> str:
     return head.decode("utf-8", errors="ignore").lstrip("﻿ \t\r\n")
 
 
+def head_is_partial(path: Path) -> bool:
+    """True when ``path`` is larger than the head :func:`read_head` returns."""
+    return path.stat().st_size > _HEAD_BYTES
+
+
+def has_content_after_first_line(path: Path) -> bool:
+    """Whether a second non-blank line starts within the first ``_LINE_SCAN_BYTES``.
+
+    Meant for a file whose head holds no newline: a line break followed by
+    anything but whitespace means the file is line-delimited. A newline with
+    nothing but whitespace after it (a trailing newline) does not count. Reads
+    at most ``_LINE_SCAN_BYTES`` in chunks; raises ``OSError`` like any read.
+    """
+    remaining = _LINE_SCAN_BYTES - _HEAD_BYTES
+    with path.open("rb") as handle:
+        handle.seek(_HEAD_BYTES)
+        while remaining > 0:
+            chunk = handle.read(min(_HEAD_BYTES, remaining))
+            if not chunk:
+                return False
+            remaining -= len(chunk)
+            index = chunk.find(b"\n")
+            if index < 0:
+                continue
+            tail = chunk[index + 1 :]
+            while not tail.strip() and remaining > 0:
+                tail = handle.read(min(_HEAD_BYTES, remaining))
+                if not tail:
+                    return False
+                remaining -= len(tail)
+            return bool(tail.strip())
+    return False
+
+
 def detect(path: str | Path) -> bool:
     """Cheap sniff: a JSON object mentioning ``resourceSpans``, not line-delimited.
 
     A file whose first line is a complete JSON object followed by more content
     is JSON Lines and is left to ``otlp-jsonl``. A single-line envelope is
-    accepted by both loaders. Never raises.
+    accepted by both loaders. When the head holds no newline and the file is
+    longer than the head, the file is scanned (bounded by ``_LINE_SCAN_BYTES``)
+    for a second non-blank line before it is taken as a single document, so a
+    Collector file whose first line alone exceeds the head is still routed to
+    ``otlp-jsonl``. Never raises.
     """
+    p = Path(path)
     try:
-        head = read_head(Path(path))
+        head = read_head(p)
     except OSError:
         return False
     if not head.startswith("{") or not any(m in head for m in _ENVELOPE_MARKERS):
@@ -209,7 +258,12 @@ def detect(path: str | Path) -> bool:
         except ValueError:
             return True
         return False
-    return True
+    if newline:
+        return True
+    try:
+        return not (head_is_partial(p) and has_content_after_first_line(p))
+    except OSError:
+        return False
 
 
 # --- Envelope walking ------------------------------------------------------

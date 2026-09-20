@@ -189,7 +189,11 @@ with a `dedup_merged` note citing the span.
 * `detect()` accepts a file whose first non-blank line is a complete JSON
   object mentioning `resourceSpans`. A pretty-printed envelope (first line
   `{`) belongs to `otlp-json`; a compact single-line envelope is accepted by
-  both loaders and loads identically.
+  both loaders and loads identically. Detection sniffs the first 64 KiB; a
+  first line longer than that is accepted on shape, and `otlp-json` scans
+  ahead (up to 8 MiB) for a second non-blank line before it treats such a
+  file as a single document, so a Collector file whose first envelope alone
+  exceeds the head still loads as `otlp-jsonl`.
 
 ## Configuration
 
