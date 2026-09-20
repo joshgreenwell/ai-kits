@@ -125,8 +125,9 @@ export type UsageQueryResult = {
   tools: { invocations: number; by_tool: { name: string | null; class: string; namespace: string | null; invocations: number; share: number | null }[];
     by_caller: { agent_key: string | null; agent_name: string | null; agent_class: string | null; model: string | null; invocations: number }[];
     by_outcome: Record<string, number>; caller_coverage: Coverage; outcome_coverage: Coverage; unsupported_filters: string[] };
+  /** Access rows follow the same filters as tool invocations: machine from the access's binding, agent from the invocation's caller, detail filters through the calling request. */
   knowledge: { rows: { source_id: string | null; label: string | null; state: string; accesses: number; distinct_invocations: number; distinct_sessions: number; distinct_agents: number;
-      by_access_kind: Record<string, number>; earlier_configuration_accesses: number }[]; distinct_invocations: number; note: string };
+      by_access_kind: Record<string, number>; earlier_configuration_accesses: number }[]; distinct_invocations: number; note: string; unsupported_filters: string[] };
   environmental_inputs: { cohorts: CohortInput[]; coverage: Coverage; note: string };
   /** The API-equivalent estimate over the pricing inputs and the environmental estimate over the cohorts (USG-013). */
   cost: ApiEquivalentEstimate; environment: EnvironmentalEstimate;
@@ -507,9 +508,16 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const rangeEndIso = new Date(range.end).toISOString();
     const widenStartIso = new Date(range.start - 7 * 24 * HOUR).toISOString();
     const widenEndIso = new Date(range.end + 7 * 24 * HOUR).toISOString();
+    // Tool invocations and knowledge accesses share one filter contract: machine from the row's own binding,
+    // agent from the invocation's caller, detail filters through the calling request. A model filter alone has
+    // no request to apply through, so both sections report it rather than guessing.
     const toolUnsupported: string[] = [];
     if (q.models.length) toolUnsupported.push('models');
     if (useRequests) toolUnsupported.push('detail filters apply through the calling request; invocations without a retained caller request are excluded');
+    const knowledgeUnsupported = [...toolUnsupported];
+    // Lifecycle events carry no model, effort, surface, or project and no request to reach one through.
+    const eventUnsupported = [q.models.length && 'models', q.efforts.length && 'efforts', q.surfaces.length && 'surfaces', q.projects.length && 'projects', q.agent_scope !== 'all' && 'agent_scope']
+      .filter((v): v is string => typeof v === 'string');
 
     const emptyDetail = {
       requestPeriodRows: [] as Row[], projectRows: [] as Row[], agentRows: [] as Row[], requestPricingRows: [] as Row[],
@@ -554,11 +562,17 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           sum(r.observed_total_tokens)::float8 AS total_tokens, count(*)::int AS calls
         FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY 3`, effortP.values) : [];
 
+      // Lifecycle events follow the machine filter through their binding and the agent filter through the
+      // event's own agent key; the other filters have no request to apply through (see the agents note).
       const gp = new Params();
       const [agentEvidence] = needAgentEvidence ? await tx.unsafe(`WITH events AS (
           SELECT DISTINCT ON (e.account_id, e.semantic_key) e.event_kind, e.agent_key, e.outcome
-          FROM personal_hub.agent_events e WHERE e.account_id = ANY(${gp.add(accounts)}::text[])
+          FROM personal_hub.agent_events e
+          JOIN personal_hub.companion_bindings b ON b.id = e.binding_id
+          WHERE e.account_id = ANY(${gp.add(accounts)}::text[])
             AND e.observed_at >= ${gp.add(rangeStartIso)}::timestamptz AND e.observed_at < ${gp.add(rangeEndIso)}::timestamptz
+            ${q.machines.length ? `AND b.source_id = ANY(${gp.add(q.machines)}::uuid[])` : ''}
+            ${q.agents.length ? `AND e.agent_key = ANY(${gp.add(q.agents)}::text[])` : ''}
           ORDER BY e.account_id, e.semantic_key, e.observed_at DESC, e.received_at DESC, e.id DESC)
         SELECT (SELECT count(*)::int FROM events WHERE event_kind = 'spawn') AS spawns,
           (SELECT count(DISTINCT r.session_hash)::int FROM _usage_requests r WHERE r.matches) AS conversations,
@@ -617,6 +631,9 @@ export function createUsageQuery(getDatabase?: () => Sql) {
 
     const knowledgeDetail = accounts.length && wantKnowledge ? await db.begin(async tx => {
       await prepareRead(tx);
+      // Accesses follow the machine filter through their own binding, the agent filter through the
+      // invocation's caller, and the detail filters through the calling request, exactly as tool
+      // invocations do, so the two areas of the card describe one scope.
       const kp = new Params();
       await tx.unsafe(`CREATE TEMP TABLE _usage_accesses ON COMMIT DROP AS
         WITH in_range_accesses AS (
@@ -648,15 +665,35 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           LIMIT 1
         ) m ON true
         LEFT JOIN personal_hub.usage_knowledge_sources s ON s.id = m.source_id
-        WHERE c.observed_at >= ${kp.add(rangeStartIso)}::timestamptz AND c.observed_at < ${kp.add(rangeEndIso)}::timestamptz`, kp.values);
+        WHERE c.observed_at >= ${kp.add(rangeStartIso)}::timestamptz AND c.observed_at < ${kp.add(rangeEndIso)}::timestamptz
+          ${q.machines.length ? `AND b.source_id = ANY(${kp.add(q.machines)}::uuid[])` : ''}`, kp.values);
+      // The canonical invocation behind each access carries its session, caller agent, and calling
+      // request. The request join is built only when a detail filter needs it, over the callers of this
+      // access set alone, so the knowledge card never ranks more requests than it reads.
       const ip = new Params();
-      const knowledgeRows = await tx.unsafe(`WITH invocations AS (
-          SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.session_hash, t.caller_agent_key
+      const callers = useRequests ? requestCte(ip, q, accounts, range, 'caller_keys') : null;
+      await tx.unsafe(`CREATE TEMP TABLE _usage_access_invocations ON COMMIT DROP AS
+        WITH invocations AS (
+          SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.session_hash, t.caller_agent_key, t.caller_request_key
           FROM personal_hub.tool_events t
           JOIN (SELECT DISTINCT account_id, invocation_key FROM _usage_accesses) k ON k.account_id = t.account_id AND k.invocation_key = t.invocation_key
           WHERE t.event_kind = 'invocation'
             AND t.observed_at >= ${ip.add(widenStartIso)}::timestamptz AND t.observed_at < ${ip.add(widenEndIso)}::timestamptz
           ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC)
+        ${callers ? `, caller_keys AS (
+          SELECT DISTINCT account_id, caller_request_key AS semantic_key FROM invocations WHERE caller_request_key IS NOT NULL
+        ), ${callers.text}
+        SELECT i.*, r.matches FROM invocations i LEFT JOIN requests r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key`
+        : 'SELECT i.*, true AS matches FROM invocations i'}`, ip.values);
+      // An access whose invocation names no caller agent, or whose calling request was not retained, is
+      // excluded under those filters rather than matched: the same rule the tools area applies.
+      const fp = new Params();
+      const keep = [
+        ...(q.agents.length ? [`i.caller_agent_key = ANY(${fp.add(q.agents)}::text[])`] : []),
+        ...(useRequests ? ['i.matches'] : []),
+      ];
+      const accessFilter = keep.length ? `WHERE ${keep.join(' AND ')}` : '';
+      const knowledgeRows = await tx.unsafe(`
         SELECT a.source_id, a.source_label, coalesce(a.source_state, 'unknown') AS state, a.identity_id,
           count(*) FILTER (WHERE a.current_configuration)::int AS accesses, count(*) FILTER (WHERE NOT a.current_configuration)::int AS earlier_configuration_accesses,
           count(DISTINCT a.invocation_key) FILTER (WHERE a.current_configuration)::int AS distinct_invocations,
@@ -666,9 +703,11 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'search')::int AS kind_search,
           count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'write')::int AS kind_write,
           count(*) FILTER (WHERE a.current_configuration AND a.access_kind = 'unknown')::int AS kind_unknown
-        FROM _usage_accesses a LEFT JOIN invocations i ON i.account_id = a.account_id AND i.invocation_key = a.invocation_key
-        GROUP BY 1, 2, 3, 4 ORDER BY accesses DESC`, ip.values);
-      const [knowledgeTotal] = await tx.unsafe(`SELECT count(DISTINCT invocation_key)::int AS distinct_invocations FROM _usage_accesses WHERE current_configuration`);
+        FROM _usage_accesses a LEFT JOIN _usage_access_invocations i ON i.account_id = a.account_id AND i.invocation_key = a.invocation_key
+        ${accessFilter} GROUP BY 1, 2, 3, 4 ORDER BY accesses DESC`, fp.values);
+      const [knowledgeTotal] = await tx.unsafe(`SELECT count(DISTINCT a.invocation_key)::int AS distinct_invocations
+        FROM _usage_accesses a LEFT JOIN _usage_access_invocations i ON i.account_id = a.account_id AND i.invocation_key = a.invocation_key
+        ${accessFilter ? `${accessFilter} AND` : 'WHERE'} a.current_configuration`, fp.values);
       return { knowledgeRows, knowledgeTotal: knowledgeTotal ?? { distinct_invocations: 0 } };
     }) : { knowledgeRows: emptyDetail.knowledgeRows, knowledgeTotal: emptyDetail.knowledgeTotal };
 
@@ -975,13 +1014,20 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         registry: coverage('tokens', headlineTokens, projectIdentity, projectMapped, 'Registry mapping: tokens carrying a stable project identity that a named project maps.') },
       agents: { rows: agentRowsOut.map(({ role: _role, ...row }) => row),
         summary: { main_tokens: roleTokens('main'), subagent_tokens: roleTokens('subagent'), unattributed_tokens: roleTokens('unattributed'), observed_children: num(agentEvidence.observed_children), spawns: num(agentEvidence.spawns), by_class: byClass },
-        coverage: coverage('tokens', headlineTokens, requestCovered, roleTokens('main') + roleTokens('subagent'), 'Agent attribution: request-covered tokens assigned to a main or child identity; missing identity stays unattributed.') },
+        coverage: coverage('tokens', headlineTokens, requestCovered, roleTokens('main') + roleTokens('subagent'), [
+          'Agent attribution: request-covered tokens assigned to a main or child identity; missing identity stays unattributed.',
+          ...(eventUnsupported.length ? [`Spawn events and lifecycle-observed children follow the machine and agent filters only; the ${eventUnsupported.join(', ')} filter${eventUnsupported.length > 1 ? 's do' : ' does'} not apply to them.`] : []),
+        ].join(' ')) },
       tools: { invocations: toolTotal, by_tool: [...byTool.values()].map(t => ({ ...t, share: share(t.invocations, toolTotal) })).sort((a, b) => b.invocations - a.invocations),
         by_caller: [...byCaller.values()].sort((a, b) => b.invocations - a.invocations), by_outcome: byOutcome,
         caller_coverage: coverage('invocations', toolTotal, toolTotal, withCaller, 'Reported invocations with a supported caller.'),
         outcome_coverage: coverage('invocations', toolTotal, toolTotal, withOutcome, 'Reported invocations with a supported outcome.'), unsupported_filters: toolUnsupported },
       knowledge: { rows: knowledge, distinct_invocations: num(knowledgeTotal.distinct_invocations),
-        note: 'Per-source access counts overlap when one invocation touches several sources; distinct_invocations is the unduplicated total. Only rows classified under each install\'s current configuration count.' },
+        note: [
+          'Per-source access counts overlap when one invocation touches several sources; distinct_invocations is the unduplicated total. Only rows classified under each install\'s current configuration count.',
+          'Accesses follow the account, machine, and agent filters through their own binding and calling invocation, and the effort, surface, project, and agent-scope filters through the calling request.',
+          ...(q.models.length ? ['The model filter is not applied to knowledge accesses: an access carries no model and is only linked to one through a retained calling request under a detail filter.'] : []),
+        ].join(' '), unsupported_filters: knowledgeUnsupported },
       environmental_inputs: { cohorts: cohortInputs, coverage: coverage('calls', headline.calls, environment.coverage.calls_estimated + environment.coverage.calls_without_class, environment.coverage.calls_estimated, 'Cohorts are account and source calendar month; the class comes from the whole month and the selected calls are summed under it.'),
         note: 'Average raw tokens per call is the cohort input the reused method classifies; nothing here converts allowance movement or dollars into calls.' },
       cost, environment,
