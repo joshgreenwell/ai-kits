@@ -6,12 +6,18 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use jiff::Timestamp;
+use observatory_adapters::EXECUTION_PARSER_VERSION;
 use observatory_adapters::claude_execution::ClaudeExecution;
 use observatory_adapters::codex_execution::CodexExecution;
-use observatory_contract::settings::{DetailLevel, ToolDetail};
-use observatory_contract::{AccountId, CollectionSettings, Lit, Provider, Uuid};
+use observatory_adapters::emission::{EMISSION_SHAPE, fingerprint};
+use observatory_contract::settings::{DetailLevel, ProjectAttribution, ToolDetail};
+use observatory_contract::{
+    AccountId, Arch, CollectionSettings, Counter, Lit, Platform, Provider, Record, Run, Stamp, Text, Uuid,
+};
 use observatory_core::adapter::{Adapter, BindingContext, IdentityState, RunContext};
 use observatory_core::config::{CompanionConfig, LocalBinding, Secret};
+use observatory_core::outbox::build_bodies;
+use observatory_core::privacy::PrivacyKey;
 use observatory_core::run::{ConfigSource, Prepared, RunSummary, execute};
 use observatory_core::state::State;
 
@@ -99,6 +105,7 @@ impl Fixture {
             config.statusline_inbox(dir),
             true,
             Duration::from_secs(60),
+            PrivacyKey::fixed_for_tests(),
         )
         .with_claude_settings_path(dir.join("claude-settings.json"));
         let lock = observatory_core::lock::acquire(&config.lock_path(dir)).unwrap();
@@ -169,6 +176,83 @@ fn claude_emits_only_what_changed_after_the_first_run() {
     assert_eq!(emitted(&fourth), all);
     let fifth = execute(fixture.prepared(settings(ToolDetail::HashedCustom)), &adapters).unwrap();
     assert_eq!(emitted(&fifth), 0);
+}
+
+/// An install whose last mark was written by the previous emission shape
+/// (plain, unkeyed hashes) emits everything once more under the new keys and
+/// then settles again.
+#[test]
+fn an_install_upgraded_from_the_previous_emission_shape_re_emits_once() {
+    let mut fixture = Fixture::new(Provider::Claude, corpus().join("claude/projects"));
+    let adapters: Vec<Box<dyn Adapter>> = vec![Box::new(ClaudeExecution)];
+    let binding = fixture.binding_id.as_str().to_owned();
+    let mark_key = format!("emitted:claude_execution:{binding}");
+
+    let first = execute(fixture.prepared(settings(ToolDetail::HashedCustom)), &adapters).unwrap();
+    let all = emitted(&first);
+    assert!(all > 0);
+    let second = execute(fixture.prepared(settings(ToolDetail::HashedCustom)), &adapters).unwrap();
+    assert_eq!(emitted(&second), 0);
+
+    let prepared = fixture.prepared(settings(ToolDetail::HashedCustom));
+    let current = fingerprint(&prepared.ctx, EXECUTION_PARSER_VERSION, EMISSION_SHAPE);
+    let previous = fingerprint(&prepared.ctx, EXECUTION_PARSER_VERSION, "1");
+    assert_ne!(previous, current, "the shape bump changes the fingerprint");
+    let state = fixture.state();
+    let stored = state.meta(&mark_key).unwrap().unwrap();
+    let (generation, stored_fingerprint) = stored.split_once(':').unwrap();
+    assert_eq!(stored_fingerprint, current);
+    // The mark the previous build left: the same generation under the old shape.
+    state.set_meta(&mark_key, &format!("{generation}:{previous}")).unwrap();
+    drop(state);
+
+    let upgraded = execute(prepared, &adapters).unwrap();
+    assert_eq!(emitted(&upgraded), all, "every record is emitted once more under the new keys");
+    let stored = fixture.state().meta(&mark_key).unwrap().unwrap();
+    assert!(stored.ends_with(&format!(":{current}")), "the mark carries the current shape: {stored}");
+    let settled = execute(fixture.prepared(settings(ToolDetail::HashedCustom)), &adapters).unwrap();
+    assert_eq!(emitted(&settled), 0);
+}
+
+/// The bodies a run would upload carry keyed hashes and never the key itself
+/// (project keys are covered by the snapshot corpus, which records `cwd`).
+#[test]
+fn upload_bodies_carry_keyed_hashes_and_never_the_privacy_key() {
+    let mut fixture = Fixture::new(Provider::Claude, corpus().join("claude/projects"));
+    let adapters: Vec<Box<dyn Adapter>> = vec![Box::new(ClaudeExecution)];
+    let mut settings = settings(ToolDetail::HashedCustom);
+    settings.execution.project_attribution = ProjectAttribution::Hashed;
+    let prepared = fixture.prepared(settings);
+    let key = prepared.ctx.privacy_key.clone();
+    let summary = execute(prepared, &adapters).unwrap();
+    assert!(emitted(&summary) > 0);
+
+    let state = fixture.state();
+    let records: Vec<Record> = state
+        .pending_records(usize::MAX)
+        .unwrap()
+        .iter()
+        .map(|row| serde_json::from_str(&row.record).unwrap())
+        .collect();
+    assert!(!records.is_empty());
+    let run = Run {
+        run_id: Uuid::v4(),
+        started_at: Stamp::from_timestamp(Timestamp::UNIX_EPOCH),
+        finished_at: Stamp::from_timestamp(Timestamp::UNIX_EPOCH),
+        companion_version: Text::try_from(observatory_core::VERSION.to_owned()).unwrap(),
+        platform: Platform::current(),
+        arch: Arch::current(),
+        settings_version: Counter::saturating(3),
+    };
+    let bodies = build_bodies(&run, vec![], records, vec![]).unwrap();
+    assert!(!bodies.is_empty());
+    let key_hex = key.to_hex();
+    assert!(bodies.iter().any(|body| body.contains("\"h:")), "hashed custom names are uploaded");
+    for body in &bodies {
+        assert!(!body.contains(&key_hex), "the privacy key is in an upload body");
+        assert!(!body.contains(&key_hex[..16]), "a prefix of the privacy key is in an upload body");
+        assert!(!body.contains("privacy_salt") && !body.contains("privacy_key"), "{body}");
+    }
 }
 
 #[test]

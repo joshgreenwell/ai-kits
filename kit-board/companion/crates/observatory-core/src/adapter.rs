@@ -15,6 +15,7 @@ use observatory_contract::{
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::privacy::PrivacyKey;
 use crate::resources::{ResourceConfiguration, resource_attribution_denied};
 use crate::state::{State, StateError};
 
@@ -93,6 +94,10 @@ pub struct RunContext {
     pub claude_credentials_path: Option<PathBuf>,
     pub dry_run: bool,
     pub deadline: Instant,
+    /// This install's key for the hashes that stand in for low-entropy values
+    /// (project keys, custom tool and agent names); `State::privacy_key`.
+    /// Adapters hash through it and never store or print it.
+    pub privacy_key: PrivacyKey,
     cancel: Arc<AtomicBool>,
 }
 
@@ -112,6 +117,7 @@ impl RunContext {
         statusline_inbox: PathBuf,
         dry_run: bool,
         budget: Duration,
+        privacy_key: PrivacyKey,
     ) -> Self {
         let hook_inbox = config_dir.join("inbox").join("hooks");
         let claude_settings_path = crate::paths::claude_settings_file()
@@ -135,6 +141,7 @@ impl RunContext {
             claude_credentials_path: None,
             dry_run,
             deadline: Instant::now() + budget,
+            privacy_key,
             cancel: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -413,6 +420,7 @@ mod tests {
                 PathBuf::from("statusline"),
                 true,
                 Duration::from_secs(1),
+                PrivacyKey::fixed_for_tests(),
             )
         };
         assert!(!context(Vec::new()).effective_resource_attribution());

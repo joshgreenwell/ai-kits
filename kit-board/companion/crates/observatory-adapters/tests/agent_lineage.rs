@@ -14,8 +14,8 @@ use observatory_contract::{
     AccountId, CapabilityDimension, CapabilityState, CollectionSettings, Provider, Uuid,
 };
 use observatory_core::adapter::{Adapter, BindingContext, IdentityState, MemorySink, RunContext};
-use observatory_core::pyjson::digest;
-use serde_json::{Value, json};
+use observatory_core::privacy::{PrivacyKey, agent_name_hash};
+use serde_json::Value;
 
 fn corpus() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/usage-v2/agent-detail")
@@ -61,6 +61,7 @@ fn context(
         dir.path().join("statusline"),
         true,
         Duration::from_secs(60),
+        PrivacyKey::fixed_for_tests(),
     )
 }
 
@@ -188,8 +189,12 @@ fn claude_collects_nested_inline_resumed_and_failed_agent_evidence() {
         .into_iter()
         .find(|request| request["agent"]["key"] == nested_key)
         .unwrap();
-    let name_hash = digest(&json!(["agent-name", "private-reviewer"]));
-    assert_eq!(hashed["agent"]["name"], format!("h:{}", &name_hash.as_str()[..16]));
+    assert_eq!(hashed["agent"]["name"], agent_name_hash(&ctx.privacy_key, "private-reviewer"));
+    assert_ne!(
+        hashed["agent"]["name"],
+        agent_name_hash(&PrivacyKey::from_bytes([0x33; 32]), "private-reviewer"),
+        "another install hashes the same role name differently"
+    );
 }
 
 #[test]

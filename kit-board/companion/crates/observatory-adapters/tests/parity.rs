@@ -14,6 +14,7 @@ use observatory_adapters::readings::ingest_statusline_inbox;
 use observatory_contract::{AccountId, CollectionSettings, Provider, Uuid};
 use observatory_core::adapter::{BindingContext, IdentityState, RunContext};
 use observatory_core::outbox::{bucket_digest, bucket_key};
+use observatory_core::privacy::PrivacyKey;
 use observatory_core::pyjson::digest;
 use observatory_core::state::State;
 use serde_json::{Value, json};
@@ -66,6 +67,7 @@ fn harness(provider: Provider, roots: Vec<PathBuf>, account: &str, since: &str) 
         corpus().join("claude-statusline"),
         true,
         Duration::from_secs(60),
+        PrivacyKey::fixed_for_tests(),
     );
     Harness { _dir: dir, state, ctx, binding }
 }

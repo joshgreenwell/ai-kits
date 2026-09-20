@@ -10,6 +10,7 @@ use observatory_contract::{
     IdentityBasis, Nullable, ParentIdentityBasis, Provider, Record, Sha256Hex, Stamp, Text, ToolName, Uuid,
 };
 use observatory_core::adapter::record_id;
+use observatory_core::privacy::{PrivacyKey, agent_name_hash};
 use observatory_core::pyjson::digest;
 use observatory_core::state::{AgentEventRow, AgentProfileRow, State, StateError};
 use serde::{Deserialize, Serialize};
@@ -195,7 +196,14 @@ pub fn classify_codex(role: Option<&str>) -> &'static str {
     }
 }
 
-fn display_name(raw: Option<&str>, class: AgentClass, detail: ToolDetail) -> Option<ToolName> {
+/// A custom role name is hashed under the install's privacy key, so it cannot
+/// be confirmed by guessing the name.
+fn display_name(
+    privacy_key: &PrivacyKey,
+    raw: Option<&str>,
+    class: AgentClass,
+    detail: ToolDetail,
+) -> Option<ToolName> {
     let raw = raw?.trim();
     if raw.is_empty() || detail == ToolDetail::Off {
         return None;
@@ -203,8 +211,7 @@ fn display_name(raw: Option<&str>, class: AgentClass, detail: ToolDetail) -> Opt
     match class {
         AgentClass::Builtin => ToolName::from_str(raw).ok(),
         AgentClass::Custom if detail == ToolDetail::HashedCustom => {
-            let hash = digest(&json!(["agent-name", raw]));
-            ToolName::from_str(&format!("h:{}", &hash.as_str()[..16])).ok()
+            ToolName::from_str(&agent_name_hash(privacy_key, raw)).ok()
         }
         AgentClass::Main | AgentClass::Custom | AgentClass::Unknown => None,
     }
@@ -212,6 +219,7 @@ fn display_name(raw: Option<&str>, class: AgentClass, detail: ToolDetail) -> Opt
 
 #[allow(clippy::too_many_arguments)]
 pub fn attribution(
+    privacy_key: &PrivacyKey,
     key: Option<&str>,
     identity_basis: &str,
     parent_key: Option<&str>,
@@ -233,7 +241,7 @@ pub fn attribution(
         parent_key: Nullable(parent_key),
         parent_identity_basis,
         class,
-        name: Nullable(display_name(name, class, detail)),
+        name: Nullable(display_name(privacy_key, name, class, detail)),
         depth: Nullable(depth),
     })
 }
@@ -469,6 +477,7 @@ pub fn complete_spawn(
 
 pub fn record_from_event(
     binding: &Uuid,
+    privacy_key: &PrivacyKey,
     adapter: Adapter,
     parser_version: &str,
     detail: ToolDetail,
@@ -476,6 +485,7 @@ pub fn record_from_event(
 ) -> Option<Record> {
     let observed_at = Stamp::parse(&row.timestamp).ok()?;
     let agent = attribution(
+        privacy_key,
         row.agent_key.as_deref(),
         &row.identity_basis,
         row.parent_key.as_deref(),

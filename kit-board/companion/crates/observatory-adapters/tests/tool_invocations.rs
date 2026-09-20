@@ -13,6 +13,7 @@ use observatory_contract::{
     AccountId, CapabilityDimension, CapabilityState, CollectionSettings, Provider, Uuid,
 };
 use observatory_core::adapter::{Adapter, BindingContext, IdentityState, MemorySink, RunContext};
+use observatory_core::privacy::PrivacyKey;
 use observatory_core::state::State;
 use serde_json::Value;
 
@@ -61,6 +62,7 @@ fn context(
         dir.path().join("statusline"),
         true,
         Duration::from_secs(60),
+        PrivacyKey::fixed_for_tests(),
     )
 }
 

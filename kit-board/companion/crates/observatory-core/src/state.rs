@@ -13,6 +13,8 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
+use crate::privacy::{PrivacyKey, project_key, tool_name_hash, tool_namespace_hash};
+
 pub const SCHEMA_VERSION: &str = "8";
 
 /// The local-only rejection mark on a queued `resource.access` record whose
@@ -114,6 +116,9 @@ CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, started_at TEXT NOT NU
 
 /// The meta key holding the current change generation; see `advance_change_generation`.
 const CHANGE_GENERATION_KEY: &str = "change_generation";
+
+/// The meta key holding this install's privacy key as hex; see `privacy_key`.
+const PRIVACY_SALT_KEY: &str = "privacy_salt";
 
 /// Stamps every inserted or updated row of the four local event tables with
 /// the current change generation, whichever statement wrote it, so the
@@ -1699,6 +1704,105 @@ impl State {
     /// read-only listings.
     pub fn assigned_resource_config_token(&self, digest: &str) -> Result<Option<String>, StateError> {
         self.meta(&resource_config_token_key(digest))
+    }
+
+    // --- privacy key ---------------------------------------------------------
+
+    /// This install's privacy key (`crate::privacy`): 32 random bytes chosen on
+    /// first use and kept in `meta` as `privacy_salt`, so it survives
+    /// re-pairing and changes only with a new state file. Never uploaded or
+    /// printed. Creating it re-keys every stored project key and tool hash
+    /// from the raw values this database keeps beside them, in the same
+    /// transaction, so a file written by a build without a key carries no
+    /// unkeyed hash afterwards.
+    pub fn privacy_key(&self) -> Result<PrivacyKey, StateError> {
+        if let Some(stored) = self.meta(PRIVACY_SALT_KEY)? {
+            return PrivacyKey::from_hex(&stored).ok_or(StateError::Corrupt);
+        }
+        self.begin()?;
+        let result = (|| {
+            // Another connection may have won the write lock first.
+            if let Some(stored) = self.meta(PRIVACY_SALT_KEY)? {
+                return PrivacyKey::from_hex(&stored).ok_or(StateError::Corrupt);
+            }
+            let key = PrivacyKey::generate();
+            self.rekey_privacy_hashes(&key)?;
+            self.set_meta(PRIVACY_SALT_KEY, &key.to_hex())?;
+            Ok(key)
+        })();
+        match result {
+            Ok(key) => {
+                self.commit()?;
+                Ok(key)
+            }
+            Err(error) => {
+                self.rollback()?;
+                Err(error)
+            }
+        }
+    }
+
+    /// Whether a privacy key has been created; for read-only listings.
+    pub fn has_privacy_key(&self) -> Result<bool, StateError> {
+        Ok(self.meta(PRIVACY_SALT_KEY)?.is_some())
+    }
+
+    /// Recomputes every stored project key (from the `projects` path beside
+    /// it) and tool name and namespace hash (from the raw name and namespace
+    /// beside them) under `key`. A working-directory key with no path on
+    /// record and a hash with no raw value cannot be re-keyed and become
+    /// unknown rather than leaving the machine unkeyed. Runs inside the
+    /// caller's transaction.
+    fn rekey_privacy_hashes(&self, key: &PrivacyKey) -> Result<(), StateError> {
+        let projects: Vec<(String, String, String)> = {
+            let mut statement = self.conn.prepare("SELECT binding_id, project_hash, path FROM projects")?;
+            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        for (binding, old, path) in projects {
+            let new = project_key(key, &path);
+            if new.as_str() == old {
+                continue;
+            }
+            self.conn.execute(
+                "UPDATE projects SET project_hash = ?3 WHERE binding_id = ?1 AND project_hash = ?2",
+                params![binding, old, new.as_str()],
+            )?;
+            self.conn.execute(
+                "UPDATE events
+                    SET project_key = CASE WHEN project_key = ?2 THEN ?3 ELSE project_key END,
+                        project_hash = CASE WHEN project_hash = ?2 THEN ?3 ELSE project_hash END
+                  WHERE binding_id = ?1 AND (project_key = ?2 OR project_hash = ?2)",
+                params![binding, old, new.as_str()],
+            )?;
+        }
+        self.conn.execute(
+            "UPDATE events SET project_key = NULL, project_hash = NULL, project_basis = 'unknown'
+              WHERE project_basis = 'working_directory' AND project_key IS NOT NULL
+                AND NOT EXISTS (SELECT 1 FROM projects
+                                 WHERE projects.binding_id = events.binding_id
+                                   AND projects.project_hash = events.project_key)",
+            [],
+        )?;
+        let tools: Vec<(String, String, Option<String>, Option<String>)> = {
+            let mut statement = self.conn.prepare(
+                "SELECT binding_id, id, namespace, name FROM local_tool_events
+                  WHERE name_hash IS NOT NULL OR namespace_hash IS NOT NULL",
+            )?;
+            let rows =
+                statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        for (binding, id, namespace, name) in tools {
+            let name_hash = name.as_deref().map(|name| tool_name_hash(key, namespace.as_deref(), name));
+            let namespace_hash = namespace.as_deref().map(|namespace| tool_namespace_hash(key, namespace));
+            self.conn.execute(
+                "UPDATE local_tool_events SET name_hash = ?3, namespace_hash = ?4
+                  WHERE binding_id = ?1 AND id = ?2",
+                params![binding, id, name_hash, namespace_hash],
+            )?;
+        }
+        Ok(())
     }
 
     /// Upserts one (invocation, resource) row. A replay within one generation
@@ -3297,6 +3401,104 @@ mod tests {
         assert_eq!(listing.assigned_resource_config_token(&digest).unwrap().as_deref(), Some(token.as_str()));
         assert!(listing.upsert_resource_inspection("b", "inv", "matched", false).is_err());
         assert!(State::open_read_only(&dir.path().join("missing.sqlite3")).is_err());
+    }
+
+    #[test]
+    fn privacy_key_is_random_per_state_file_and_stable_across_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        assert!(!state.has_privacy_key().unwrap());
+        let key = state.privacy_key().unwrap();
+        assert!(state.has_privacy_key().unwrap());
+        assert_eq!(state.privacy_key().unwrap(), key);
+        assert_eq!(state.meta("privacy_salt").unwrap().as_deref(), Some(key.to_hex().as_str()));
+        drop(state);
+        assert_eq!(State::open(&dir.path().join("s.sqlite3")).unwrap().privacy_key().unwrap(), key);
+        let other = State::open(&dir.path().join("other.sqlite3")).unwrap();
+        assert_ne!(other.privacy_key().unwrap(), key);
+        let listing = State::open_read_only(&dir.path().join("s.sqlite3")).unwrap();
+        assert!(listing.has_privacy_key().unwrap());
+    }
+
+    #[test]
+    fn creating_the_privacy_key_rekeys_stored_project_keys_and_tool_hashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        // Rows as a build without a key stored them: plain digests of the path and name.
+        let old_project = crate::pyjson::digest(&serde_json::json!(["project", "/work/app"]));
+        state.upsert_project("b", old_project.as_str(), "/work/app", "2026-09-02T02:00:00Z").unwrap();
+        let mut keyed = event("keyed", 1);
+        keyed.project_hash = Some(old_project.as_str().to_owned());
+        keyed.project_key = keyed.project_hash.clone();
+        keyed.project_basis = "working_directory".into();
+        state.insert_event("b", &keyed).unwrap();
+        let mut orphan = event("orphan", 1);
+        orphan.project_hash = Some("9".repeat(64));
+        orphan.project_key = orphan.project_hash.clone();
+        orphan.project_basis = "working_directory".into();
+        state.insert_event("b", &orphan).unwrap();
+        state.insert_event("b", &event("none", 1)).unwrap();
+        let tool = ToolEventRow {
+            id: "1".repeat(64),
+            timestamp: "2026-09-04T00:00:00Z".into(),
+            event_kind: "invocation".into(),
+            invocation_key: "1".repeat(64),
+            session_hash: None,
+            caller_request_key: None,
+            caller_agent_key: None,
+            caller_is_subagent: false,
+            parent_invocation_key: None,
+            class: "mcp".into(),
+            name: Some("search".into()),
+            name_hash: Some("h:1234567890abcdef".into()),
+            namespace: Some("vault".into()),
+            namespace_hash: Some("h:abcdef1234567890".into()),
+            outcome: "succeeded".into(),
+            name_truncated: false,
+        };
+        state.upsert_tool_event("b", &tool).unwrap();
+        let nameless = ToolEventRow {
+            id: "2".repeat(64),
+            invocation_key: "2".repeat(64),
+            class: "unknown".into(),
+            name: None,
+            namespace: None,
+            namespace_hash: None,
+            ..tool.clone()
+        };
+        state.upsert_tool_event("b", &nameless).unwrap();
+
+        let key = state.privacy_key().unwrap();
+        let expected = project_key(&key, "/work/app");
+        let projects = state.projects("b").unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(
+            (projects[0].project_hash.as_str(), projects[0].path.as_str()),
+            (expected.as_str(), "/work/app")
+        );
+        let keyed = state.event("b", "keyed").unwrap().unwrap();
+        assert_eq!(keyed.project_key.as_deref(), Some(expected.as_str()));
+        assert_eq!(keyed.project_hash.as_deref(), Some(expected.as_str()));
+        assert_eq!(keyed.project_basis, "working_directory");
+        let orphan = state.event("b", "orphan").unwrap().unwrap();
+        assert_eq!(
+            (orphan.project_key, orphan.project_hash, orphan.project_basis.as_str()),
+            (None, None, "unknown")
+        );
+        let none = state.event("b", "none").unwrap().unwrap();
+        assert_eq!((none.project_key, none.project_basis.as_str()), (None, "unknown"));
+        let tools = state.tool_events("b").unwrap();
+        let rekeyed = tools.iter().find(|row| row.id == tool.id).unwrap();
+        assert_eq!(
+            rekeyed.name_hash.as_deref(),
+            Some(tool_name_hash(&key, Some("vault"), "search").as_str())
+        );
+        assert_eq!(rekeyed.namespace_hash.as_deref(), Some(tool_namespace_hash(&key, "vault").as_str()));
+        let nameless = tools.iter().find(|row| row.id == nameless.id).unwrap();
+        assert_eq!((nameless.name_hash.as_deref(), nameless.namespace_hash.as_deref()), (None, None));
+        // A second call changes nothing.
+        assert_eq!(state.privacy_key().unwrap(), key);
+        assert_eq!(state.projects("b").unwrap()[0].project_hash, expected.as_str());
     }
 
     #[test]

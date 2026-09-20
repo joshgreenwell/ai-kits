@@ -13,6 +13,7 @@ use observatory_contract::{
     Record, RequestOutcome, SessionIdentity, Sha256Hex, Stamp, Surface, Text, TokenAccounting, Tokens, Uuid,
 };
 use observatory_core::adapter::record_id;
+use observatory_core::privacy::PrivacyKey;
 use observatory_core::state::EventRow;
 use observatory_core::state::{ToolCoverageRow, ToolEventRow};
 
@@ -244,6 +245,7 @@ pub fn request_matches_agent_setting(event: &EventRow, include_subagents: bool) 
 #[allow(clippy::too_many_arguments)]
 pub fn request_from_event(
     binding: &Uuid,
+    privacy_key: &PrivacyKey,
     adapter: Adapter,
     parser_version: &str,
     detail_level: DetailLevel,
@@ -355,6 +357,7 @@ pub fn request_from_event(
         .unwrap_or(RequestOutcome::Unknown);
     let agent = if event.agent_observed {
         agent_attribution(
+            privacy_key,
             event.agent_key.as_deref(),
             &event.agent_identity_basis,
             event.parent_agent_key.as_deref(),

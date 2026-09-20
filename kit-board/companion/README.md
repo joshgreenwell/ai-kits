@@ -124,7 +124,7 @@ The adapter keeps its own analyzers, state, artifacts, and usage-publisher crede
 | Config, key, state, inbox, logs | `~/.config/personal-hub/companion/` | `%USERPROFILE%\.config\personal-hub\companion\` is recommended so packaged and ordinary apps share one tree; `%LOCALAPPDATA%\PersonalObservatory\` remains the CLI default |
 | `companion.json` | install id and key, Observatory URL, per-binding root overrides, `deny` list, optional `since`, optional `resources` (knowledge sources with their local roots); `0600` | same; pass the selected root consistently with `--config-dir` |
 | `secrets.json` (opt-in) | Admin API keys; read only by `anthropic_api` and `openai_api` | same |
-| `<install-id>.sqlite3`, `<install-id>.lock` | state and the run lock | same |
+| `<install-id>.sqlite3`, `<install-id>.lock` | state and the run lock. The state also holds the install's **privacy key** (`meta.privacy_salt`, 32 random bytes chosen on the first run), which keys every uploaded project key and hashed custom tool or agent name. It is never uploaded, logged, or shown by `status`, `doctor`, or `projects`. Deleting the state file changes the key: every project key and hashed name this machine uploads afterwards differs, and labels assigned on the Observatory to the old keys do not carry over. Re-pairing keeps it. | same |
 | `inbox/claude-statusline/`, `inbox/hooks/` | hook inboxes; the statusline writes one part file per changed reading (`<YYYY-MM-DDTHH>-<observed microseconds>.json`), tool hooks one line per invocation | same |
 | `inbox/claude-statusline-status.json` | the statusline sidecar beside the inbox, never inside it (`last_invocation_at`, `invocations`, `last_offered_at`, `offered_windows`, `offered_windows_ever`, `published_windows`, `last_published_at`; no session field) | same |
 | `inbox/claude-statusline-latest.json` | the hook's kept state beside the inbox: the last reading per identity stamp and window (`used_percent`, `resets_at`, `kept_at`), which tells a changed reading from a repeat | same |
@@ -378,13 +378,17 @@ The structured `project` block is emitted only when `execution.project_attributi
 (default `off`) and the local deny list permits it. Its basis is `working_directory`, `none`, or
 `unknown` for current Claude and Codex local histories. Only explicit `cwd: null` produces `none`;
 missing, blank, or malformed values stay `unknown`. `project_hash` remains the compatibility
-alias for `working_directory`; both keys are `sha256(["project", cwd])` in the repository's stable
-JSON form, where `cwd` is the working directory the transcript recorded (Claude: the line's `cwd`;
-Codex: `session_meta.cwd`, updated by each `turn_context.cwd`) with trailing separators trimmed.
-The companion records the hash and path together only in its local `projects` table, and
-`observatory projects` shows which hash is which folder. Parser-generation replay backfills
-retained source evidence when it is still available. The path itself is never uploaded. See
-`docs/usage-coverage.md` for what this does and does not cover.
+alias for `working_directory`; both keys are `hmac_sha256(privacy_key, ["project", cwd])` over the
+repository's stable JSON form, where `cwd` is the working directory the transcript recorded
+(Claude: the line's `cwd`; Codex: `session_meta.cwd`, updated by each `turn_context.cwd`) with
+trailing separators trimmed, and `privacy_key` is the random per-install key kept in the state
+database (see "Files on this machine"). The same directory yields the same key from Claude and
+Codex on one machine; a reader of the Observatory database cannot confirm a guessed path by
+hashing it, because the key never leaves the machine. The companion records the key and path
+together only in its local `projects` table, and `observatory projects` shows which key is which
+folder. Parser-generation replay backfills retained source evidence when it is still available.
+The path itself is never uploaded. See `docs/usage-coverage.md` for what this does and does not
+cover.
 
 ### Decisions made during the port
 
@@ -412,11 +416,15 @@ owner can veto any of them.
   parity test strips it before comparing.
 - **`run --offline`** skips the config fetch (benchmarks and CI); it is not a mode users need.
 - **Cursor identity is hashed from `cursorAuth.userId`** in `state.vscdb`. Hosted collection emits only to the single confirmed Cursor binding; an unconfirmed binding receives no hosted rows.
-- **The project key is an unsalted hash of the working directory.** A salt per install would
-  stop a guessed path from being confirmed by hashing it, but it would also give the same
-  directory a different key from every install and from the browser collector's future
-  readings. The Observatory is private; the hash keeps the path off the server, which is the
-  boundary that matters. The setting stays opt-in.
+- **The project key and every hashed custom name are keyed per install.** They are
+  HMAC-SHA256 under a random 32-byte key the state database creates on first use, never
+  uploaded. The unsalted `sha256(["project", cwd])` the port started with let anyone with read
+  access to the Observatory database confirm a guessed path or tool name by hashing it, since
+  the construction is public. The price is that the same directory or custom tool has a
+  different key on every install (a label on the Observatory is what joins them, which the
+  server's per-install project identities already assume) and that a future browser collector
+  cannot reproduce the key. The setting stays opt-in. Session, agent, and provider account
+  identifiers stay plain SHA-256: they are high entropy and must agree across installs.
 - **Model-scoped weekly windows are accepted** wherever v1 accepted only `five_hour` and
   `seven_day`: the statusline hook publishes any `rate_limits.seven_day_<model>` entry with a
   10080-minute window, and also a top-level `limits` array (`weekly_scoped` → `seven_day_<slug>`),
@@ -463,9 +471,10 @@ the site turns them into support chips on Settings → Collection, the health la
 
 ## What is uploaded
 
-Counters, hashed identifiers, model names, allowlisted or hashed tool names, allowance readings,
+Counters, hashed identifiers, model names, allowlisted or hashed tool names (custom names keyed
+under the install's privacy key), allowance readings,
 provider aggregates and charges, coverage codes, versions, only when project attribution is
-`hashed`, a hash of each request's working directory, and, only for knowledge sources configured
+`hashed`, a keyed hash of each request's working directory, and, only for knowledge sources configured
 in `companion.json` at `requests_with_tools`, each matched call's source key, opaque configuration
 token, and typed access, evidence, and outcome codes. Never: prompts, responses, file paths,
 vault roots, connector ids, repository names, credentials, raw provider payloads, free-text errors. Credentials are

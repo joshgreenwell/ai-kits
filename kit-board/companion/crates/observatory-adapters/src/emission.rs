@@ -35,8 +35,9 @@ use crate::tools::{
 };
 
 /// Bumped when the records derived from stored rows change shape without a
-/// parser version change, so every row is emitted once more.
-const EMISSION_SHAPE: &str = "1";
+/// parser version change, so every row is emitted once more. `2`: project keys
+/// and hashed tool and agent names are keyed under the install's privacy key.
+pub const EMISSION_SHAPE: &str = "2";
 
 /// What one binding's detail emission produced.
 #[derive(Debug, Default)]
@@ -131,11 +132,12 @@ impl Changes {
     }
 }
 
-/// Everything the record shape and selection depend on, as a digest.
-fn fingerprint(ctx: &RunContext, parser_version: &str) -> String {
+/// Everything the record shape and selection depend on, as a digest, for the
+/// given emission shape (`EMISSION_SHAPE` for this build).
+pub fn fingerprint(ctx: &RunContext, parser_version: &str, shape: &str) -> String {
     let execution = &ctx.settings.execution;
     digest(&json!([
-        EMISSION_SHAPE,
+        shape,
         parser_version,
         execution.detail_level.as_str(),
         execution.tool_detail.as_str(),
@@ -164,7 +166,7 @@ fn changes(
         // Never run through `execute`: nothing stamps rows, so nothing can be skipped.
         return Ok((Changes::everything(), None));
     };
-    let fingerprint = fingerprint(ctx, parser_version);
+    let fingerprint = fingerprint(ctx, parser_version, EMISSION_SHAPE);
     let key = mark_key(adapter, binding);
     let mark = format!("{current}:{fingerprint}");
     let after = state.meta(&key)?.and_then(|stored| {
@@ -215,6 +217,7 @@ pub fn emit_detail(
         }
         if let Some(record) = request_from_event(
             &binding.binding_id,
+            &ctx.privacy_key,
             adapter,
             parser_version,
             detail_level,
@@ -233,9 +236,14 @@ pub fn emit_detail(
             if !changes.agent(&event.id) {
                 continue;
             }
-            if let Some(record) =
-                agent_record_from_event(&binding.binding_id, adapter, parser_version, tool_detail, &event)
-            {
+            if let Some(record) = agent_record_from_event(
+                &binding.binding_id,
+                &ctx.privacy_key,
+                adapter,
+                parser_version,
+                tool_detail,
+                &event,
+            ) {
                 sink.emit(record, None);
                 emission.records_emitted += 1;
             }

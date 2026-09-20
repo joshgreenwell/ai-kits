@@ -286,6 +286,8 @@ pub fn prepare(config_dir: &Path, options: &RunOptions, take_lock: bool) -> Resu
     let state_path = config.state_path(config_dir);
     let state = State::open(&state_path)?;
     state.set_meta_if_absent("install_id", config.install_id.as_str())?;
+    // Created on the first run of a build that has one; re-keys stored hashes then.
+    let privacy_key = state.privacy_key()?;
 
     // Pin the backfill start on first run; it cannot change without new state.
     let since_text = match state.meta("since")? {
@@ -459,6 +461,7 @@ pub fn prepare(config_dir: &Path, options: &RunOptions, take_lock: bool) -> Resu
         config.statusline_inbox(config_dir),
         options.dry_run,
         options.budget,
+        privacy_key,
     );
     let (resources, skipped) = configured_resources(&config);
     for warning in skipped {

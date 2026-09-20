@@ -1,6 +1,9 @@
 //! Privacy-safe tool invocation evidence shared by local execution adapters.
 //! Provider call identifiers are hashed immediately. Arguments and results are
 //! inspected only while parsing and are never retained in companion state.
+//! Custom, MCP, and function names are hashed under the install's privacy key
+//! (`observatory_core::privacy`), so the same tool hashes differently on every
+//! machine and a hash cannot be confirmed by guessing the name.
 
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
@@ -11,6 +14,7 @@ use observatory_contract::{
     ToolClass, ToolCount, ToolEvent, ToolEventKind, ToolIdentity, ToolName, Uuid,
 };
 use observatory_core::adapter::record_id;
+use observatory_core::privacy::{PrivacyKey, tool_name_hash, tool_namespace_hash};
 use observatory_core::pyjson::digest;
 use observatory_core::state::{State, StateError, ToolEventRow};
 use serde_json::json;
@@ -28,12 +32,13 @@ pub struct ToolEvidence {
 }
 
 impl ToolEvidence {
-    fn new(class: &str, name: Option<&str>, namespace: Option<&str>, hash_input: Option<&str>) -> Self {
+    /// The hashes cover the bounded name within its namespace, so a stored row
+    /// (which keeps the same bounded values) can be re-keyed later.
+    fn new(key: &PrivacyKey, class: &str, name: Option<&str>, namespace: Option<&str>) -> Self {
         let (name, name_truncated) = bounded_raw(name);
         let (namespace, namespace_truncated) = bounded_raw(namespace);
-        let hash_input = hash_input.or(name.as_deref());
-        let name_hash = hash_input.map(|raw| privacy_hash("tool-name", raw));
-        let namespace_hash = namespace.as_deref().map(|raw| privacy_hash("tool-namespace", raw));
+        let name_hash = name.as_deref().map(|name| tool_name_hash(key, namespace.as_deref(), name));
+        let namespace_hash = namespace.as_deref().map(|namespace| tool_namespace_hash(key, namespace));
         Self {
             class: class.to_owned(),
             name,
@@ -45,7 +50,14 @@ impl ToolEvidence {
     }
 
     pub fn unknown() -> Self {
-        Self::new("unknown", None, None, None)
+        Self {
+            class: "unknown".to_owned(),
+            name: None,
+            name_hash: None,
+            namespace: None,
+            namespace_hash: None,
+            name_truncated: false,
+        }
     }
 }
 
@@ -55,11 +67,6 @@ fn bounded_raw(value: Option<&str>) -> (Option<String>, bool) {
     };
     let truncated = value.chars().count() > RAW_NAME_LIMIT;
     (Some(value.chars().take(RAW_NAME_LIMIT).collect()), truncated)
-}
-
-fn privacy_hash(label: &str, raw: &str) -> String {
-    let hash = digest(&json!([label, raw]));
-    format!("h:{}", hash.prefix16())
 }
 
 fn claude_builtin(name: &str) -> bool {
@@ -118,7 +125,7 @@ fn codex_builtin_namespace(namespace: &str) -> bool {
     matches!(namespace, "clock" | "codex_app" | "collaboration" | "image_gen" | "multi_agent_v1" | "web")
 }
 
-pub fn claude_identity(raw_name: Option<&str>) -> ToolEvidence {
+pub fn claude_identity(key: &PrivacyKey, raw_name: Option<&str>) -> ToolEvidence {
     let Some(raw_name) = raw_name.map(str::trim).filter(|value| !value.is_empty()) else {
         return ToolEvidence::unknown();
     };
@@ -126,26 +133,27 @@ pub fn claude_identity(raw_name: Option<&str>) -> ToolEvidence {
         let mut parts = rest.splitn(2, "__");
         let namespace = parts.next().filter(|value| !value.is_empty());
         let name = parts.next().filter(|value| !value.is_empty()).unwrap_or(raw_name);
-        ToolEvidence::new("mcp", Some(name), namespace, Some(raw_name))
+        ToolEvidence::new(key, "mcp", Some(name), namespace)
     } else if claude_builtin(raw_name) {
-        ToolEvidence::new("builtin", Some(raw_name), None, Some(raw_name))
+        ToolEvidence::new(key, "builtin", Some(raw_name), None)
     } else {
-        ToolEvidence::new("custom", Some(raw_name), None, Some(raw_name))
+        ToolEvidence::new(key, "custom", Some(raw_name), None)
     }
 }
 
-pub fn codex_identity(kind: &str, raw_name: Option<&str>, raw_namespace: Option<&str>) -> ToolEvidence {
+pub fn codex_identity(
+    key: &PrivacyKey,
+    kind: &str,
+    raw_name: Option<&str>,
+    raw_namespace: Option<&str>,
+) -> ToolEvidence {
     match kind {
-        "web_search_call" => ToolEvidence::new("builtin", Some("web_search"), None, Some("web_search")),
-        "local_shell_call" => ToolEvidence::new("builtin", Some("local_shell"), None, Some("local_shell")),
-        "mcp_tool_call" => {
-            let hash_input =
-                raw_namespace.zip(raw_name).map(|(namespace, name)| format!("{namespace}::{name}"));
-            ToolEvidence::new("mcp", raw_name, raw_namespace, hash_input.as_deref())
-        }
+        "web_search_call" => ToolEvidence::new(key, "builtin", Some("web_search"), None),
+        "local_shell_call" => ToolEvidence::new(key, "builtin", Some("local_shell"), None),
+        "mcp_tool_call" => ToolEvidence::new(key, "mcp", raw_name, raw_namespace),
         "custom_tool_call" => {
             let class = if raw_name.is_some_and(codex_builtin_name) { "builtin" } else { "custom" };
-            ToolEvidence::new(class, raw_name, raw_namespace, raw_name)
+            ToolEvidence::new(key, class, raw_name, raw_namespace)
         }
         "function_call" => {
             let class = match raw_namespace {
@@ -154,9 +162,7 @@ pub fn codex_identity(kind: &str, raw_name: Option<&str>, raw_namespace: Option<
                 None if raw_name.is_some_and(codex_builtin_name) => "builtin",
                 _ => "function",
             };
-            let hash_input =
-                raw_namespace.zip(raw_name).map(|(namespace, name)| format!("{namespace}::{name}"));
-            ToolEvidence::new(class, raw_name, raw_namespace, hash_input.as_deref().or(raw_name))
+            ToolEvidence::new(key, class, raw_name, raw_namespace)
         }
         _ => ToolEvidence::unknown(),
     }
@@ -390,33 +396,60 @@ mod tests {
 
     #[test]
     fn provider_forms_map_without_exposing_custom_names() {
-        assert_eq!(claude_identity(Some("Read")).class, "builtin");
-        assert_eq!(claude_identity(Some("PowerShell")).class, "builtin");
-        assert_eq!(claude_identity(Some("NotebookRead")).class, "builtin");
-        let mcp = claude_identity(Some("mcp__vault__search_notes"));
+        let key = PrivacyKey::fixed_for_tests();
+        assert_eq!(claude_identity(&key, Some("Read")).class, "builtin");
+        assert_eq!(claude_identity(&key, Some("PowerShell")).class, "builtin");
+        assert_eq!(claude_identity(&key, Some("NotebookRead")).class, "builtin");
+        let mcp = claude_identity(&key, Some("mcp__vault__search_notes"));
         assert_eq!(
             (mcp.class.as_str(), mcp.namespace.as_deref(), mcp.name.as_deref()),
             ("mcp", Some("vault"), Some("search_notes"))
         );
-        assert_eq!(claude_identity(Some("private_tool")).class, "custom");
-        assert_eq!(codex_identity("custom_tool_call", Some("exec"), None).class, "builtin");
-        assert_eq!(codex_identity("custom_tool_call", Some("private_tool"), None).class, "custom");
+        assert_eq!(claude_identity(&key, Some("private_tool")).class, "custom");
+        assert_eq!(codex_identity(&key, "custom_tool_call", Some("exec"), None).class, "builtin");
+        assert_eq!(codex_identity(&key, "custom_tool_call", Some("private_tool"), None).class, "custom");
         assert_eq!(
-            codex_identity("function_call", Some("wait_agent"), Some("collaboration")).class,
+            codex_identity(&key, "function_call", Some("wait_agent"), Some("collaboration")).class,
             "builtin"
         );
-        assert_eq!(codex_identity("function_call", Some("search"), Some("mcp__vault")).class, "mcp");
-        assert_eq!(codex_identity("function_call", Some("private_fn"), Some("functions")).class, "function");
+        assert_eq!(codex_identity(&key, "function_call", Some("search"), Some("mcp__vault")).class, "mcp");
+        assert_eq!(
+            codex_identity(&key, "function_call", Some("private_fn"), Some("functions")).class,
+            "function"
+        );
     }
 
     #[test]
-    fn long_names_keep_distinct_full_value_hashes() {
+    fn long_names_are_bounded_before_hashing() {
+        let key = PrivacyKey::fixed_for_tests();
         let prefix = "x".repeat(RAW_NAME_LIMIT);
-        let first = claude_identity(Some(&format!("{prefix}a")));
-        let second = claude_identity(Some(&format!("{prefix}b")));
+        let first = claude_identity(&key, Some(&format!("{prefix}a")));
+        let second = claude_identity(&key, Some(&format!("{prefix}b")));
         assert!(first.name_truncated);
         assert_eq!(first.name, second.name);
-        assert_ne!(first.name_hash, second.name_hash);
+        assert_eq!(first.name_hash, second.name_hash, "the hash covers the stored, bounded name");
+    }
+
+    #[test]
+    fn hashed_names_are_keyed_per_install_and_scoped_by_namespace() {
+        let key = PrivacyKey::fixed_for_tests();
+        let other = PrivacyKey::from_bytes([0x11; 32]);
+        let mcp = claude_identity(&key, Some("mcp__vault__search"));
+        assert_eq!(mcp.name_hash, Some(tool_name_hash(&key, Some("vault"), "search")));
+        assert_eq!(mcp.namespace_hash, Some(tool_namespace_hash(&key, "vault")));
+        assert_eq!(mcp.name_hash, claude_identity(&key, Some("mcp__vault__search")).name_hash);
+        assert_ne!(mcp.name_hash, claude_identity(&other, Some("mcp__vault__search")).name_hash);
+        assert_ne!(mcp.namespace_hash, claude_identity(&other, Some("mcp__vault__search")).namespace_hash);
+        assert_ne!(mcp.name_hash, claude_identity(&key, Some("mcp__other__search")).name_hash);
+        // The same MCP tool seen through Codex hashes the same way on this machine.
+        assert_eq!(
+            codex_identity(&key, "mcp_tool_call", Some("search"), Some("vault")).name_hash,
+            mcp.name_hash
+        );
+        let custom = claude_identity(&key, Some("private_tool"));
+        assert_eq!(custom.name_hash, Some(tool_name_hash(&key, None, "private_tool")));
+        assert!(custom.name_hash.as_deref().is_some_and(|hash| hash.starts_with("h:") && hash.len() == 18));
+        assert_eq!(claude_identity(&key, None).name_hash, None);
     }
 
     /// The summary as it was computed before the index: one pass over every
@@ -485,12 +518,13 @@ mod tests {
 
     #[test]
     fn the_request_index_summarizes_exactly_as_the_linear_filter_did() {
+        let key = PrivacyKey::fixed_for_tests();
         let names = [
-            claude_identity(Some("Read")),
-            claude_identity(Some("Bash")),
-            claude_identity(Some("mcp__vault__search")),
-            claude_identity(Some("private_tool")),
-            claude_identity(None),
+            claude_identity(&key, Some("Read")),
+            claude_identity(&key, Some("Bash")),
+            claude_identity(&key, Some("mcp__vault__search")),
+            claude_identity(&key, Some("private_tool")),
+            claude_identity(&key, None),
         ];
         let requests = ["r1", "r2", "r3", "r4"];
         let mut rows = Vec::new();
