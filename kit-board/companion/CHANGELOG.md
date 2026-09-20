@@ -5,9 +5,9 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
 ## Unreleased
 
 - Outbox: a body the Observatory refuses on its content (a 4xx other than 401, 403, 408, or
-  429, or a receipt the companion cannot read) no longer blocks the queue forever. The upload
+  429) no longer blocks the queue forever. The upload
   bisects it (coverage first, then halves) until the refused record or bucket stands alone,
-  marks that record `http_<status>` or `invalid_receipt` locally (never retried, like a
+  marks that record `http_<status>` locally (never retried, like a
   server rejection), records a refused bucket as published at its refused digest so it stays
   local until its totals change, drops the isolated body, and continues with the rest of the
   queue. At most 24 bisections per queued body per run; accepted halves are acknowledged, so

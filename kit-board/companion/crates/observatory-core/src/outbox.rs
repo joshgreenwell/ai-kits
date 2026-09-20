@@ -169,7 +169,7 @@ pub struct Publication {
     /// Bodies the Observatory refused outright and the companion dropped after
     /// isolating them to one record, one bucket, or coverage alone.
     pub rejected_bodies: u64,
-    /// Records marked `http_<status>` or `invalid_receipt` locally; never retried.
+    /// Records marked `http_<status>` locally; never retried.
     pub isolated_records: u64,
     /// Buckets recorded as published at their refused digest, so they stay
     /// local until their totals change.
@@ -201,7 +201,9 @@ fn classify(error: &HttpError) -> Failure {
         HttpError::Status(401 | 403) | HttpError::NoKey => Failure::Auth(code),
         HttpError::Status(408 | 429) => Failure::Transient(code),
         HttpError::Status(status) if (400..500).contains(status) => Failure::Terminal(code),
-        HttpError::Decode => Failure::Terminal(code),
+        // A 2xx the client cannot read says nothing about the body; the server or the path
+        // is misbehaving, so the queue waits rather than marking records rejected.
+        HttpError::Decode => Failure::Transient(code),
         HttpError::Status(_)
         | HttpError::Transport
         | HttpError::Timeout
@@ -252,7 +254,7 @@ pub fn upload(state: &State, client: &Client, now: Timestamp) -> Result<Publicat
                 state.delete_outbox(&row.hash)?;
                 continue;
             }
-            Ok(_) => Failure::Terminal("invalid_receipt".into()),
+            Ok(_) => Failure::Transient("invalid_receipt".into()),
             Err(error) => classify(&error),
         };
         let code = match failure {
@@ -768,6 +770,6 @@ mod tests {
         for status in [400, 404, 409, 413, 415, 422] {
             assert_eq!(classify(&HttpError::Status(status)), Failure::Terminal(format!("http_{status}")));
         }
-        assert_eq!(classify(&HttpError::Decode), Failure::Terminal("invalid_receipt".into()));
+        assert_eq!(classify(&HttpError::Decode), Failure::Transient("invalid_receipt".into()));
     }
 }
