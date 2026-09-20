@@ -88,7 +88,12 @@ so the analyzer step skips interpreters under `WindowsApps`; name another one in
    failure; with no cache, run only the default-on local execution readers.
 3. Compute the effective mode for every adapter and record why an adapter does not run.
 4. Run the enabled adapters concurrently on scoped threads under one deadline; a failure or
-   timeout is a coverage entry, not a run failure.
+   timeout is a coverage entry, not a run failure. The execution readers emit detail records
+   incrementally: every stored event row carries the change generation the run stamped it with,
+   and a reader emits the rows written since the generation it last emitted under (plus the
+   records that depend on them and any row without a record yet). A parser, settings, or
+   resource configuration change re-emits everything once; the mark is stored only after the
+   records are persisted.
 5. Validate each record against the contract, isolate anything invalid, store the normalized
    record and the bounded raw observation (`local_raw_retention_days`).
 6. Derive v1 buckets by `(session_hash, hour, model)` exactly as `collect.py` does; publish a

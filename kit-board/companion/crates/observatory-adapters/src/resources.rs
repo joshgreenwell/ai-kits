@@ -2014,6 +2014,7 @@ pub fn record_from_access(
 /// Emits one record per stored access row of the binding. The outcome is the
 /// invocation row's (`unknown` when none exists) and the subagent rule is the
 /// invocation's, so a resource row never says more than its tool event.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_records(
     state: &State,
     binding: &BindingContext,
@@ -2021,6 +2022,7 @@ pub fn emit_records(
     parser_version: &str,
     include_subagents: bool,
     tool_events: &[ToolEventRow],
+    should_emit: &dyn Fn(&ResourceAccessRow) -> bool,
     sink: &mut dyn Sink,
 ) -> Result<u64, StateError> {
     let mut outcomes: HashMap<&str, &str> = HashMap::new();
@@ -2034,6 +2036,9 @@ pub fn emit_records(
     let mut emitted = 0;
     for row in state.resource_accesses(binding.binding_id.as_str())? {
         if !include_subagents && subagent.get(row.invocation_key.as_str()).copied().unwrap_or(false) {
+            continue;
+        }
+        if !should_emit(&row) {
             continue;
         }
         let outcome = outcomes.get(row.invocation_key.as_str()).copied().unwrap_or("unknown");

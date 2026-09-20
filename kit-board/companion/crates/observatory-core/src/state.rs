@@ -5,7 +5,7 @@
 //! migrated in place. Every table holds counters, hashes, checkpoints, and
 //! bounded raw observations; never conversation text.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::Path;
 use std::time::Duration;
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS events (binding_id TEXT NOT NULL, id TEXT NOT NULL, s
   cache_write_ttl TEXT, outcome TEXT, agent_observed INTEGER NOT NULL DEFAULT 0,
   agent_key TEXT, agent_identity_basis TEXT NOT NULL DEFAULT 'unknown', parent_agent_key TEXT,
   parent_agent_identity_basis TEXT NOT NULL DEFAULT 'unknown', agent_class TEXT NOT NULL DEFAULT 'unknown',
-  agent_name TEXT, agent_depth INTEGER,
+  agent_name TEXT, agent_depth INTEGER, change_generation INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (binding_id, id));
 CREATE INDEX IF NOT EXISTS event_hours ON events(binding_id, hour, session, model);
 CREATE TABLE IF NOT EXISTS agent_profiles (binding_id TEXT NOT NULL, agent_key TEXT NOT NULL,
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS local_agent_events (binding_id TEXT NOT NULL, id TEXT
   timestamp TEXT NOT NULL, event_kind TEXT NOT NULL, session_hash TEXT, agent_key TEXT,
   identity_basis TEXT NOT NULL, parent_key TEXT, parent_identity_basis TEXT NOT NULL,
   class TEXT NOT NULL, name TEXT, depth INTEGER, model_requested TEXT, tool_invocation_key TEXT,
-  outcome TEXT NOT NULL,
+  outcome TEXT NOT NULL, change_generation INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (binding_id, id));
 CREATE TABLE IF NOT EXISTS local_tool_events (binding_id TEXT NOT NULL, id TEXT NOT NULL,
   timestamp TEXT NOT NULL, event_kind TEXT NOT NULL, invocation_key TEXT NOT NULL,
@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS local_tool_events (binding_id TEXT NOT NULL, id TEXT 
   caller_is_subagent INTEGER NOT NULL DEFAULT 0, parent_invocation_key TEXT,
   class TEXT NOT NULL, name TEXT, name_hash TEXT, namespace TEXT, namespace_hash TEXT,
   outcome TEXT NOT NULL, name_truncated INTEGER NOT NULL DEFAULT 0,
+  change_generation INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (binding_id, id));
 CREATE INDEX IF NOT EXISTS local_tool_events_invocation
   ON local_tool_events(binding_id, invocation_key, event_kind);
@@ -86,7 +87,7 @@ CREATE TABLE IF NOT EXISTS projects (binding_id TEXT NOT NULL, project_hash TEXT
 CREATE TABLE IF NOT EXISTS local_resource_accesses (binding_id TEXT NOT NULL, id TEXT NOT NULL,
   timestamp TEXT NOT NULL, invocation_key TEXT NOT NULL, resource_key TEXT NOT NULL,
   configuration_version TEXT NOT NULL, access_kind TEXT NOT NULL, evidence_basis TEXT NOT NULL,
-  nested_overlap INTEGER NOT NULL DEFAULT 0,
+  nested_overlap INTEGER NOT NULL DEFAULT 0, change_generation INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (binding_id, id));
 CREATE INDEX IF NOT EXISTS local_resource_accesses_invocation
   ON local_resource_accesses(binding_id, invocation_key);
@@ -110,6 +111,64 @@ CREATE TABLE IF NOT EXISTS receipts (hash TEXT PRIMARY KEY, received_at TEXT NOT
 CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT NOT NULL,
   summary TEXT NOT NULL);
 ";
+
+/// The meta key holding the current change generation; see `advance_change_generation`.
+const CHANGE_GENERATION_KEY: &str = "change_generation";
+
+/// Stamps every inserted or updated row of the four local event tables with
+/// the current change generation, whichever statement wrote it, so the
+/// execution adapters can emit only what changed since they last emitted.
+/// Created after migration because an older file gains the column there.
+/// The update trigger's own write changes the column, so it cannot re-fire.
+const CHANGE_TRIGGERS: &str = "
+CREATE TRIGGER IF NOT EXISTS events_change_insert AFTER INSERT ON events BEGIN
+  UPDATE events SET change_generation = coalesce((SELECT value FROM meta WHERE key = 'change_generation'), 0)
+   WHERE rowid = NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS events_change_update AFTER UPDATE ON events
+  WHEN NEW.change_generation IS OLD.change_generation BEGIN
+  UPDATE events SET change_generation = coalesce((SELECT value FROM meta WHERE key = 'change_generation'), 0)
+   WHERE rowid = NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS local_agent_events_change_insert AFTER INSERT ON local_agent_events BEGIN
+  UPDATE local_agent_events
+     SET change_generation = coalesce((SELECT value FROM meta WHERE key = 'change_generation'), 0)
+   WHERE rowid = NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS local_agent_events_change_update AFTER UPDATE ON local_agent_events
+  WHEN NEW.change_generation IS OLD.change_generation BEGIN
+  UPDATE local_agent_events
+     SET change_generation = coalesce((SELECT value FROM meta WHERE key = 'change_generation'), 0)
+   WHERE rowid = NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS local_tool_events_change_insert AFTER INSERT ON local_tool_events BEGIN
+  UPDATE local_tool_events
+     SET change_generation = coalesce((SELECT value FROM meta WHERE key = 'change_generation'), 0)
+   WHERE rowid = NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS local_tool_events_change_update AFTER UPDATE ON local_tool_events
+  WHEN NEW.change_generation IS OLD.change_generation BEGIN
+  UPDATE local_tool_events
+     SET change_generation = coalesce((SELECT value FROM meta WHERE key = 'change_generation'), 0)
+   WHERE rowid = NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS local_resource_accesses_change_insert AFTER INSERT ON local_resource_accesses BEGIN
+  UPDATE local_resource_accesses
+     SET change_generation = coalesce((SELECT value FROM meta WHERE key = 'change_generation'), 0)
+   WHERE rowid = NEW.rowid; END;
+CREATE TRIGGER IF NOT EXISTS local_resource_accesses_change_update AFTER UPDATE ON local_resource_accesses
+  WHEN NEW.change_generation IS OLD.change_generation BEGIN
+  UPDATE local_resource_accesses
+     SET change_generation = coalesce((SELECT value FROM meta WHERE key = 'change_generation'), 0)
+   WHERE rowid = NEW.rowid; END;
+";
+
+/// The tables `CHANGE_TRIGGERS` stamp.
+const CHANGE_STAMPED_TABLES: [&str; 4] =
+    ["events", "local_agent_events", "local_tool_events", "local_resource_accesses"];
+
+/// A tool event row that changed since a generation, with the keys the
+/// request and resource records derived from it join on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangedToolEvent {
+    pub id: String,
+    pub invocation_key: String,
+    pub caller_request_key: Option<String>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CachedConfig {
@@ -419,6 +478,7 @@ impl State {
         conn.execute_batch(SCHEMA)?;
         let state = State { conn };
         state.migrate()?;
+        state.conn.execute_batch(CHANGE_TRIGGERS)?;
         Ok(state)
     }
 
@@ -532,6 +592,16 @@ impl State {
                 [],
             )?;
         }
+        // Any earlier file gains the change stamp; existing rows read as generation 0,
+        // and an adapter with no emission mark emits everything once regardless.
+        for table in CHANGE_STAMPED_TABLES {
+            if !self.has_column(table, "change_generation")? {
+                self.conn.execute(
+                    &format!("ALTER TABLE {table} ADD COLUMN change_generation INTEGER NOT NULL DEFAULT 0"),
+                    [],
+                )?;
+            }
+        }
         self.set_meta("schema_version", SCHEMA_VERSION)
     }
 
@@ -581,6 +651,87 @@ impl State {
     pub fn set_meta_if_absent(&self, key: &str, value: &str) -> Result<(), StateError> {
         self.conn.execute("INSERT OR IGNORE INTO meta VALUES (?1, ?2)", params![key, value])?;
         Ok(())
+    }
+
+    // --- change tracking ----------------------------------------------------
+
+    /// Moves to the next change generation and returns it. A run advances it
+    /// once before its adapters write and once after their records are
+    /// persisted, so rows written between runs carry a generation later than
+    /// any emission mark and the next run emits them.
+    pub fn advance_change_generation(&self) -> Result<i64, StateError> {
+        let next = self.change_generation()?.unwrap_or(0) + 1;
+        self.set_meta(CHANGE_GENERATION_KEY, &next.to_string())?;
+        Ok(next)
+    }
+
+    /// The generation rows written now are stamped with; `None` before a run
+    /// has ever advanced it, when every write reads as generation 0.
+    pub fn change_generation(&self) -> Result<Option<i64>, StateError> {
+        Ok(self.meta(CHANGE_GENERATION_KEY)?.and_then(|value| value.parse().ok()))
+    }
+
+    fn changed_ids(&self, table: &str, binding: &str, after: i64) -> Result<HashSet<String>, StateError> {
+        let mut statement = self
+            .conn
+            .prepare(&format!("SELECT id FROM {table} WHERE binding_id = ?1 AND change_generation > ?2"))?;
+        let rows = statement.query_map(params![binding, after], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<Result<HashSet<_>, _>>()?)
+    }
+
+    /// Request event ids written after `after`.
+    pub fn changed_event_ids(&self, binding: &str, after: i64) -> Result<HashSet<String>, StateError> {
+        self.changed_ids("events", binding, after)
+    }
+
+    /// Agent event ids written after `after`.
+    pub fn changed_agent_event_ids(&self, binding: &str, after: i64) -> Result<HashSet<String>, StateError> {
+        self.changed_ids("local_agent_events", binding, after)
+    }
+
+    /// Resource access ids written after `after`.
+    pub fn changed_resource_access_ids(
+        &self,
+        binding: &str,
+        after: i64,
+    ) -> Result<HashSet<String>, StateError> {
+        self.changed_ids("local_resource_accesses", binding, after)
+    }
+
+    /// Tool events written after `after`, with the keys dependent records join on.
+    pub fn changed_tool_events(
+        &self,
+        binding: &str,
+        after: i64,
+    ) -> Result<Vec<ChangedToolEvent>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, invocation_key, caller_request_key FROM local_tool_events
+              WHERE binding_id = ?1 AND change_generation > ?2",
+        )?;
+        let rows = statement.query_map(params![binding, after], |row| {
+            Ok(ChangedToolEvent {
+                id: row.get(0)?,
+                invocation_key: row.get(1)?,
+                caller_request_key: row.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// The semantic keys of every stored record of one type an adapter produced
+    /// for a binding, so an emitter can tell which source rows have no record yet.
+    pub fn record_semantic_keys(
+        &self,
+        binding: &str,
+        adapter: &str,
+        record_type: &str,
+    ) -> Result<HashSet<String>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT semantic_key FROM records WHERE binding_id = ?1 AND adapter = ?2 AND record_type = ?3",
+        )?;
+        let rows =
+            statement.query_map(params![binding, adapter, record_type], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<Result<HashSet<_>, _>>()?)
     }
 
     // --- settings cache -----------------------------------------------------
@@ -2004,6 +2155,18 @@ impl State {
             .optional()?)
     }
 
+    /// Every published bucket digest of one binding, keyed as `bucket_key`
+    /// forms them (`<binding_id>:<digest>`), in one query.
+    pub fn published_hashes(&self, binding: &str) -> Result<HashMap<String, String>, StateError> {
+        // A key range on the primary key: ';' is the byte after ':'.
+        let mut statement =
+            self.conn.prepare("SELECT key, hash FROM published WHERE key >= ?1 AND key < ?2")?;
+        let rows = statement.query_map(params![format!("{binding}:"), format!("{binding};")], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        Ok(rows.collect::<Result<HashMap<_, _>, _>>()?)
+    }
+
     pub fn set_published(&self, key: &str, hash: &str) -> Result<(), StateError> {
         self.conn.execute("INSERT OR REPLACE INTO published VALUES (?1, ?2)", params![key, hash])?;
         Ok(())
@@ -3368,5 +3531,138 @@ mod tests {
         state.delete_outbox("h2").unwrap();
         assert_eq!(state.outbox_len().unwrap(), 1);
         assert_eq!(state.last_receipt_at().unwrap().as_deref(), Some("now"));
+    }
+
+    fn tool_row(id: &str, invocation_key: &str, kind: &str, request: Option<&str>) -> ToolEventRow {
+        ToolEventRow {
+            id: id.repeat(64),
+            timestamp: "2026-09-04T00:00:00Z".into(),
+            event_kind: kind.into(),
+            invocation_key: invocation_key.repeat(64),
+            session_hash: None,
+            caller_request_key: request.map(str::to_owned),
+            caller_agent_key: None,
+            caller_is_subagent: false,
+            parent_invocation_key: None,
+            class: "builtin".into(),
+            name: Some("Read".into()),
+            name_hash: None,
+            namespace: None,
+            namespace_hash: None,
+            outcome: "unknown".into(),
+            name_truncated: false,
+        }
+    }
+
+    #[test]
+    fn every_write_path_stamps_the_current_change_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        assert_eq!(state.change_generation().unwrap(), None);
+        // Before a run ever advanced the generation, writes read as generation 0.
+        state.insert_event("b", &event("e0", 1)).unwrap();
+        assert_eq!(state.advance_change_generation().unwrap(), 1);
+        state.insert_event("b", &event("e1", 1)).unwrap();
+        state.upsert_tool_event("b", &tool_row("1", "1", "invocation", Some("e1"))).unwrap();
+        state.upsert_tool_event("b", &tool_row("2", "2", "invocation", None)).unwrap();
+        assert_eq!(state.changed_event_ids("b", 0).unwrap(), HashSet::from(["e1".to_owned()]));
+        assert_eq!(state.changed_event_ids("b", 1).unwrap(), HashSet::new());
+        assert_eq!(state.changed_tool_events("b", 0).unwrap().len(), 2);
+
+        assert_eq!(state.advance_change_generation().unwrap(), 2);
+        // A plain UPDATE, an upsert that touches an existing row, and a cascade
+        // through another row all re-stamp what they change.
+        state.update_event_tokens("b", "e0", [1, 1, 1, 1]).unwrap();
+        state.upsert_tool_event("b", &tool_row("2", "2", "invocation", None)).unwrap();
+        // A result for invocation 1 revises the invocation row's outcome as well.
+        let mut result = tool_row("3", "1", "result", None);
+        result.outcome = "failed".into();
+        state.upsert_tool_event("b", &result).unwrap();
+        assert_eq!(state.changed_event_ids("b", 1).unwrap(), HashSet::from(["e0".to_owned()]));
+        let changed = state.changed_tool_events("b", 1).unwrap();
+        let mut ids: Vec<_> = changed.iter().map(|row| row.id.chars().next().unwrap()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ['1', '2', '3']);
+        assert_eq!(
+            changed.iter().find(|row| row.id.starts_with('1')).unwrap().caller_request_key.as_deref(),
+            Some("e1")
+        );
+        // Assigning a caller request is also an update the trigger sees.
+        assert_eq!(state.advance_change_generation().unwrap(), 3);
+        state.assign_tool_caller_request("b", &["2".repeat(64)], "e0").unwrap();
+        let changed = state.changed_tool_events("b", 2).unwrap();
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].caller_request_key.as_deref(), Some("e0"));
+        assert!(state.changed_event_ids("b", 2).unwrap().is_empty());
+        assert!(state.changed_event_ids("other", 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_older_file_gains_the_change_stamp_and_its_rows_read_as_generation_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sqlite3");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let mut schema = SCHEMA.replace(", change_generation INTEGER NOT NULL DEFAULT 0", "");
+            schema = schema.replace("\n  change_generation INTEGER NOT NULL DEFAULT 0,", "");
+            assert!(!schema.contains("change_generation"));
+            conn.execute_batch(&schema).unwrap();
+            conn.execute_batch("INSERT INTO meta VALUES ('schema_version', '8')").unwrap();
+            conn.execute(
+                "INSERT INTO local_tool_events (binding_id, id, timestamp, event_kind, invocation_key, class, outcome)
+                 VALUES ('b', 'old', 't', 'invocation', 'k', 'builtin', 'unknown')",
+                [],
+            )
+            .unwrap();
+        }
+        let state = State::open(&path).unwrap();
+        for table in CHANGE_STAMPED_TABLES {
+            assert!(state.has_column(table, "change_generation").unwrap(), "{table}");
+        }
+        assert_eq!(state.changed_tool_events("b", -1).unwrap().len(), 1);
+        assert!(state.changed_tool_events("b", 0).unwrap().is_empty());
+        assert_eq!(state.advance_change_generation().unwrap(), 1);
+        state.upsert_tool_event("b", &tool_row("9", "9", "invocation", None)).unwrap();
+        assert_eq!(state.changed_tool_events("b", 0).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn published_hashes_cover_exactly_one_binding_and_record_keys_one_type() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("s.sqlite3")).unwrap();
+        state.set_published("b:one", "h1").unwrap();
+        state.set_published("b:two", "h2").unwrap();
+        state.set_published("b;three", "h3").unwrap();
+        state.set_published("bb:four", "h4").unwrap();
+        state.set_published("a:five", "h5").unwrap();
+        let hashes = state.published_hashes("b").unwrap();
+        assert_eq!(
+            hashes,
+            HashMap::from([("b:one".to_owned(), "h1".to_owned()), ("b:two".to_owned(), "h2".to_owned())])
+        );
+        assert_eq!(state.published_hashes("bb").unwrap().len(), 1);
+        assert!(state.published_hashes("c").unwrap().is_empty());
+
+        let row = |id: &str, record_type: &str, key: &str| RecordRow {
+            record_id: id.into(),
+            binding_id: "b".into(),
+            adapter: "claude_execution".into(),
+            record_type: record_type.into(),
+            semantic_key: key.into(),
+            content_hash: "c".into(),
+            published_hash: None,
+            rejected_reason: None,
+            record: "{}".into(),
+            updated_at: "t".into(),
+        };
+        state.upsert_record(&row("r1", "activity.request", "k1")).unwrap();
+        state.upsert_record(&row("r2", "activity.request", "k2")).unwrap();
+        state.upsert_record(&row("r3", "tool.event", "k3")).unwrap();
+        assert_eq!(
+            state.record_semantic_keys("b", "claude_execution", "activity.request").unwrap(),
+            HashSet::from(["k1".to_owned(), "k2".to_owned()])
+        );
+        assert_eq!(state.record_semantic_keys("b", "codex_execution", "activity.request").unwrap().len(), 0);
+        assert_eq!(state.record_semantic_keys("b", "claude_execution", "tool.event").unwrap().len(), 1);
     }
 }

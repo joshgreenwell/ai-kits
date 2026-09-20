@@ -1001,6 +1001,9 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
         });
     }
     let state = State::open(&ctx.state_path)?;
+    // Rows the adapters write now carry this generation; their emission marks
+    // refer to it, and it advances again once the records are persisted.
+    state.advance_change_generation()?;
 
     // Effective mode and preflight per adapter; then run the enabled ones concurrently.
     let mut decided: Vec<(usize, Effective, Preflight, Option<Cursor>)> = Vec::new();
@@ -1113,6 +1116,10 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
                 state.commit()?;
                 match &item.result {
                     Ok(outcome) => {
+                        // The records are durable now; marks such as an emission generation may follow.
+                        for (key, value) in &outcome.after_persist {
+                            state.set_meta(key, value)?;
+                        }
                         (outcome.state, outcome.detail, Some(outcome.clone()), item.elapsed, invalid, emitted)
                     }
                     Err(error) => {
@@ -1168,6 +1175,9 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
     for row in &adapter_rows {
         state.save_adapter_state(row)?;
     }
+    // Anything written from here until the next run starts is newer than every
+    // emission mark stored above.
+    state.advance_change_generation()?;
 
     // Buckets whose digest changed since the last receipt.
     let mut buckets: Vec<BucketEntry> = Vec::new();
@@ -1175,13 +1185,14 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
         if !binding.runnable() {
             continue;
         }
+        let published = state.published_hashes(binding.binding_id.as_str())?;
         for row in state.bucket_rows_for_agent_setting(
             binding.binding_id.as_str(),
             ctx.settings.execution.include_subagents,
         )? {
             let key = outbox::bucket_key(&binding.binding_id, &row);
             let hash = outbox::bucket_digest(&row);
-            if state.published_hash(&key)?.as_deref() != Some(hash.as_str())
+            if published.get(&key).map(String::as_str) != Some(hash.as_str())
                 && let Some(bucket) = outbox::bucket_from_row(&row)
             {
                 buckets.push(BucketEntry { binding_id: binding.binding_id.clone(), bucket });
