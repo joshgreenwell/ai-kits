@@ -1,6 +1,6 @@
 # agent-surface
 
-Agent Control-Surface Diff. `agent-surface check --base main --head HEAD` tells a reviewer,
+Agent Control-Surface Diff. `agent-surface check --base ref:main --head ref:HEAD` tells a reviewer,
 deterministically and offline, whether a change to repository-controlled Claude Code
 configuration expands the control surface the agent gets once the repository is trusted:
 new hooks, new MCP servers, whole-tool allows, additional directories, mode changes.
@@ -25,17 +25,19 @@ looks only at what the repository controls, between two points in its history.
 ## Quick start
 
 ```
-npx agent-surface check --base origin/main --head HEAD
+npx agent-surface check --base ref:origin/main --head ref:HEAD
 ```
 
 Example GitHub Actions step (plain `npx`; no wrapper action in V0). `fetch-depth: 0` is
-required so that `origin/main` exists in the checkout:
+required so that the base commit exists in the checkout. Both sides are named by the
+commit SHAs the event carries, with the `ref:` prefix, so the comparison is anchored to
+two commits and nothing in the pull request can stand in for either:
 
 ```yaml
 - uses: actions/checkout@v4
   with:
     fetch-depth: 0
-- run: npx agent-surface check --base origin/main --head HEAD
+- run: npx agent-surface check --base ref:${{ github.event.pull_request.base.sha }} --head ref:${{ github.sha }}
 ```
 
 The step fails (exit 1) on a proven expansion in a failing category, passes (exit 0) on
@@ -123,8 +125,11 @@ direction `widens` sits in a failing category. `diff` exits with the same code a
 `enableAllProjectMcpServers` → true), `mode` (`defaultMode` → `bypassPermissions` /
 `auto` / `dontAsk`), `whole-tool-allow` (`Bash`, `Bash(*)`, `Read`, …), `directory`
 (`additionalDirectories` added), `hooks-reenabled` (`disableAllHooks` true → false),
-`deny-removed`. `scoped-allow` (`Bash(npm test)`, `Bash(npm run *)`) is annotate-only by
-default.
+`deny-removed`, `env` (a sensitive environment value — `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_AUTH_TOKEN`, the proxy variables, `NODE_OPTIONS`, `NODE_EXTRA_CA_CERTS`,
+`SSL_CERT_FILE`, `PATH`, `LD_PRELOAD`, `CLAUDE_CODE_*`, `DYLD_*` — set or changed in `env`
+or in an MCP server's `env`). `scoped-allow` (`Bash(npm test)`, `Bash(npm run *)`) is
+annotate-only by default.
 
 `--fail-on <a,b,…>` replaces that set with the named categories. `projected` may be
 added to fail on projected widenings as well (`Bash(npm run *)` widens on a projected
@@ -134,20 +139,36 @@ exit 2 into exit 1.
 ## Usage
 
 ```
-agent-surface snapshot [path] [--json]
-agent-surface diff  --base <ref> --head <ref|path|snapshot.json> [--json]
-agent-surface check --base <ref> --head <ref> [--fail-on <categories>] [--strict] [--json]
+agent-surface snapshot [side] [--json]
+agent-surface diff  --base <side> --head <side> [--json]
+agent-surface check --base <side> --head <side> [--fail-on <categories>] [--strict] [--allow-in-repo] [--json]
 agent-surface explain <ID>
 ```
 
-Either side may be a ref, a directory (worktree), or a saved `snapshot.json`. When neither
+A side names what to read and says so explicitly:
+
+| spelling | side |
+| --- | --- |
+| `ref:<git ref>` | the commit the ref resolves to (`ref:origin/main`, `ref:HEAD`, `ref:<sha>`) |
+| `dir:<directory>` | a worktree, read from the filesystem |
+| `snapshot:<file>` | a saved `snapshot.json` |
+| `<git ref>` | a bare spec is always a git ref, never a path |
+| `.` | the current worktree; the one bare spelling that is not a ref |
+
+The kind is decided from the spelling alone. The tool never looks at the filesystem to
+decide what a spec is, so a file named `HEAD` or a directory named `main` added by the
+change under review can never replace the ref of the same name; a bare spec that does not
+resolve exits 3 with a hint to write `dir:` or `snapshot:`. `check` refuses a `dir:` or
+`snapshot:` side that lies inside the repository being checked (its content belongs to the
+change under review) unless `--allow-in-repo` is given; `diff` and `snapshot` accept it
+with a warning on stderr. The worktree root itself (`.`) is always accepted. When neither
 side carries any supported file the tool prints the header and
 "no repository-controlled agent configuration found" and exits 0.
 
 ## Inputs (V0)
 
-Read from Git blobs at each ref, or from a directory, or from a saved `snapshot.json`;
-never from textual `git diff`:
+Read from Git blobs at a commit (`ref:`), or from a directory (`dir:`), or from a saved
+`snapshot.json` (`snapshot:`); never from textual `git diff`:
 
 - `.claude/settings.json`
 - `.claude/settings.local.json`, only when tracked by Git (flagged as "local file
@@ -202,8 +223,11 @@ Security posture (details and the disclosure process in `SECURITY.md`): nothing 
 executed or expanded; inputs are limited to 1 MiB and a nesting depth of 32; JSON objects
 are prototype-less so `__proto__` and `constructor` keys are plain data; worktree reads
 are symlink-aware and refuse links that leave the repository root; permission errors are
-reported as `incomplete`, never as "clean". Only `git show`, `git rev-parse`, and
-`git ls-files` are ever spawned, always as an argument array and never through a shell.
+reported as `incomplete`, never as "clean"; a side's kind comes from its spelling
+(`ref:`, `dir:`, `snapshot:`), never from a stat of the filesystem, and `check` refuses a
+directory or snapshot inside the repository being checked unless `--allow-in-repo` is
+given. Only `git show`, `git rev-parse`, and `git ls-files` are ever spawned, always as an
+argument array and never through a shell.
 The test suite runs the whole golden fixture set with `child_process` and every network
 entry point monkeypatched to fail.
 
@@ -228,25 +252,32 @@ the diff classifies the deltas.
 | --- | --- | --- |
 | `perm` | `perm:<allow\|ask\|deny>:<canonical rule>` | `{raw, rule, tool, spec, wildcard}` |
 | `mode` | `mode:defaultMode`, `mode:disableBypassPermissionsMode` | `{raw, mode}` |
-| `hook` | `hook:<event>:<matcher>:<sha256(command)>` | `{event, matcher, type, command, prompt, timeout}`; one per hook command, recorded and hashed, never executed |
-| `mcp` | `mcp:<server-name>` | `{transport, type_raw, command, args, url, env_keys, header_keys, extra}`; env and header values are never carried |
+| `hook` | `hook:<event>:<matcher>:<sha256(command)>` | `{event, matcher, type, command, prompt, timeout}`; one per hook command, recorded and hashed, never executed. The hash is of the raw command; the displayed `command` is redacted, and a redacted field gains a sibling `command_sha256` / `prompt_sha256` of the raw text |
+| `mcp` | `mcp:<server-name>` | `{transport, type_raw, command, args, url, env, headers, extra}`; `env` and `headers` map each name to `{redacted: true, length, sha256}` of the raw value, so a changed value is a changed entry while the value itself is never carried |
 | `dir` | `dir:<path>` (from `permissions.additionalDirectories`) | `{raw, path}` |
 | `sandbox` | `sandbox:<key>` | the value as written |
-| `env_key` | `env_key:<NAME>` (from top-level `env`) | always `"<redacted>"` |
-| `helper` | `helper:<apiKeyHelper\|awsAuthRefresh\|awsCredentialExport\|otelHeadersHelper>` | `{command}` |
+| `env_key` | `env_key:<NAME>` (from top-level `env`) | `{redacted: true, length, sha256}` of the raw value, never the value; a name on the sensitive list that is set or changed widens (category `env`), any other value change is unresolved |
+| `helper` | `helper:<apiKeyHelper\|awsAuthRefresh\|awsCredentialExport\|otelHeadersHelper>` | `{command}`, plus `command_sha256` of the raw text when the displayed command was redacted |
 | `plugin_flag` | `plugin_flag:<enabledPlugins\|enableAllProjectMcpServers\|disableAllHooks\|enabledMcpjsonServers\|disabledMcpjsonServers>` | as written; the two server lists carry `{raw, names}` |
 | `unknown` | `unknown:<json_pointer>` | the value as written (redacted); any key the extractor does not model, never dropped |
-| `credential` | `credential:<json_pointer>` | `"credential-like value present"`; the literal is replaced by `<redacted>` everywhere |
+| `credential` | `credential:<json_pointer>` | `{note: "credential-like value present", patterns, sha256}`; the literal is replaced by `<redacted>` everywhere, and `sha256` is the digest of the raw string it was found in, so a literal that changes is a changed entry |
 
 Rule strings are canonicalized so that a reformat never looks like a change
 (`Bash(npm run:*)` and `Bash(npm run *)` share one key; `Bash(npm run)` is a different,
 exact key); the decisions are in `docs/normalization.md`. The snapshot shape is documented
-in `docs/snapshot.schema.json` (JSON Schema 2020-12). A saved snapshot is accepted
-wherever a ref is; a file written by another `schema_version` is refused with exit 3.
+in `docs/snapshot.schema.json` (JSON Schema 2020-12). A saved snapshot is accepted on
+either side as `snapshot:<file>`; a file written by another `schema_version` is refused
+with exit 3, and an `origin.sha` that is not a commit id is dropped rather than printed.
 
 Credential-like literals (`sk-…`, `AKIA…`, GitHub and Slack tokens, `Bearer …`, PEM
 private keys, long opaque values under keys named like token/secret/key/password) are
-detected by `src/redact.ts`, which every renderer reuses.
+detected by `src/redact.ts`, which every renderer reuses. Redaction changes what is
+displayed, never what is compared: entry identity and semantic equality are computed over
+the raw text (a hook key hashes the raw command; a redacted MCP `command`, `args` or `url`
+and a redacted helper command carry a sibling `<field>_sha256` of the raw text; a
+`credential` entry carries the digest of the raw string), so two commands that differ only
+inside a redacted span are still different entries. A PEM `BEGIN` line without its `END`
+line is not a key block and is not redacted.
 
 ## Diff shape (`--json`)
 

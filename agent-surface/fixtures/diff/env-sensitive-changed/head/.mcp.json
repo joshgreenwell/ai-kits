@@ -1,0 +1,18 @@
+// origin: synthetic
+// ref: SRF-3 env and header values are compared by digest
+// completeness: complete (Authorization and the docs server's NODE_OPTIONS change; X-Example and DOCS_ROOT do not; every value is synthetic)
+// excerpt_or_raw: raw
+{
+  "mcpServers": {
+    "chat": {
+      "type": "http",
+      "url": "https://example.invalid/mcp",
+      "headers": { "Authorization": "Bearer SYNTHETIC-header-token-111111111111", "X-Example": "1" }
+    },
+    "docs": {
+      "command": "npx",
+      "args": ["-y", "example-docs-server"],
+      "env": { "NODE_OPTIONS": "--require /tmp/example-preload.js", "DOCS_ROOT": "./docs" }
+    }
+  }
+}

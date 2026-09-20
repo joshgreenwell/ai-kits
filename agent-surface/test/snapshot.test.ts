@@ -178,11 +178,11 @@ describe("snapshot: CLI output (JG-152)", () => {
     const first = runCli(["snapshot", "HEAD", "--json"], repo.dir);
     const saved = path.join(repo.dir, "saved.json");
     fs.writeFileSync(saved, first.stdout);
-    const again = runCli(["snapshot", "saved.json", "--json"], repo.dir);
+    const again = runCli(["snapshot", "snapshot:saved.json", "--json"], repo.dir);
     assert.equal(again.status, EXIT_OK, again.stderr);
     assert.deepEqual(parseSnapshot(again.stdout).entries, parseSnapshot(first.stdout).entries);
     for (const command of ["diff", "check"]) {
-      const run = runCli([command, "--base", "HEAD", "--head", "saved.json", "--json"], repo.dir);
+      const run = runCli([command, "--base", "HEAD", "--head", "snapshot:saved.json", "--json", "--allow-in-repo"], repo.dir);
       assert.equal(run.status, EXIT_OK, `${command}: a snapshot of HEAD diffed against HEAD is no change (${run.stderr})`);
       const output = JSON.parse(run.stdout) as {
         head: { origin: { kind: string }; sources: unknown[] };
@@ -222,7 +222,11 @@ describe("snapshot: credential literal never reaches the output (JG-150)", () =>
     const snapshot = parseSnapshot(runCli(["snapshot", "HEAD", "--json"], repo.dir).stdout);
     const credentials = snapshot.entries.filter((entry) => entry.kind === "credential");
     assert.equal(credentials.length, 10);
-    assert.ok(credentials.every((entry) => entry.value === "credential-like value present"));
+    for (const entry of credentials) {
+      const value = entry.value as { note: string; patterns: string[]; sha256: string };
+      assert.equal(value.note, "credential-like value present");
+      assert.match(value.sha256, /^[0-9a-f]{64}$/, entry.key);
+    }
   });
 });
 
@@ -236,17 +240,17 @@ describe("snapshot: schema-version mismatch and incomplete propagation (JG-152)"
 
   it("a snapshot file with another schema_version exits 3 with a clear message everywhere a ref is accepted", () => {
     const expected = /snapshot schema_version mismatch: file has schema_version 99, this version of agent-surface reads schema_version 1/;
-    const snapshot = runCli(["snapshot", "mismatch.json", "--json"], repo.dir);
+    const snapshot = runCli(["snapshot", "snapshot:mismatch.json", "--json"], repo.dir);
     assert.equal(snapshot.status, EXIT_INCOMPLETE);
     assert.match(snapshot.stderr, expected);
     const output = JSON.parse(snapshot.stdout) as { incomplete: Array<{ path: string; reason: string }> };
-    assert.equal(output.incomplete[0]?.path, "mismatch.json");
+    assert.equal(output.incomplete[0]?.path, "snapshot:mismatch.json");
     assert.match(output.incomplete[0]?.reason ?? "", expected);
     for (const command of ["diff", "check"]) {
-      const asHead = runCli([command, "--base", "HEAD", "--head", "mismatch.json"], repo.dir);
+      const asHead = runCli([command, "--base", "HEAD", "--head", "snapshot:mismatch.json"], repo.dir);
       assert.equal(asHead.status, EXIT_INCOMPLETE, command);
       assert.match(asHead.stderr, expected);
-      const asBase = runCli([command, "--base", "mismatch.json", "--head", "HEAD"], repo.dir);
+      const asBase = runCli([command, "--base", "snapshot:mismatch.json", "--head", "HEAD"], repo.dir);
       assert.equal(asBase.status, EXIT_INCOMPLETE, command);
       assert.match(asBase.stderr, expected);
     }
@@ -266,7 +270,7 @@ describe("snapshot: schema-version mismatch and incomplete propagation (JG-152)"
     for (const command of ["diff", "check"]) {
       for (const side of ["--head", "--base"]) {
         const other = side === "--head" ? "--base" : "--head";
-        const run = runCli([command, side, "incomplete.json", other, "HEAD", "--json"], repo.dir);
+        const run = runCli([command, side, "snapshot:incomplete.json", other, "HEAD", "--json", "--allow-in-repo"], repo.dir);
         assert.equal(run.status, EXIT_INCOMPLETE, `${command} ${side}`);
         const output = JSON.parse(run.stdout) as { incomplete: Array<{ path: string; reason: string; lines: number[] | null }> };
         assert.ok(
@@ -274,7 +278,7 @@ describe("snapshot: schema-version mismatch and incomplete propagation (JG-152)"
           `${command} ${side}: saved incomplete missing from ${JSON.stringify(output.incomplete)}`,
         );
         assert.match(run.stderr, /incomplete: \.claude\/settings\.json: permissions\.allow element is number/);
-        const text = runCli([command, side, "incomplete.json", other, "HEAD"], repo.dir);
+        const text = runCli([command, side, "snapshot:incomplete.json", other, "HEAD", "--allow-in-repo"], repo.dir);
         assert.equal(text.status, EXIT_INCOMPLETE);
         assert.match(text.stdout, /permissions\.allow element is number/);
       }

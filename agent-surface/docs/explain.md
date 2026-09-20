@@ -272,7 +272,23 @@ The server keeps its name but what runs or where it connects changed; treated li
 - tier: unresolved
 - cites: the JG-153 direction table (no interpretation involved)
 
-Only env or header key names, or fields outside the documented set, changed. The effect is not modeled; unresolved.
+Only env or header key names (added or removed, none of them sensitive), or fields outside the documented set, changed. The effect is not modeled; unresolved.
+
+### `D-env-sensitive-set` — sensitive env value set or changed
+
+- direction: widens
+- tier: proven
+- cites: the JG-153 direction table (no interpretation involved)
+
+A variable on the sensitive list was set, or its value changed, in the top-level env block or in an MCP server's env: ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY, NODE_OPTIONS, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, PATH, LD_PRELOAD, and every CLAUDE_CODE_* or DYLD_* name (compared case-insensitively). These decide where the agent or the server sends its traffic and what code its process loads, so a new value is a new capability (category env). The value is never carried: the entry holds its length and sha256, the note says only that the digest differs.
+
+### `D-env-value-changed` — env or header value changed
+
+- direction: unknown
+- tier: unresolved
+- cites: the JG-153 direction table (no interpretation involved)
+
+The value of an env variable outside the sensitive list changed (top-level env), or an MCP server's env or header value changed while its transport, command, args and url stayed the same. The entry carries only the value's length and sha256, so the tool sees that the value changed but cannot say what the change does; unresolved, so it is reviewed rather than passed.
 
 ### `D-enable-all-mcp` — enableAllProjectMcpServers set to true
 
@@ -376,7 +392,7 @@ The key exists on both sides with an identical value but its location changed, e
 - tier: unresolved
 - cites: the JG-153 direction table (no interpretation involved)
 
-sandbox, env, helper commands, plugin lists, disableBypassPermissionsMode, unknown keys and credential-like literals have no direction rule. The delta is reported as unresolved so it is never rendered as clean.
+sandbox, env additions and removals outside the sensitive list, helper commands, plugin lists, disableBypassPermissionsMode, unknown keys and credential-like literals have no direction rule. The delta is reported as unresolved so it is never rendered as clean.
 
 ## Verdict categories (JG-155)
 
@@ -421,6 +437,12 @@ disableAllHooks went from true to false (or was removed while true), so every co
 - fails by default: yes
 
 A permissions.deny rule disappeared. Whatever it blocked is no longer blocked by the repository; the direction is proven from the list semantics regardless of the rule's breadth.
+
+### `env` — Sensitive environment value set or changed
+
+- fails by default: yes
+
+A variable on the sensitive list (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY, NODE_OPTIONS, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, PATH, LD_PRELOAD, and every CLAUDE_CODE_* or DYLD_* name) was set or had its value changed, in the top-level env block or in an MCP server's env. Such a value redirects the agent's traffic or loads code into its process. The value is never carried: an entry holds only its length and sha256, and the delta says that the digest differs (direction rule D-env-sensitive-set).
 
 ### `scoped-allow` — Scoped allow rule added (annotate-only by default)
 

@@ -33,7 +33,7 @@ describe("verdict: expands derives from proven entries only (JG-155)", () => {
     assert.deepEqual(cases.diff("i8-ignored-shapes").summary.categories, []);
   });
 
-  it("every default failing category is reachable: hook, mcp (incl. enableAllProjectMcpServers), mode, whole-tool-allow, directory, hooks-reenabled, deny-removed", () => {
+  it("every default failing category is reachable: hook, mcp (incl. enableAllProjectMcpServers), mode, whole-tool-allow, directory, hooks-reenabled, deny-removed, env", () => {
     const reached: Record<string, string> = {
       hook: "hook-added",
       mcp: "mcp-added",
@@ -42,6 +42,7 @@ describe("verdict: expands derives from proven entries only (JG-155)", () => {
       directory: "dir-added",
       "hooks-reenabled": "disable-all-hooks-off",
       "deny-removed": "deny-removed",
+      env: "env-sensitive-changed",
     };
     for (const category of DEFAULT_FAILING_CATEGORIES) {
       const diff = cases.diff(reached[category] ?? "");

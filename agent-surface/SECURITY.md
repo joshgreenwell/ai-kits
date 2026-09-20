@@ -31,6 +31,14 @@ new patch version and noted in `CHANGELOG.md`; credit is given if wanted.
 - **Expand environment variables.** `${VAR}` and `$VAR` in commands, arguments, URLs and
   `env` values are rendered literally and reported as variable references; the process
   environment is never consulted for output.
+- **Guess what a side is.** `--base`, `--head` and the `snapshot` argument name their kind
+  in the spelling: `ref:<git ref>`, `dir:<directory>`, `snapshot:<file>`; a bare spec is
+  always a git ref and only `.` means the current worktree. The filesystem is never
+  consulted to classify a spec, so a file named `HEAD` or a directory named `main` that a
+  change adds can never be read in place of the ref. `check` refuses a `dir:` or
+  `snapshot:` side inside the repository being checked (its content belongs to the change
+  under review) unless `--allow-in-repo` is given; `diff` and `snapshot` warn. A snapshot
+  file's `origin.sha` is carried only when it is a well-formed commit id.
 - **Read outside the repository.** Only `.claude/settings.json`, a tracked
   `.claude/settings.local.json` and `.mcp.json` at the requested side are read. User,
   managed and `~/.claude.json` settings are never opened. Worktree reads are symlink-aware:
@@ -39,9 +47,21 @@ new patch version and noted in `CHANGELOG.md`; credit is given if wanted.
 - **Carry secrets.** Credential-like literals (`sk-…`, `AKIA…`, GitHub, Slack and Bearer
   tokens, PEM private-key blocks, long opaque values under keys named like token / secret /
   key / password) are replaced by `<redacted>` before any value is copied, and reported as
-  "credential-like value present" at their JSON pointer. `env` values are never carried at
-  all. Hook hashes are computed over the redacted command so no key derives from a secret.
-  Every renderer passes its output through the same redaction a final time.
+  "credential-like value present" at their JSON pointer. `env` values and MCP `env` /
+  `headers` values are never carried at all: each is represented by its length and sha256,
+  so a changed value is reported (a name on the sensitive list — `ANTHROPIC_BASE_URL`, the
+  proxy variables, `NODE_OPTIONS`, `PATH`, `LD_PRELOAD`, `CLAUDE_CODE_*`, `DYLD_*`, … — as a
+  proven widening) without the value ever being printed. Every renderer passes its output
+  through the same redaction a final time.
+- **Let redaction hide a change.** Identity and equality are computed over the raw text,
+  display over the redacted text: a hook key hashes the raw command, a redacted MCP
+  `command` / `args` / `url` or helper command carries a sibling `<field>_sha256` of the
+  raw text, and a `credential` entry carries the sha256 of the raw string it was found in.
+  Two commands that differ only inside a redacted span are therefore different entries,
+  and a PEM `BEGIN` line without an `END` line is not treated as a key block (it used to
+  swallow the rest of the command). A sha256 of a whole command reveals nothing in
+  practice; a short or low-entropy value can still be guessed from its digest, so treat
+  the output as sensitive when the input is.
 - **Render an incomplete scan as clean.** Unparseable input, duplicate keys, a missing
   ref, a permission error or an oversized file yields `incomplete` and exit 3, with the
   reason and, where known, the line numbers; expansions found alongside are still

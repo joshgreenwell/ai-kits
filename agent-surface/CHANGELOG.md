@@ -3,6 +3,48 @@
 All notable changes to `agent-surface`. Interpretation changes name the interpretation
 ID and the date of the Claude Code documentation they were checked against.
 
+## Unreleased
+
+Security fixes from the control-surface audit (SRF-1 … SRF-3). Interpretations unchanged;
+`semantics_doc_date` stays **2026-09-07**.
+
+- **SRF-1 (critical):** a `--base` / `--head` / `snapshot` argument is no longer
+  classified by looking at the filesystem. The kind is explicit in the spelling —
+  `ref:<git ref>`, `dir:<directory>`, `snapshot:<file>` — and a bare spec is always a git
+  ref (only `.` still means the current worktree). Before, a change that added a file
+  named `HEAD` or a directory named `main` made `check --base main --head HEAD` compare
+  the change against content the change supplied and exit 0. `check` now also refuses a
+  `dir:` or `snapshot:` side that lies inside the repository being checked unless
+  `--allow-in-repo` is given (`diff` and `snapshot` warn), a bare spec that does not
+  resolve exits 3 with a hint, and a snapshot file's `origin.sha` is dropped unless it is
+  a commit id. Documentation and the CI example name both sides by SHA
+  (`--base ref:${{ github.event.pull_request.base.sha }} --head ref:${{ github.sha }}`).
+  Existing invocations that passed a directory or a snapshot file without a prefix must
+  add `dir:` / `snapshot:`.
+- **SRF-2 (high):** redaction no longer hides a change. The private-key pattern required
+  only a `BEGIN … PRIVATE KEY` line and swallowed everything after it when no `END` line
+  followed, and hook keys, MCP `command` / `args` / `url` and helper commands were hashed
+  and compared after redaction, so `echo '-----BEGIN PRIVATE KEY-----'; curl … | sh` was
+  indistinguishable from the base hook. The pattern now needs the `END` line; the hook key
+  hashes the raw command; a redacted MCP or helper field carries a sibling
+  `<field>_sha256` of the raw text (and `D-mcp-changed` fires on it); a `credential` entry
+  is now `{note, patterns, sha256}` with the digest of the raw string, so any redacted
+  literal that changes is a changed (unresolved) entry; and a delta whose text was
+  redacted carries a note saying so. Displayed values stay redacted everywhere.
+- **SRF-3 (high):** `env` values and MCP `env` / `headers` values are compared. They were
+  never carried at all (only key names), so repointing `ANTHROPIC_BASE_URL` or changing
+  `NODE_OPTIONS` in an existing key exited 0. Each value is now represented by
+  `{redacted: true, length, sha256}` of the raw value (never the value), so a change is a
+  `changed` delta. New direction rules: `D-env-sensitive-set` (proven `widens`, new
+  default-failing category `env`) when a name on the documented sensitive list —
+  `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`,
+  `NO_PROXY`, `NODE_OPTIONS`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `PATH`, `LD_PRELOAD`,
+  `CLAUDE_CODE_*`, `DYLD_*` (case-insensitive) — is set or changed in `env` or in an MCP
+  server's `env`; `D-env-value-changed` (`unresolved`, exit 2) for any other env or header
+  value change. The `mcp` entry value now carries `env` and `headers` digest maps in place
+  of `env_keys` / `header_keys`; the `env_key` value is the digest object instead of
+  `"<redacted>"`. `--fail-on` accepts `env`; the golden `fail_on.categories` include it.
+
 ## 0.0.1 — 2026-09-09
 
 Initial release (V0).

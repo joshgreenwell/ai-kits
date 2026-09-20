@@ -13,6 +13,35 @@ import { NON_WIDENING_MODES, WIDENING_MODES } from "./interpretations/i5-default
 import { isObject, permList as permListOf } from "./interpretations/shared.js";
 import type { ChangeKind, Direction, Entry, EntryKind, JsonValue, Tier } from "./types.js";
 
+/**
+ * Env variable names whose value decides where the agent (or a server it
+ * starts) sends its traffic or what code its process loads. A set or
+ * changed value for one of these is a proven widening (category env).
+ * Names are compared case-insensitively.
+ */
+export const SENSITIVE_ENV_NAMES: readonly string[] = [
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_AUTH_TOKEN",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "NODE_OPTIONS",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+  "PATH",
+  "LD_PRELOAD",
+];
+
+/** Name prefixes treated like `SENSITIVE_ENV_NAMES`. */
+export const SENSITIVE_ENV_PREFIXES: readonly string[] = ["CLAUDE_CODE_", "DYLD_"];
+
+/** True when `name` is on the sensitive list (case-insensitive). */
+export function isSensitiveEnvName(name: string): boolean {
+  const upper = name.toUpperCase();
+  return SENSITIVE_ENV_NAMES.includes(upper) || SENSITIVE_ENV_PREFIXES.some((prefix) => upper.startsWith(prefix));
+}
+
 export interface DirectionRule {
   /** `D-…` identifier used in `Delta.rule` and by `explain`. */
   id: string;
@@ -122,7 +151,23 @@ export const DIRECTION_RULES: readonly DirectionRule[] = [
     title: "MCP env/header key names or extra fields changed",
     direction: "unknown",
     tier: "unresolved",
-    explain: "Only env or header key names, or fields outside the documented set, changed. The effect is not modeled; unresolved.",
+    explain: "Only env or header key names (added or removed, none of them sensitive), or fields outside the documented set, changed. The effect is not modeled; unresolved.",
+  },
+  {
+    id: "D-env-sensitive-set",
+    title: "sensitive env value set or changed",
+    direction: "widens",
+    tier: "proven",
+    explain:
+      "A variable on the sensitive list was set, or its value changed, in the top-level env block or in an MCP server's env: ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY, NODE_OPTIONS, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, PATH, LD_PRELOAD, and every CLAUDE_CODE_* or DYLD_* name (compared case-insensitively). These decide where the agent or the server sends its traffic and what code its process loads, so a new value is a new capability (category env). The value is never carried: the entry holds its length and sha256, the note says only that the digest differs.",
+  },
+  {
+    id: "D-env-value-changed",
+    title: "env or header value changed",
+    direction: "unknown",
+    tier: "unresolved",
+    explain:
+      "The value of an env variable outside the sensitive list changed (top-level env), or an MCP server's env or header value changed while its transport, command, args and url stayed the same. The entry carries only the value's length and sha256, so the tool sees that the value changed but cannot say what the change does; unresolved, so it is reviewed rather than passed.",
   },
   {
     id: "D-enable-all-mcp",
@@ -215,7 +260,7 @@ export const DIRECTION_RULES: readonly DirectionRule[] = [
     direction: "unknown",
     tier: "unresolved",
     explain:
-      "sandbox, env, helper commands, plugin lists, disableBypassPermissionsMode, unknown keys and credential-like literals have no direction rule. The delta is reported as unresolved so it is never rendered as clean.",
+      "sandbox, env additions and removals outside the sensitive list, helper commands, plugin lists, disableBypassPermissionsMode, unknown keys and credential-like literals have no direction rule. The delta is reported as unresolved so it is never rendered as clean.",
   },
 ];
 
@@ -251,10 +296,71 @@ function boolValue(entry: Entry | null): boolean | null {
   return entry !== null && typeof entry.value === "boolean" ? entry.value : null;
 }
 
-const MCP_TRANSPORT_FIELDS = ["transport", "command", "args", "url"] as const;
+const MCP_TRANSPORT_FIELDS = ["transport", "command", "args", "url", "command_sha256", "args_sha256", "url_sha256"] as const;
+
+/**
+ * Note for a delta whose entries carry `<field>_sha256` digests: a
+ * credential-like literal was redacted from the displayed text, and the
+ * comparison used the sha256 of the raw text instead (SRF-2).
+ */
+export function redactionNotes(base: Entry | null, head: Entry | null): string[] {
+  const fields = new Set<string>();
+  for (const entry of [base, head]) {
+    if (entry !== null && isObject(entry.value)) {
+      for (const name of Object.keys(entry.value)) {
+        if (name.endsWith("_sha256")) {
+          fields.add(name.slice(0, -"_sha256".length));
+        }
+      }
+    }
+  }
+  if (fields.size === 0) {
+    return [];
+  }
+  return [`credential-like literal redacted in ${[...fields].sort().join(", ")}; compared by sha256 of the raw text, never printed`];
+}
 
 function field(entry: Entry, name: string): JsonValue | null {
   return isObject(entry.value) ? (entry.value[name] ?? null) : null;
+}
+
+/** sha256 digests of an `env` / `headers` map on an MCP entry, by name. */
+function digestsOf(entry: Entry | null, mapName: "env" | "headers"): Map<string, string> {
+  const out = new Map<string, string>();
+  const map = entry === null ? null : field(entry, mapName);
+  if (isObject(map)) {
+    for (const name of Object.keys(map)) {
+      const digest = map[name];
+      if (isObject(digest) && typeof digest["sha256"] === "string") {
+        out.set(name, digest["sha256"]);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Env / header values of an MCP entry whose digest differs between the
+ * sides: `sensitive` names (env only) that were set or changed, and
+ * `other` names present on both sides with a different digest. Never
+ * looks at a value, only at its digest.
+ */
+export function changedMcpValues(base: Entry, head: Entry): { sensitive: string[]; other: string[] } {
+  const sensitive: string[] = [];
+  const other: string[] = [];
+  for (const mapName of ["env", "headers"] as const) {
+    const before = digestsOf(base, mapName);
+    const after = digestsOf(head, mapName);
+    for (const [name, digest] of [...after.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+      const previous = before.get(name);
+      if (mapName === "env" && isSensitiveEnvName(name) && previous !== digest) {
+        sensitive.push(`env ${name}`);
+      } else if (previous !== undefined && previous !== digest) {
+        other.push(`${mapName === "env" ? "env" : "header"} ${name}`);
+      }
+    }
+  }
+  return { sensitive, other };
 }
 
 /** Top-level value fields whose canonical JSON differs between two object values. */
@@ -330,6 +436,11 @@ export function classifyDirection(change: ChangeKind, kind: EntryKind, key: stri
   if (change === "moved") {
     return result("D-moved");
   }
+  const classified = classifyByKind(change, kind, key, base, head);
+  return { ...classified, notes: [...classified.notes, ...redactionNotes(base, head)] };
+}
+
+function classifyByKind(change: Exclude<ChangeKind, "moved">, kind: EntryKind, key: string, base: Entry | null, head: Entry | null): DirectionResult {
   switch (kind) {
     case "perm": {
       const subject = head ?? base;
@@ -366,7 +477,30 @@ export function classifyDirection(change: ChangeKind, kind: EntryKind, key: stri
       }
       const fields = base !== null && head !== null ? changedFields(base, head) : [];
       const note = `changed fields: ${fields.join(", ")}`;
-      return fields.some((name) => (MCP_TRANSPORT_FIELDS as readonly string[]).includes(name)) ? result("D-mcp-changed", [note]) : result("D-mcp-attrs-changed", [note]);
+      if (fields.some((name) => (MCP_TRANSPORT_FIELDS as readonly string[]).includes(name))) {
+        return result("D-mcp-changed", [note]);
+      }
+      const values = base !== null && head !== null ? changedMcpValues(base, head) : { sensitive: [], other: [] };
+      if (values.sensitive.length > 0) {
+        return result("D-env-sensitive-set", [note, `sensitive value set or changed (digest differs): ${values.sensitive.join(", ")}`]);
+      }
+      if (values.other.length > 0) {
+        return result("D-env-value-changed", [note, `value changed (digest differs): ${values.other.join(", ")}`]);
+      }
+      return result("D-mcp-attrs-changed", [note]);
+    }
+    case "env_key": {
+      const name = key.slice("env_key:".length);
+      if (change === "removed") {
+        return result("D-unknown", [`env ${name} removed`]);
+      }
+      if (isSensitiveEnvName(name)) {
+        return result("D-env-sensitive-set", [change === "added" ? `sensitive env ${name} set` : `sensitive env ${name} value changed (digest differs)`]);
+      }
+      if (change === "changed") {
+        return result("D-env-value-changed", [`env ${name} value changed (digest differs)`]);
+      }
+      return result("D-unknown", [`env ${name} added`]);
     }
     case "dir":
       return result(change === "added" ? "D-dir-added" : change === "removed" ? "D-dir-removed" : "D-moved");

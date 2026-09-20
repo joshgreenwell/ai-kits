@@ -46,8 +46,11 @@ spelling the author used is always available in `value.raw`.
   interpreted).
 - `hook:<event>:<matcher>:<sha256(command)>`: the event and matcher are used verbatim (a
   matcher is a regular expression; whitespace can be significant). The hash is computed over
-  the command text after credential redaction, so no output carries a digest derived from a
-  credential literal. A changed command is a changed key.
+  the raw command text, before credential redaction, so a command that changes only inside
+  a redacted span is still a changed key; the displayed `command` is the redacted text and,
+  when the two differ, `command_sha256` repeats the digest. A changed command is a changed
+  key. The same rule gives a redacted MCP `command` / `args` / `url` and a redacted helper
+  command a sibling `<field>_sha256`, and a `credential` entry the digest of the raw string.
 - `mcp:<server-name>`: the name is used verbatim.
 - `env_key:<NAME>`, `sandbox:<key>`, `helper:<key>`, `plugin_flag:<key>`: the key is the
   property name verbatim.

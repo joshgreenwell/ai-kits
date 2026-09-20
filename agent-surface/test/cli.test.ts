@@ -8,9 +8,9 @@ import { VERSION } from "../src/version.js";
 import { PACKAGE_JSON, git, makeRepo, removeDir, runCli, stubSpawner, tempDir } from "./helpers.js";
 
 const SIGNATURES = [
-  "snapshot [path] [--json]",
-  "diff --base <ref> --head <ref|path|snapshot.json> [--json]",
-  "check --base <ref> --head <ref> [--fail-on <categories>] [--strict] [--json]",
+  "snapshot [side] [--json]",
+  "diff --base <side> --head <side> [--json]",
+  "check --base <side> --head <side> [--fail-on <categories>] [--strict] [--allow-in-repo] [--json]",
   "explain <ID>",
 ];
 
@@ -125,12 +125,12 @@ describe("CLI: snapshot", () => {
   it("snapshot of a saved snapshot.json reproduces it, with origin marked as snapshot", () => {
     const first = runCli(["snapshot", "HEAD", "--json"], repo.dir);
     fs.writeFileSync(path.join(repo.dir, "saved.json"), first.stdout);
-    const second = runCli(["snapshot", "saved.json", "--json"], repo.dir);
+    const second = runCli(["snapshot", "snapshot:saved.json", "--json"], repo.dir);
     assert.equal(second.status, EXIT_OK, second.stderr);
     const { origin: firstOrigin, ...firstRest } = JSON.parse(first.stdout) as { origin: unknown };
     const { origin: secondOrigin, ...secondRest } = JSON.parse(second.stdout) as { origin: unknown };
     assert.deepEqual(firstOrigin, { kind: "git", spec: "HEAD", sha: repo.sha });
-    assert.deepEqual(secondOrigin, { kind: "snapshot", spec: "saved.json", sha: repo.sha });
+    assert.deepEqual(secondOrigin, { kind: "snapshot", spec: "snapshot:saved.json", sha: repo.sha });
     assert.deepEqual(secondRest, firstRest);
   });
 });
@@ -166,13 +166,13 @@ describe("CLI: malformed input exits 3 with the reason printed", () => {
 
   it("a snapshot file with the wrong shape, and one with another schema version", () => {
     fs.writeFileSync(path.join(malformed.dir, "bad.json"), '{"schema_version": 1, "hello": "world"}');
-    const run = runCli(["snapshot", "bad.json", "--json"], malformed.dir);
+    const run = runCli(["snapshot", "snapshot:bad.json", "--json"], malformed.dir);
     assert.equal(run.status, EXIT_INCOMPLETE);
     assert.match(run.stderr, /not a snapshot file/);
     const output = JSON.parse(run.stdout) as { incomplete: Array<{ path: string }> };
-    assert.deepEqual(output.incomplete.map((item) => item.path), ["bad.json"]);
+    assert.deepEqual(output.incomplete.map((item) => item.path), ["snapshot:bad.json"]);
     fs.writeFileSync(path.join(malformed.dir, "old.json"), '{"schema_version": 99}');
-    const mismatch = runCli(["snapshot", "old.json", "--json"], malformed.dir);
+    const mismatch = runCli(["snapshot", "snapshot:old.json", "--json"], malformed.dir);
     assert.equal(mismatch.status, EXIT_INCOMPLETE);
     assert.match(mismatch.stderr, /snapshot schema_version mismatch: file has schema_version 99, this version of agent-surface reads schema_version 1/);
   });
@@ -204,10 +204,14 @@ describe("CLI: diff and check resolve refs and report missing ones (JG-148)", ()
     assert.ok(!fs.existsSync(path.join(repo.dir, "pwned-marker")));
   });
 
-  it("valid refs, a directory and a snapshot.json all resolve and diff against main as no change", () => {
+  it("bare refs, ref:, dir:, . and snapshot: sides all resolve and diff against main as no change", () => {
     git(repo.dir, "branch", "feature");
-    fs.writeFileSync(path.join(repo.dir, "snap.json"), runCli(["snapshot", "HEAD", "--json"], repo.dir).stdout);
-    for (const head of ["feature", ".", "snap.json", repo.sha]) {
+    const outside = tempDir();
+    const snap = path.join(outside, "snap.json");
+    fs.writeFileSync(snap, runCli(["snapshot", "HEAD", "--json"], repo.dir).stdout);
+    const isWorktree = (head: string): boolean => head === "." || head.startsWith("dir:");
+    const isSnapshot = (head: string): boolean => head.startsWith("snapshot:");
+    for (const head of ["feature", "ref:feature", ".", "dir:.", `snapshot:${snap}`, repo.sha]) {
       const run = runCli(["diff", "--base", "main", "--head", head, "--json"], repo.dir);
       assert.equal(run.status, EXIT_OK, `head ${head}: ${run.stderr}`);
       assert.equal(run.stderr, "");
@@ -223,12 +227,31 @@ describe("CLI: diff and check resolve refs and report missing ones (JG-148)", ()
       };
       assert.deepEqual(output.base.origin, { kind: "git", spec: "main", sha: repo.sha });
       assert.equal(output.base.sha, repo.sha);
-      assert.equal(output.head.origin.kind, head === "." ? "worktree" : head === "snap.json" ? "snapshot" : "git");
-      assert.equal(output.head.sha, head === "." ? null : repo.sha);
+      assert.equal(output.head.origin.kind, isWorktree(head) ? "worktree" : isSnapshot(head) ? "snapshot" : "git");
+      assert.equal(output.head.sha, isWorktree(head) ? null : repo.sha);
       assert.deepEqual([output.added, output.removed, output.changed, output.unresolved, output.incomplete], [[], [], [], [], []]);
       assert.deepEqual(output.summary.verdict, "no-change");
       assert.equal(output.summary.exit_code, 0);
     }
+    removeDir(outside);
+  });
+
+  it("a bare spec that names an existing file or directory is still a ref (exit 3 with a hint)", () => {
+    fs.writeFileSync(path.join(repo.dir, "snap.json"), runCli(["snapshot", "HEAD", "--json"], repo.dir).stdout);
+    fs.mkdirSync(path.join(repo.dir, "checkout"));
+    for (const spec of ["snap.json", "checkout", "./checkout"]) {
+      const run = runCli(["check", "--base", "main", "--head", spec, "--json"], repo.dir);
+      assert.equal(run.status, EXIT_INCOMPLETE, spec);
+      assert.match(run.stderr, new RegExp(`^incomplete: ${spec.replace(/[./]/g, "\\$&")}: missing ref: .*; a directory or snapshot file must be written dir:<path> or snapshot:<path>\n`));
+    }
+    assert.equal(runCli(["snapshot", "snap.json"], repo.dir).status, EXIT_INCOMPLETE);
+  });
+
+  it("--allow-in-repo is a boolean flag on every subcommand and an unknown value form is a usage error", () => {
+    assert.equal(runCli(["check", "--base", "main", "--head", "HEAD", "--allow-in-repo"], repo.dir).status, EXIT_OK);
+    assert.equal(runCli(["diff", "--base", "main", "--head", ".", "--allow-in-repo"], repo.dir).status, EXIT_OK);
+    assert.equal(runCli(["snapshot", "--allow-in-repo"], repo.dir).status, EXIT_OK);
+    assert.equal(runCli(["check", "--base", "main", "--head", "HEAD", "--allow-in-repo=yes"], repo.dir).status, EXIT_USAGE);
   });
 
   it("check accepts --fail-on and --strict and prints the diff header with the verdict", () => {
@@ -256,7 +279,7 @@ describe("CLI: run() in-process with injected dependencies", () => {
           {
             lines: null,
             path: "nope",
-            reason: "missing ref: 'nope' does not resolve to a commit (git: fatal: not a git repository)",
+            reason: "missing ref: 'nope' does not resolve to a commit (git: fatal: not a git repository); a directory or snapshot file must be written dir:<path> or snapshot:<path>",
           },
         ],
         schema_version: 1,

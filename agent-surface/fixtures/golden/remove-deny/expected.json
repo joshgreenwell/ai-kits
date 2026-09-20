@@ -152,6 +152,7 @@
       "categories": [
         "deny-removed",
         "directory",
+        "env",
         "hook",
         "hooks-reenabled",
         "mcp",

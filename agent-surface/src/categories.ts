@@ -16,6 +16,7 @@ export const CATEGORIES = [
   "directory",
   "hooks-reenabled",
   "deny-removed",
+  "env",
   "scoped-allow",
 ] as const;
 
@@ -30,6 +31,7 @@ export const DEFAULT_FAILING_CATEGORIES: readonly Category[] = [
   "directory",
   "hooks-reenabled",
   "deny-removed",
+  "env",
 ];
 
 /** `--fail-on` pseudo-category: projected widenings also exit 1. */
@@ -91,6 +93,13 @@ export const CATEGORY_META: readonly CategoryMeta[] = [
     failing_by_default: true,
     explain:
       "A permissions.deny rule disappeared. Whatever it blocked is no longer blocked by the repository; the direction is proven from the list semantics regardless of the rule's breadth.",
+  },
+  {
+    id: "env",
+    title: "Sensitive environment value set or changed",
+    failing_by_default: true,
+    explain:
+      "A variable on the sensitive list (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY, NODE_OPTIONS, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, PATH, LD_PRELOAD, and every CLAUDE_CODE_* or DYLD_* name) was set or had its value changed, in the top-level env block or in an MCP server's env. Such a value redirects the agent's traffic or loads code into its process. The value is never carried: an entry holds only its length and sha256, and the delta says that the digest differs (direction rule D-env-sensitive-set).",
   },
   {
     id: "scoped-allow",

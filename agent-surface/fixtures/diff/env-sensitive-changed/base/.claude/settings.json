@@ -1,0 +1,11 @@
+// origin: synthetic
+// ref: SRF-3 env and header values are compared by digest
+// completeness: complete (ANTHROPIC_BASE_URL and NODE_OPTIONS are on the sensitive list, PLAIN is not; every value is synthetic)
+// excerpt_or_raw: raw
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.example.invalid",
+    "NODE_OPTIONS": "--max-old-space-size=4096",
+    "PLAIN": "one"
+  }
+}

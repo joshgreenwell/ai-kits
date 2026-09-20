@@ -73,8 +73,9 @@ describe("README, SECURITY.md and CHANGELOG (JG-160)", () => {
     for (const category of DEFAULT_FAILING_CATEGORIES) {
       assert.ok(readme.includes(`\`${category}\``), category);
     }
-    assert.match(readme, /npx agent-surface check --base origin\/main --head HEAD/);
+    assert.match(readme, /npx agent-surface check --base ref:origin\/main --head ref:HEAD/);
     assert.match(readme, /fetch-depth: 0/);
+    assert.match(readme, /--base ref:\$\{\{ github\.event\.pull_request\.base\.sha \}\} --head ref:\$\{\{ github\.sha \}\}/, "the Actions step names both sides by SHA");
     assert.ok(readme.includes(`semantics_doc_date: ${SEMANTICS_DOC_DATE}`));
     for (const { META } of INTERPRETATIONS) {
       assert.ok(readme.includes(`\`${META.id}\``), META.id);

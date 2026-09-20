@@ -25,6 +25,7 @@
  */
 
 import { CREDENTIAL_PRESENT } from "../redact.js";
+import { sideSpecTarget } from "../sidespec.js";
 import type { Delta, Diff, DiffSide, Snapshot } from "../types.js";
 import {
   KIND_GROUPS,
@@ -43,7 +44,7 @@ type Section = "EXPANDED" | "NARROWED" | "CHANGED" | "UNRESOLVED";
 const SECTIONS: readonly Section[] = ["EXPANDED", "NARROWED", "CHANGED", "UNRESOLVED"];
 
 function sideLabel(side: DiffSide): string {
-  return side.sha ?? `${side.origin.kind}:${side.origin.spec}`;
+  return side.sha ?? `${side.origin.kind}:${sideSpecTarget(side.origin.spec)}`;
 }
 
 /** Which section a delta belongs to. Undecided deltas (`Diff.unresolved`) are UNRESOLVED regardless of direction. */

@@ -19,8 +19,10 @@ export {
   GIT_SUBCOMMANDS,
   GitInvocationRefused,
   isTrackedInWorktree,
+  placeSide,
   readBlobAtRef,
   readWorktreeFile,
+  repoToplevel,
   resolveRef,
   resolveSide,
   runGit,
@@ -29,6 +31,7 @@ export {
   type RefResolution,
   type ResolveDeps,
   type Side,
+  type SidePlacement,
   type SideResolution,
   type SpawnOptions,
   type SpawnResult,
@@ -62,6 +65,17 @@ export {
 } from "./entries.js";
 export { normalizeRule, normalizeSpec, type ParsedRule } from "./normalize.js";
 export {
+  COMMIT_SHA_PATTERN,
+  CURRENT_WORKTREE_SPEC,
+  isCommitSha,
+  parseSideSpec,
+  PATH_SPEC_HINT,
+  SIDE_SPEC_PREFIXES,
+  sideSpecTarget,
+  type SideSpec,
+  type SideSpecKind,
+} from "./sidespec.js";
+export {
   CREDENTIAL_PRESENT,
   looksLikeCredential,
   REDACTED,
@@ -75,7 +89,19 @@ export {
 export { BASE_ASSUMPTIONS, takeSnapshot, type SnapshotResult } from "./snapshot.js";
 export { CATEGORIES, CATEGORY_META, DEFAULT_FAILING_CATEGORIES, PROJECTED_PSEUDO_CATEGORY, type Category, type CategoryMeta } from "./categories.js";
 export { allDeltas, categorize, diffSnapshots } from "./diff.js";
-export { changedFields, classifyDirection, DIRECTION_RULES, findDirectionRule, type DirectionResult, type DirectionRule } from "./direction.js";
+export {
+  changedFields,
+  changedMcpValues,
+  classifyDirection,
+  DIRECTION_RULES,
+  findDirectionRule,
+  isSensitiveEnvName,
+  redactionNotes,
+  SENSITIVE_ENV_NAMES,
+  SENSITIVE_ENV_PREFIXES,
+  type DirectionResult,
+  type DirectionRule,
+} from "./direction.js";
 export { explain, explainEntries, explainIds, renderExplain, renderInterpretationsDoc, type ExplainEntry, type ExplainKind } from "./explain.js";
 export {
   applyInterpretations,

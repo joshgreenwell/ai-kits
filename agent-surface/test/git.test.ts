@@ -10,17 +10,20 @@ import {
   GitInvocationRefused,
   defaultFs,
   isTrackedInWorktree,
+  placeSide,
   readBlobAtRef,
   readWorktreeFile,
+  repoToplevel,
   resolveRef,
   resolveSide,
   runGit,
   type FsAdapter,
 } from "../src/git.js";
 import { parseJsonc } from "../src/jsonc.js";
+import { parseSideSpec, sideSpecTarget } from "../src/sidespec.js";
 import { takeSnapshot } from "../src/snapshot.js";
 import { validateSnapshotShape } from "../src/snapshotfile.js";
-import { git, makeRepo, recordingFs, recordingSpawner, removeDir, stubSpawner, tempDir } from "./helpers.js";
+import { git, makeRepo, recordingFs, recordingSpawner, removeDir, stubSpawner, symlinkOrSkip, tempDir } from "./helpers.js";
 
 const METACHAR_REFS = [
   "main; touch pwned-marker",
@@ -53,7 +56,7 @@ describe("git: only allow-listed subcommands ever run (JG-148)", () => {
     const gitSide = resolveSide("main", { cwd: repo.dir, spawner });
     assert.ok(gitSide.ok);
     discover(gitSide.side, { spawner });
-    const worktree = resolveSide(repo.dir, { cwd: repo.dir, spawner });
+    const worktree = resolveSide(`dir:${repo.dir}`, { cwd: repo.dir, spawner });
     assert.ok(worktree.ok);
     discover(worktree.side, { spawner });
 
@@ -170,11 +173,13 @@ describe("git: reading blobs at a ref without checkout", () => {
     }
   });
 
-  it("does not follow a symlink committed at a ref (the link target text is unparseable)", () => {
+  it("does not follow a symlink committed at a ref (the link target text is unparseable)", (t) => {
     const linked = tempDir();
     try {
       fs.mkdirSync(path.join(linked, ".claude"));
-      fs.symlinkSync("../../outside.json", path.join(linked, ".claude", "settings.json"));
+      if (!symlinkOrSkip(t, "../../outside.json", path.join(linked, ".claude", "settings.json"))) {
+        return;
+      }
       git(linked, "init", "-q", "-b", "main");
       git(linked, "add", "-A");
       git(linked, "commit", "-q", "-m", "symlink");
@@ -217,9 +222,11 @@ describe("git: symlink-aware worktree reads", () => {
     assert.deepEqual(readWorktreeFile(root, "not-a-dir/.mcp.json"), { status: "absent" });
   });
 
-  it("follows a symlink that stays inside the root and notes it", () => {
+  it("follows a symlink that stays inside the root and notes it", (t) => {
     const link = path.join(root, ".claude", "settings.json");
-    fs.symlinkSync(path.join("..", "shared", "settings.json"), link);
+    if (!symlinkOrSkip(t, path.join("..", "shared", "settings.json"), link)) {
+      return;
+    }
     try {
       const read = readWorktreeFile(root, ".claude/settings.json");
       assert.equal(read.status, "present");
@@ -232,9 +239,11 @@ describe("git: symlink-aware worktree reads", () => {
     }
   });
 
-  it("refuses a symlink that resolves outside the root", () => {
+  it("refuses a symlink that resolves outside the root", (t) => {
     const link = path.join(root, ".claude", "settings.json");
-    fs.symlinkSync(path.join(outside, "settings.json"), link);
+    if (!symlinkOrSkip(t, path.join(outside, "settings.json"), link)) {
+      return;
+    }
     try {
       const read = readWorktreeFile(root, ".claude/settings.json");
       assert.equal(read.status, "incomplete");
@@ -248,10 +257,12 @@ describe("git: symlink-aware worktree reads", () => {
     }
   });
 
-  it("refuses a symlinked parent directory that leaves the root", () => {
+  it("refuses a symlinked parent directory that leaves the root", (t) => {
     const linkedRoot = tempDir();
     try {
-      fs.symlinkSync(path.join(outside, "claude-dir"), path.join(linkedRoot, ".claude"));
+      if (!symlinkOrSkip(t, path.join(outside, "claude-dir"), path.join(linkedRoot, ".claude"))) {
+        return;
+      }
       const read = readWorktreeFile(linkedRoot, ".claude/settings.json");
       assert.equal(read.status, "incomplete");
       if (read.status === "incomplete") {
@@ -262,9 +273,11 @@ describe("git: symlink-aware worktree reads", () => {
     }
   });
 
-  it("reports a dangling symlink and a directory in place of a file", () => {
+  it("reports a dangling symlink and a directory in place of a file", (t) => {
     const link = path.join(root, ".claude", "settings.json");
-    fs.symlinkSync("does-not-exist.json", link);
+    if (!symlinkOrSkip(t, "does-not-exist.json", link)) {
+      return;
+    }
     try {
       const read = readWorktreeFile(root, ".claude/settings.json");
       assert.equal(read.status, "incomplete");
@@ -346,34 +359,77 @@ describe("git: tracking detection in a worktree", () => {
   });
 });
 
-describe("git: side resolution (ref | path | snapshot.json)", () => {
+describe("git: side resolution (ref: | dir: | snapshot: | bare ref | .)", () => {
   let repo: { dir: string; sha: string };
   before(() => {
     repo = makeRepo("basic");
   });
   after(() => removeDir(repo.dir));
 
-  it("resolves a ref to a git side with the SHA", () => {
-    const side = resolveSide("main", { cwd: repo.dir });
-    assert.deepEqual(side, { ok: true, side: { kind: "git", spec: "main", sha: repo.sha, cwd: repo.dir } });
+  it("parseSideSpec decides the kind from the spelling alone", () => {
+    assert.deepEqual(parseSideSpec("ref:main"), { kind: "ref", target: "main", explicit: true });
+    assert.deepEqual(parseSideSpec("dir:../elsewhere"), { kind: "dir", target: "../elsewhere", explicit: true });
+    assert.deepEqual(parseSideSpec("snapshot:base.json"), { kind: "snapshot", target: "base.json", explicit: true });
+    assert.deepEqual(parseSideSpec("main"), { kind: "ref", target: "main", explicit: false });
+    assert.deepEqual(parseSideSpec("HEAD"), { kind: "ref", target: "HEAD", explicit: false });
+    assert.deepEqual(parseSideSpec("snapshot.json"), { kind: "ref", target: "snapshot.json", explicit: false }, "a bare file name is a ref, never a file");
+    assert.deepEqual(parseSideSpec("./fixtures"), { kind: "ref", target: "./fixtures", explicit: false }, "a bare path is a ref, never a directory");
+    assert.deepEqual(parseSideSpec("."), { kind: "dir", target: ".", explicit: false }, "the one bare path");
+    assert.deepEqual(parseSideSpec("ref:"), { error: "empty ref spec: 'ref:' names nothing after 'ref:'" });
+    assert.deepEqual(parseSideSpec("dir:"), { error: "empty dir spec: 'dir:' names nothing after 'dir:'" });
+    assert.equal(sideSpecTarget("dir:/tmp/x"), "/tmp/x");
+    assert.equal(sideSpecTarget("main"), "main");
   });
 
-  it("resolves a directory to a worktree side", () => {
-    const side = resolveSide(".", { cwd: repo.dir });
-    assert.deepEqual(side, { ok: true, side: { kind: "worktree", spec: ".", root: repo.dir } });
+  it("resolves a bare spec and a ref: spec to a git side with the SHA", () => {
+    assert.deepEqual(resolveSide("main", { cwd: repo.dir }), { ok: true, side: { kind: "git", spec: "main", sha: repo.sha, cwd: repo.dir } });
+    assert.deepEqual(resolveSide("ref:main", { cwd: repo.dir }), { ok: true, side: { kind: "git", spec: "ref:main", sha: repo.sha, cwd: repo.dir } });
   });
 
-  it("round-trips a saved snapshot.json as a side", () => {
+  it("resolves . and dir:<path> to a worktree side, and requires the directory to exist", () => {
+    assert.deepEqual(resolveSide(".", { cwd: repo.dir }), { ok: true, side: { kind: "worktree", spec: ".", root: repo.dir } });
+    assert.deepEqual(resolveSide("dir:.", { cwd: repo.dir }), { ok: true, side: { kind: "worktree", spec: "dir:.", root: repo.dir } });
+    assert.deepEqual(resolveSide(`dir:${repo.dir}`, { cwd: "/", spawner: stubSpawner({}).spawner }), {
+      ok: true,
+      side: { kind: "worktree", spec: `dir:${repo.dir}`, root: repo.dir },
+    });
+    const missing = resolveSide("dir:no-such-directory", { cwd: repo.dir });
+    assert.ok(!missing.ok);
+    assert.equal(missing.incomplete.path, "dir:no-such-directory");
+    assert.match(missing.incomplete.reason, /^directory cannot be read: ENOENT/);
+    const file = resolveSide("dir:.claude/settings.json", { cwd: repo.dir });
+    assert.ok(!file.ok);
+    assert.equal(file.incomplete.reason, "not a directory");
+  });
+
+  it("never stats a bare spec: an existing file or directory with a ref-like name is still resolved as a ref", () => {
+    fs.mkdirSync(path.join(repo.dir, "feature-dir"));
+    fs.writeFileSync(path.join(repo.dir, "feature-file"), "{}");
+    const { fs: recorder, paths } = recordingFs();
+    for (const spec of ["feature-dir", "feature-file", "./feature-dir", "feature-file/"]) {
+      const side = resolveSide(spec, { cwd: repo.dir, fs: recorder });
+      assert.ok(!side.ok, spec);
+      assert.match(side.incomplete.reason, /^missing ref: .* does not resolve to a commit/);
+      assert.ok(side.incomplete.reason.endsWith("; a directory or snapshot file must be written dir:<path> or snapshot:<path>"), side.incomplete.reason);
+    }
+    assert.deepEqual(paths, [], "no filesystem call for a bare spec");
+    const explicit = resolveSide("ref:feature-dir", { cwd: repo.dir, fs: recorder });
+    assert.ok(!explicit.ok);
+    assert.ok(!explicit.incomplete.reason.includes("dir:<path>"), "no hint for an explicit ref: spec");
+    assert.equal(explicit.incomplete.path, "ref:feature-dir");
+  });
+
+  it("round-trips a saved snapshot.json as a snapshot: side", () => {
     const original = takeSnapshot({ kind: "git", spec: "main", sha: repo.sha, cwd: repo.dir }).snapshot;
     const file = path.join(repo.dir, "snapshot.json");
     fs.writeFileSync(file, canonicalJson(original));
-    const side = resolveSide("snapshot.json", { cwd: repo.dir });
+    const side = resolveSide("snapshot:snapshot.json", { cwd: repo.dir });
     assert.ok(side.ok);
     assert.equal(side.side.kind, "snapshot");
     if (side.side.kind === "snapshot") {
       assert.equal(canonicalJson(side.side.snapshot), canonicalJson(original), "loaded verbatim");
       const reloaded = takeSnapshot(side.side);
-      assert.deepEqual(reloaded.snapshot.origin, { kind: "snapshot", spec: "snapshot.json", sha: repo.sha });
+      assert.deepEqual(reloaded.snapshot.origin, { kind: "snapshot", spec: "snapshot:snapshot.json", sha: repo.sha });
       assert.equal(
         canonicalJson({ ...reloaded.snapshot, origin: null }),
         canonicalJson({ ...original, origin: null }),
@@ -384,16 +440,27 @@ describe("git: side resolution (ref | path | snapshot.json)", () => {
     }
   });
 
-  it("rejects a file that is not a snapshot", () => {
+  it("rejects a file that is not a snapshot, and a forged origin.sha is not carried", () => {
     const file = path.join(repo.dir, "not-a-snapshot.json");
     fs.writeFileSync(file, '{"hello": "world"}');
-    const side = resolveSide("not-a-snapshot.json", { cwd: repo.dir });
+    const side = resolveSide("snapshot:not-a-snapshot.json", { cwd: repo.dir });
     assert.ok(!side.ok);
+    assert.equal(side.incomplete.path, "snapshot:not-a-snapshot.json");
     assert.match(side.incomplete.reason, /not a snapshot file: schema_version must be 1/);
     fs.writeFileSync(file, "{ broken");
-    const broken = resolveSide("not-a-snapshot.json", { cwd: repo.dir });
+    const broken = resolveSide("snapshot:not-a-snapshot.json", { cwd: repo.dir });
     assert.ok(!broken.ok);
     assert.match(broken.incomplete.reason, /snapshot file is not valid JSON/);
+    const missing = resolveSide("snapshot:absent.json", { cwd: repo.dir });
+    assert.ok(!missing.ok);
+    assert.match(missing.incomplete.reason, /snapshot file could not be read/);
+    const original = takeSnapshot({ kind: "git", spec: "main", sha: repo.sha, cwd: repo.dir }).snapshot;
+    for (const forged of ["not-a-sha", "../../etc/passwd", "ABCDEF0123456789ABCDEF0123456789ABCDEF01", 42, null]) {
+      fs.writeFileSync(file, canonicalJson({ ...original, origin: { ...original.origin, sha: forged } }));
+      const loaded = resolveSide("snapshot:not-a-snapshot.json", { cwd: repo.dir });
+      assert.ok(loaded.ok, String(forged));
+      assert.equal(takeSnapshot(loaded.side).snapshot.origin.sha, null, `origin.sha ${String(forged)} is not a commit id`);
+    }
   });
 
   it("validates the top-level snapshot shape field by field", () => {
@@ -409,5 +476,23 @@ describe("git: side resolution (ref | path | snapshot.json)", () => {
     const side = resolveSide("definitely-not-here", { cwd: repo.dir });
     assert.ok(!side.ok);
     assert.match(side.incomplete.reason, /^missing ref/);
+  });
+
+  it("repoToplevel and placeSide: root, inside and outside the repository", () => {
+    const toplevel = repoToplevel(repo.dir);
+    assert.ok(toplevel !== null);
+    assert.equal(toplevel, fs.realpathSync(repo.dir));
+    assert.equal(repoToplevel(repo.dir, stubSpawner({ status: 128 }).spawner), null, "not a repository");
+    fs.mkdirSync(path.join(repo.dir, "nested"), { recursive: true });
+    const outside = tempDir();
+    try {
+      assert.equal(placeSide({ kind: "worktree", spec: ".", root: repo.dir }, toplevel), "root");
+      assert.equal(placeSide({ kind: "worktree", spec: "dir:nested", root: path.join(repo.dir, "nested") }, toplevel), "inside");
+      assert.equal(placeSide({ kind: "snapshot", spec: "snapshot:x", path: path.join(repo.dir, "x.json"), snapshot: {} as never }, toplevel), "inside");
+      assert.equal(placeSide({ kind: "worktree", spec: "dir:out", root: outside }, toplevel), "outside");
+      assert.equal(placeSide({ kind: "git", spec: "main", sha: repo.sha, cwd: repo.dir }, toplevel), null);
+    } finally {
+      removeDir(outside);
+    }
   });
 });

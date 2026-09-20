@@ -1,0 +1,18 @@
+// origin: synthetic
+// ref: SRF-3 env and header values are compared by digest
+// completeness: complete (a header value and a server env value change in head; the transport does not; every value is synthetic)
+// excerpt_or_raw: raw
+{
+  "mcpServers": {
+    "chat": {
+      "type": "http",
+      "url": "https://example.invalid/mcp",
+      "headers": { "Authorization": "Bearer SYNTHETIC-header-token-000000000000", "X-Example": "1" }
+    },
+    "docs": {
+      "command": "npx",
+      "args": ["-y", "example-docs-server"],
+      "env": { "NODE_OPTIONS": "--max-old-space-size=4096", "DOCS_ROOT": "./docs" }
+    }
+  }
+}

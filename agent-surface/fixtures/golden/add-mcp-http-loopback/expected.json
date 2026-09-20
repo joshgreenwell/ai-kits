@@ -21,9 +21,9 @@
         "value": {
           "args": null,
           "command": null,
-          "env_keys": null,
+          "env": null,
           "extra": null,
-          "header_keys": null,
+          "headers": null,
           "name": "local",
           "transport": "http",
           "type_raw": "http",
@@ -62,9 +62,9 @@
         "value": {
           "args": null,
           "command": null,
-          "env_keys": null,
+          "env": null,
           "extra": null,
-          "header_keys": null,
+          "headers": null,
           "name": "local4",
           "transport": "http",
           "type_raw": "http",
@@ -103,9 +103,9 @@
         "value": {
           "args": null,
           "command": null,
-          "env_keys": null,
+          "env": null,
           "extra": null,
-          "header_keys": null,
+          "headers": null,
           "name": "local6",
           "transport": "sse",
           "type_raw": "sse",
@@ -236,6 +236,7 @@
       "categories": [
         "deny-removed",
         "directory",
+        "env",
         "hook",
         "hooks-reenabled",
         "mcp",

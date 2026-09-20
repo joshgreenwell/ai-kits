@@ -9,7 +9,7 @@
  */
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -22,6 +22,16 @@ import { FIXTURES, git, removeDir, tempDir } from "./helpers.js";
 
 const PACKAGE_DIR = fileURLToPath(new URL("../../", import.meta.url));
 
+/**
+ * Run `npm` / `npx` synchronously. On Windows the launchers are `.cmd`
+ * scripts, which Node only runs through a shell; every argument here is a
+ * plain token without whitespace, so nothing needs quoting.
+ */
+function spawnNpm(tool: "npm" | "npx", args: string[], options: Omit<SpawnSyncOptionsWithStringEncoding, "shell">): SpawnSyncReturns<string> {
+  const windows = process.platform === "win32";
+  return spawnSync(windows ? `${tool}.cmd` : tool, args, { ...options, shell: windows });
+}
+
 interface PackEntry {
   filename: string;
   files: Array<{ path: string }>;
@@ -33,7 +43,7 @@ describe("npm pack and npx smoke (JG-160)", () => {
   let files: string[];
   before(() => {
     work = tempDir();
-    const result = spawnSync("npm", ["pack", "--json", "--pack-destination", work], { cwd: PACKAGE_DIR, encoding: "utf8" });
+    const result = spawnNpm("npm", ["pack", "--json", "--pack-destination", work], { cwd: PACKAGE_DIR, encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
     const entries = JSON.parse(result.stdout) as PackEntry[];
     const entry = entries[0];
@@ -69,10 +79,10 @@ describe("npm pack and npx smoke (JG-160)", () => {
       npm_config_loglevel: "error",
     };
     // A bare absolute path is executed as a command by npx; the story's `./agent-surface-<version>.tgz` (relative) or `file:` form names a package.
-    const spec = path.relative(clone, tarball);
+    const spec = path.relative(clone, tarball).split(path.sep).join("/");
     assert.match(spec, /^\.\.\/agent-surface-.*\.tgz$/);
-    const npx = (...args: string[]): ReturnType<typeof spawnSync> =>
-      spawnSync("npx", ["--yes", spec, ...args], { cwd: clone, encoding: "utf8", env: { ...process.env, ...env }, timeout: 120_000 });
+    const npx = (...args: string[]): SpawnSyncReturns<string> =>
+      spawnNpm("npx", ["--yes", spec, ...args], { cwd: clone, encoding: "utf8", env: { ...process.env, ...env }, timeout: 120_000 });
     const check = npx("check", "--base", "HEAD~1", "--head", "HEAD");
     assert.equal(check.status, EXIT_EXPANDS, `stdout: ${String(check.stdout)}\nstderr: ${String(check.stderr)}`);
     const stdout = String(check.stdout);
@@ -83,7 +93,7 @@ describe("npm pack and npx smoke (JG-160)", () => {
     assert.equal(version.status, EXIT_OK, String(version.stderr));
     assert.equal(String(version.stdout).trim(), VERSION);
     // The `-p <pkg> agent-surface …` spelling names the bin explicitly, as `npx agent-surface check …` will after publish.
-    const named = spawnSync("npx", ["--yes", "-p", spec, "agent-surface", "check", "--base", "HEAD~1", "--head", "HEAD", "--json"], {
+    const named = spawnNpm("npx", ["--yes", "-p", spec, "agent-surface", "check", "--base", "HEAD~1", "--head", "HEAD", "--json"], {
       cwd: clone,
       encoding: "utf8",
       env: { ...process.env, ...env },

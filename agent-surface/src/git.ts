@@ -17,6 +17,7 @@ import * as nodeFs from "node:fs";
 import * as path from "node:path";
 
 import { DEFAULT_MAX_BYTES } from "./jsonc.js";
+import { COMMIT_SHA_PATTERN, PATH_SPEC_HINT, parseSideSpec } from "./sidespec.js";
 import { loadSnapshotFile } from "./snapshotfile.js";
 import type { Incomplete, Snapshot } from "./types.js";
 
@@ -120,7 +121,7 @@ function spawnFailure(result: SpawnResult): string {
   return `git could not be run (${err.code ?? err.message})`;
 }
 
-const SHA_PATTERN = /^[0-9a-f]{40,64}$/;
+const SHA_PATTERN = COMMIT_SHA_PATTERN;
 
 /** A resolved ref or the reason it could not be resolved. */
 export type RefResolution = { ok: true; sha: string } | { ok: false; incomplete: Incomplete };
@@ -229,8 +230,15 @@ function describeFsError(err: unknown): string {
   return code ?? (err instanceof Error ? err.message : "unknown filesystem error");
 }
 
+/** Path comparison key: Windows paths compare case-insensitively. */
+function pathKey(target: string): string {
+  return process.platform === "win32" ? target.toLowerCase() : target;
+}
+
 function isInside(root: string, target: string): boolean {
-  return target === root || target.startsWith(root + path.sep);
+  const rootKey = pathKey(root);
+  const targetKey = pathKey(target);
+  return targetKey === rootKey || targetKey.startsWith(rootKey + path.sep);
 }
 
 /**
@@ -341,35 +349,97 @@ export interface ResolveDeps {
 }
 
 /**
- * Resolve a `--base` / `--head` argument.
+ * Resolve a `--base` / `--head` / `snapshot` argument (`sidespec.ts`).
  *
- * An existing directory is a worktree, an existing file is a saved
- * `snapshot.json`, anything else is treated as a git ref. A ref that does
- * not resolve yields `incomplete: missing ref`.
+ * The kind comes from the spelling alone: `ref:<ref>`, `dir:<path>`,
+ * `snapshot:<path>`, a bare git ref, or `.` for the current worktree. A
+ * spec is never stat'ed to decide what it is, so a file or directory the
+ * change under review adds can never stand in for a ref. A `dir:` target
+ * must exist and be a directory (a misspelt path would otherwise scan as
+ * "no configuration"); a ref that does not resolve yields
+ * `incomplete: missing ref`.
  */
 export function resolveSide(spec: string, deps: ResolveDeps): SideResolution {
   const fs = deps.fs ?? defaultFs;
   const spawner = deps.spawner ?? defaultSpawner;
-  const abs = path.resolve(deps.cwd, spec);
-  let stats: nodeFs.Stats | null = null;
-  try {
-    stats = fs.statSync(abs);
-  } catch {
-    stats = null;
+  const parsed = parseSideSpec(spec);
+  if ("error" in parsed) {
+    return { ok: false, incomplete: incompleteOf(spec, parsed.error) };
   }
-  if (stats !== null && stats.isDirectory()) {
-    return { ok: true, side: { kind: "worktree", spec, root: abs } };
-  }
-  if (stats !== null && stats.isFile()) {
-    const loaded = loadSnapshotFile(abs, spec, fs);
-    if (!loaded.ok) {
-      return loaded;
+  switch (parsed.kind) {
+    case "dir": {
+      const abs = path.resolve(deps.cwd, parsed.target);
+      let stats: nodeFs.Stats;
+      try {
+        stats = fs.statSync(abs);
+      } catch (err) {
+        return { ok: false, incomplete: incompleteOf(spec, `directory cannot be read: ${describeFsError(err)}`) };
+      }
+      if (!stats.isDirectory()) {
+        return { ok: false, incomplete: incompleteOf(spec, "not a directory") };
+      }
+      return { ok: true, side: { kind: "worktree", spec, root: abs } };
     }
-    return { ok: true, side: { kind: "snapshot", spec, path: abs, snapshot: loaded.snapshot } };
+    case "snapshot": {
+      const abs = path.resolve(deps.cwd, parsed.target);
+      const loaded = loadSnapshotFile(abs, spec, fs);
+      if (!loaded.ok) {
+        return loaded;
+      }
+      return { ok: true, side: { kind: "snapshot", spec, path: abs, snapshot: loaded.snapshot } };
+    }
+    case "ref": {
+      const resolved = resolveRef(parsed.target, deps.cwd, spawner);
+      if (!resolved.ok) {
+        const reason = parsed.explicit ? resolved.incomplete.reason : `${resolved.incomplete.reason}; ${PATH_SPEC_HINT}`;
+        return { ok: false, incomplete: { ...resolved.incomplete, path: spec, reason } };
+      }
+      return { ok: true, side: { kind: "git", spec, sha: resolved.sha, cwd: deps.cwd } };
+    }
   }
-  const resolved = resolveRef(spec, deps.cwd, spawner);
-  if (!resolved.ok) {
-    return resolved;
+}
+
+/**
+ * Real path of the top-level directory of the repository `cwd` is in, or
+ * `null` when `cwd` is not inside one (or git is unavailable).
+ */
+export function repoToplevel(cwd: string, spawner: Spawner = defaultSpawner, fs: FsAdapter = defaultFs): string | null {
+  const result = runGit(["rev-parse", "--show-toplevel"], cwd, spawner);
+  if (result.error !== null || result.status !== 0) {
+    return null;
   }
-  return { ok: true, side: { kind: "git", spec, sha: resolved.sha, cwd: deps.cwd } };
+  const top = Buffer.from(result.stdout).toString("utf8").trim();
+  if (top === "") {
+    return null;
+  }
+  try {
+    return fs.realpathSync(top);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Where a worktree or snapshot side lies relative to the repository whose
+ * top-level real path is `toplevel`: the root itself (the ordinary "current
+ * worktree" side), strictly inside it (content the change under review
+ * controls), or outside. `null` for a git side, which is not a path.
+ */
+export type SidePlacement = "root" | "inside" | "outside";
+
+export function placeSide(side: Side, toplevel: string, fs: FsAdapter = defaultFs): SidePlacement | null {
+  if (side.kind === "git") {
+    return null;
+  }
+  const target = side.kind === "worktree" ? side.root : side.path;
+  let real: string;
+  try {
+    real = fs.realpathSync(target);
+  } catch {
+    real = path.resolve(target);
+  }
+  if (pathKey(real) === pathKey(toplevel)) {
+    return "root";
+  }
+  return isInside(toplevel, real) ? "inside" : "outside";
 }

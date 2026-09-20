@@ -23,9 +23,9 @@
         "value": {
           "args": null,
           "command": null,
-          "env_keys": null,
+          "env": null,
           "extra": null,
-          "header_keys": null,
+          "headers": null,
           "name": "build",
           "transport": "http",
           "type_raw": "http",
@@ -156,6 +156,7 @@
       "categories": [
         "deny-removed",
         "directory",
+        "env",
         "hook",
         "hooks-reenabled",
         "mcp",

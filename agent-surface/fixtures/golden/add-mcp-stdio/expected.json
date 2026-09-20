@@ -24,9 +24,9 @@
             "example-docs-server"
           ],
           "command": "npx",
-          "env_keys": null,
+          "env": null,
           "extra": null,
-          "header_keys": null,
+          "headers": null,
           "name": "docs",
           "transport": "stdio",
           "type_raw": null,
@@ -157,6 +157,7 @@
       "categories": [
         "deny-removed",
         "directory",
+        "env",
         "hook",
         "hooks-reenabled",
         "mcp",
