@@ -11,7 +11,8 @@ function createDatabase() {
     prepare: false, max: 1, idle_timeout: 5, connect_timeout: 3, max_lifetime: 60,
     ssl: { rejectUnauthorized: true, ca: process.env.DATABASE_CA_CERT?.replace(/\\n/g, '\n') },
   });
-  // Usage reads rank in-range request/tool keys in one transaction per section.
+  // Usage reads build each section's ledger once (canonical hourly buckets, in-range request keys,
+  // tool keys, knowledge accesses) as a temp table in one transaction per section.
   const queue = new DatabaseQueue(async () => {
     const failed = client; client = undefined;
     // Destroy the stalled connection before the next job. Do not retry writes:

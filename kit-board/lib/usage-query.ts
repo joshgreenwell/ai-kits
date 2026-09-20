@@ -153,26 +153,27 @@ function modelFilterSql(p: Params, q: UsageQuery, namedModels: string[], column:
   return parts.length ? `AND (${parts.join(' OR ')})` : '';
 }
 
-/** Local hourly revisions unioned with provider-reported account buckets. Distinct accounts, never double-counted work. */
-function canonicalBucketCte(
-  p: Params, accounts: string[], startIso: string, endIso: string, q: UsageQuery, namedModels: string[],
-): string {
-  const localModel = modelFilterSql(p, q, namedModels, 't.model');
-  const providerModel = modelFilterSql(p, q, namedModels, `coalesce(nullif(u.model, ''), 'unknown')`);
+/**
+ * Local hourly revisions unioned with provider-reported account buckets, ranked to one canonical row per
+ * key. Distinct accounts, never double-counted work. Every canonical bucket overlapping the span is kept,
+ * so one ranking serves both the buckets wholly inside a range and the count of those straddling its edges.
+ * Both bounds compare the indexed start column against a constant (`hour > start - 1h`, never
+ * `hour + 1h > start`), so the ledger scan is an index range scan.
+ */
+function canonicalBucketCte(p: Params, accounts: string[], startIso: string, endIso: string): string {
   return `local_canonical AS (
       SELECT DISTINCT ON (t.account_id, t.session_hash, t.hour, t.model)
-        t.account_id, t.source_id, t.hour, t.hour + interval '1 hour' AS bucket_end, t.model, t.calls,
+        t.account_id, t.source_id, t.session_hash, t.hour, t.hour + interval '1 hour' AS bucket_end, t.model, t.calls,
         t.input_tokens, t.cached_tokens, t.cache_write_tokens, t.output_tokens, 0::bigint AS unclassified,
         t.total_tokens, t.observed_at, 'local'::text AS origin
       FROM personal_hub.token_bucket_revisions t
       WHERE t.account_id = ANY(${p.add(accounts)}::text[])
-        AND t.hour >= ${p.add(startIso)}::timestamptz
-        AND t.hour + interval '1 hour' <= ${p.add(endIso)}::timestamptz
-        ${localModel}
+        AND t.hour > ${p.add(startIso)}::timestamptz - interval '1 hour'
+        AND t.hour < ${p.add(endIso)}::timestamptz
       ORDER BY t.account_id, t.session_hash, t.hour, t.model, t.calls DESC, t.total_tokens DESC, t.observed_at DESC, t.received_at DESC, t.id DESC
     ), provider_canonical AS (
       SELECT DISTINCT ON (u.account_id, u.report_source, u.bucket_start, u.bucket_end, u.dimensions_hash)
-        u.account_id, b.source_id, u.bucket_start AS hour, u.bucket_end,
+        u.account_id, b.source_id, NULL::text AS session_hash, u.bucket_start AS hour, u.bucket_end,
         coalesce(nullif(u.model, ''), 'unknown') AS model, coalesce(u.requests, 0) AS calls,
         coalesce(u.input_tokens, 0) AS input_tokens, coalesce(u.cached_tokens, 0) AS cached_tokens,
         coalesce(u.cache_write_tokens, 0) AS cache_write_tokens, coalesce(u.output_tokens, 0) AS output_tokens,
@@ -186,9 +187,8 @@ function canonicalBucketCte(
       FROM personal_hub.account_usage_buckets u
       JOIN personal_hub.companion_bindings b ON b.id = u.binding_id
       WHERE u.account_id = ANY(${p.add(accounts)}::text[])
-        AND u.bucket_start >= ${p.add(startIso)}::timestamptz
-        AND u.bucket_end <= ${p.add(endIso)}::timestamptz
-        ${providerModel}
+        AND u.bucket_start < ${p.add(endIso)}::timestamptz
+        AND u.bucket_end > ${p.add(startIso)}::timestamptz
       ORDER BY u.account_id, u.report_source, u.bucket_start, u.bucket_end, u.dimensions_hash,
         u.provider_refreshed_at DESC NULLS LAST, u.observed_at DESC, u.id DESC
     ), canonical AS (
@@ -454,47 +454,75 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     };
 
     // 1. Canonical buckets by period and model. A bucket counts only when it lies wholly inside the range,
-    //    the current hour being the one exception while the range is anchored to now.
+    //    the current hour being the one exception while the range is anchored to now. The two ledgers are
+    //    ranked once, in one transaction, into a temp table spanning the widest range any overview card
+    //    needs (the whole months the range touches, for the environmental cohort population) plus the
+    //    buckets straddling its edges; every card then filters that table to its own range, models, and
+    //    machines. The model filter commutes with the ranking: model is part of both canonical keys
+    //    (provider buckets hash it into dimensions_hash).
     const namedModels = q.models.filter(v => v !== UNKNOWN);
     const startIso = new Date(range.start).toISOString();
     const endIso = new Date(bucketEnd).toISOString();
-    const bp = new Params();
-    const bucketRows = accounts.length && needBuckets ? await db.unsafe(`WITH ${canonicalBucketCte(bp, accounts, startIso, endIso, q, namedModels)}
-      SELECT account_id, model, ${periodExpr('hour', q.resolution, bp, tz)} AS period_start, ${periodExpr('hour', 'day', bp, tz)} AS day_start,
-        sum(calls)::float8 AS calls, sum(input_tokens)::float8 AS input_fresh, sum(cached_tokens)::float8 AS input_cached,
-        sum(cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, sum(unclassified)::float8 AS unclassified,
-        sum(total_tokens)::float8 AS total_tokens, max(hour) AS last_hour, max(observed_at) AS last_observed,
-        count(*) FILTER (WHERE bucket_end > ${bp.add(new Date(now).toISOString())}::timestamptz)::int AS partial_buckets,
-        bool_or(origin = 'provider') AS has_provider
-      FROM canonical ${q.machines.length ? `WHERE source_id = ANY(${bp.add(q.machines)}::uuid[])` : ''}
-      GROUP BY 1, 2, 3, 4 ORDER BY 3, 1, 2`, bp.values) : [];
-    // Buckets straddling a custom range end are excluded rather than prorated; say how many.
-    const sp = new Params();
-    const straddleLocalModel = modelFilterSql(sp, q, namedModels, 't.model');
-    const straddleProviderModel = modelFilterSql(sp, q, namedModels, `coalesce(nullif(u.model, ''), 'unknown')`);
-    const [straddle] = accounts.length && wantOverview ? await db.unsafe(`SELECT (
-        (SELECT count(DISTINCT (t.account_id, t.session_hash, t.hour, t.model))::int
-          FROM personal_hub.token_bucket_revisions t WHERE t.account_id = ANY(${sp.add(accounts)}::text[]) ${straddleLocalModel}
-            AND ((t.hour < ${sp.add(startIso)}::timestamptz AND t.hour + interval '1 hour' > ${sp.add(startIso)}::timestamptz)
-              OR (t.hour < ${sp.add(endIso)}::timestamptz AND t.hour + interval '1 hour' > ${sp.add(endIso)}::timestamptz)))
-        +
-        (SELECT count(DISTINCT (u.account_id, u.report_source, u.bucket_start, u.bucket_end, u.dimensions_hash))::int
-          FROM personal_hub.account_usage_buckets u WHERE u.account_id = ANY(${sp.add(accounts)}::text[]) ${straddleProviderModel}
-            AND ((u.bucket_start < ${sp.add(startIso)}::timestamptz AND u.bucket_end > ${sp.add(startIso)}::timestamptz)
-              OR (u.bucket_start < ${sp.add(endIso)}::timestamptz AND u.bucket_end > ${sp.add(endIso)}::timestamptz)))
-      )::int AS buckets`, sp.values) : [{ buckets: 0 }];
-    // Conversations under the bucket basis are the distinct sessions among the canonical buckets in scope.
-    const cp0 = new Params();
-    const [bucketSessions] = accounts.length && wantOverview && !useRequests ? await db.unsafe(`WITH canonical AS (
-        SELECT DISTINCT ON (t.account_id, t.session_hash, t.hour, t.model) t.account_id, t.session_hash, t.source_id
-        FROM personal_hub.token_bucket_revisions t
-        WHERE t.account_id = ANY(${cp0.add(accounts)}::text[]) AND t.hour >= ${cp0.add(new Date(range.start).toISOString())}::timestamptz
-          AND t.hour + interval '1 hour' <= ${cp0.add(new Date(bucketEnd).toISOString())}::timestamptz
-          ${namedModels.length || q.models.includes(UNKNOWN) ? `AND (${[namedModels.length ? `t.model = ANY(${cp0.add(namedModels)}::text[])` : null, q.models.includes(UNKNOWN) ? `t.model = 'unknown'` : null].filter(Boolean).join(' OR ')})` : ''}
-        ORDER BY t.account_id, t.session_hash, t.hour, t.model, t.calls DESC, t.total_tokens DESC, t.observed_at DESC, t.received_at DESC, t.id DESC)
-      SELECT count(DISTINCT session_hash)::int AS conversations FROM canonical ${q.machines.length ? `WHERE source_id = ANY(${cp0.add(q.machines)}::uuid[])` : ''}`, cp0.values) : [{ conversations: 0 }];
-    const bucketConversations = num(bucketSessions.conversations);
-    if (num(straddle.buckets) > 0) notes.push(`${num(straddle.buckets)} hourly bucket(s) straddling a range edge are excluded rather than prorated.`);
+    const months = monthsWithin(range, tz);
+    const monthSpan = months.length ? { start: monthBounds(months[0], tz).start, end: monthBounds(months.at(-1)!, tz).end } : { start: range.start, end: bucketEnd };
+    const monthStartIso = new Date(monthSpan.start).toISOString(), monthEndIso = new Date(monthSpan.end).toISOString();
+    const wideStartIso = new Date(Math.min(range.start, monthSpan.start)).toISOString();
+    const wideEndIso = new Date(Math.max(bucketEnd, monthSpan.end)).toISOString();
+    const emptyOverview = { bucketRows: [] as Row[], straddle: 0, bucketSessions: 0, bucketPricingRows: [] as Row[], monthRows: [] as Row[] };
+    const overview = accounts.length && needBuckets ? await db.begin(async tx => {
+      await prepareRead(tx);
+      const tp = new Params();
+      await tx.unsafe(`CREATE TEMP TABLE _usage_buckets ON COMMIT DROP AS WITH ${canonicalBucketCte(tp, accounts, wideStartIso, wideEndIso)} SELECT * FROM canonical`, tp.values);
+      await tx.unsafe(`CREATE INDEX _usage_buckets_span ON _usage_buckets (hour, bucket_end)`);
+      // A card's scope: buckets wholly inside its range, then the selected models and machines.
+      const within = (p: Params, start: string, end: string) => `hour >= ${p.add(start)}::timestamptz AND bucket_end <= ${p.add(end)}::timestamptz`;
+      const machines = (p: Params) => q.machines.length ? `AND source_id = ANY(${p.add(q.machines)}::uuid[])` : '';
+      const scoped = (p: Params) => `${within(p, startIso, endIso)} ${modelFilterSql(p, q, namedModels, 'model')} ${machines(p)}`;
+      const bp = new Params();
+      const bucketRows: Row[] = await tx.unsafe(`
+        SELECT account_id, model, ${periodExpr('hour', q.resolution, bp, tz)} AS period_start, ${periodExpr('hour', 'day', bp, tz)} AS day_start,
+          sum(calls)::float8 AS calls, sum(input_tokens)::float8 AS input_fresh, sum(cached_tokens)::float8 AS input_cached,
+          sum(cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, sum(unclassified)::float8 AS unclassified,
+          sum(total_tokens)::float8 AS total_tokens, max(hour) AS last_hour, max(observed_at) AS last_observed,
+          count(*) FILTER (WHERE bucket_end > ${bp.add(new Date(now).toISOString())}::timestamptz)::int AS partial_buckets,
+          bool_or(origin = 'provider') AS has_provider
+        FROM _usage_buckets WHERE ${scoped(bp)}
+        GROUP BY 1, 2, 3, 4 ORDER BY 3, 1, 2`, bp.values);
+      if (!wantOverview) return { ...emptyOverview, bucketRows };
+      // Buckets straddling a range edge are excluded rather than prorated; say how many. The table holds one
+      // row per canonical key, so a plain count is the distinct-key count.
+      const sp = new Params();
+      const edgeStart = sp.add(startIso), edgeEnd = sp.add(endIso);
+      const [straddle] = await tx.unsafe(`SELECT count(*)::int AS buckets FROM _usage_buckets
+        WHERE ((hour < ${edgeStart}::timestamptz AND bucket_end > ${edgeStart}::timestamptz) OR (hour < ${edgeEnd}::timestamptz AND bucket_end > ${edgeEnd}::timestamptz))
+          ${modelFilterSql(sp, q, namedModels, 'model')}`, sp.values);
+      // Conversations under the bucket basis are the distinct sessions among the local canonical buckets in scope;
+      // provider buckets carry no session.
+      const cp0 = new Params();
+      const [bucketSessions] = !useRequests ? await tx.unsafe(`SELECT count(DISTINCT session_hash)::int AS conversations
+        FROM _usage_buckets WHERE origin = 'local' AND ${scoped(cp0)}`, cp0.values) : [{ conversations: 0 }];
+      // Hourly buckets already have model, Chicago date, and exclusive composition. Missing tier is assumed
+      // Standard; the hour is not a single request, so the short context band is used rather than a summed input.
+      const bpp = new Params();
+      const bucketPricingRows: Row[] = !useRequests ? await tx.unsafe(`
+        SELECT account_id, model, to_char(hour AT TIME ZONE ${bpp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date,
+          sum(calls)::float8 AS calls, sum(input_tokens)::float8 AS input_fresh, sum(cached_tokens)::float8 AS input_cached,
+          sum(cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, sum(unclassified)::float8 AS unclassified,
+          sum(total_tokens)::float8 AS total_tokens
+        FROM _usage_buckets WHERE ${scoped(bpp)}
+        GROUP BY 1, 2, 3 ORDER BY total_tokens DESC NULLS LAST`, bpp.values) : [];
+      // The whole-month cohort population per account: what the environmental class is inferred from, unfiltered
+      // by model or machine, and which (account, source month) pairs the hourly ledger covers at all.
+      const mp = new Params();
+      const mtz = `${mp.add(tz)}::text`;
+      const monthRows: Row[] = months.length ? await tx.unsafe(`
+        SELECT account_id, to_char(hour AT TIME ZONE ${mtz}, 'YYYY-MM') AS month, sum(calls)::float8 AS calls, sum(total_tokens)::float8 AS raw_tokens
+        FROM _usage_buckets WHERE ${within(mp, monthStartIso, monthEndIso)} GROUP BY 1, 2`, mp.values) : [];
+      return { bucketRows, straddle: num(straddle.buckets), bucketSessions: num(bucketSessions.conversations), bucketPricingRows, monthRows };
+    }) : emptyOverview;
+    const { bucketRows, bucketPricingRows, monthRows } = overview;
+    const bucketConversations = overview.bucketSessions;
+    if (overview.straddle > 0) notes.push(`${overview.straddle} hourly bucket(s) straddling a range edge are excluded rather than prorated.`);
     if (bucketRows.some(row => row.has_provider)) {
       notes.push('Provider-reported account usage is included for Cursor and organization API accounts and is not added to local Claude or Codex hourly buckets.');
     }
@@ -677,19 +705,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     } = requestDetail;
     const { knowledgeRows, knowledgeTotal } = knowledgeDetail;
 
-    // Hourly buckets already have model, Chicago date, and exclusive composition. Missing tier is assumed
-    // Standard; the hour is not a single request, so the short context band is used rather than a summed input.
-    const bpp = new Params();
-    const bucketPricingRows = wantOverview && !useRequests && accounts.length ? await db.unsafe(`WITH ${canonicalBucketCte(bpp, accounts, startIso, endIso, q, namedModels)}
-      SELECT account_id, model, to_char(hour AT TIME ZONE ${bpp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date,
-        sum(calls)::float8 AS calls, sum(input_tokens)::float8 AS input_fresh, sum(cached_tokens)::float8 AS input_cached,
-        sum(cache_write_tokens)::float8 AS input_cache_write, sum(output_tokens)::float8 AS output, sum(unclassified)::float8 AS unclassified,
-        sum(total_tokens)::float8 AS total_tokens
-      FROM canonical ${q.machines.length ? `WHERE source_id = ANY(${bpp.add(q.machines)}::uuid[])` : ''}
-      GROUP BY 1, 2, 3 ORDER BY total_tokens DESC NULLS LAST`, bpp.values) : [];
-
     // 6. Monthly snapshots for the months the range touches, crosswalked to accounts where the operator mapped them.
-    const months = monthsWithin(range, tz);
     const closedMonths = months.filter(month => monthBounds(month, tz).end <= now);
     // The crosswalk table arrives with the report-subjects migration; before it exists (SQLSTATE 42P01)
     // no subject is mapped, which is the same answer an empty table gives. Reading the envelopes without
@@ -712,18 +728,6 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       if ((error as { code?: string }).code !== '42P01') throw error;
       return db.unsafe(snapshotSql(false), [months, closedMonths]);
     }) : [];
-    // The whole-month cohort population per account: what the environmental class is inferred from, unfiltered,
-    // and which (account, source month) pairs the hourly ledger covers at all.
-    const mp = new Params();
-    const mtz = `${mp.add(tz)}::text`;
-    const monthRows = wantOverview && accounts.length && months.length ? await db.unsafe(`WITH ${canonicalBucketCte(
-        mp, accounts,
-        new Date(monthBounds(months[0], tz).start).toISOString(),
-        new Date(monthBounds(months.at(-1)!, tz).end).toISOString(),
-        { ...q, models: [] }, [],
-      )}
-      SELECT account_id, to_char(hour AT TIME ZONE ${mtz}, 'YYYY-MM') AS month, sum(calls)::float8 AS calls, sum(total_tokens)::float8 AS raw_tokens
-      FROM canonical GROUP BY 1, 2`, mp.values) : [];
     const cohortPopulation = new Map(monthRows.map(r => [`${r.account_id}|${r.month}`, { calls: num(r.calls), raw_tokens: num(r.raw_tokens) }]));
     const coveredMonths = new Set(cohortPopulation.keys());
     const selectedByCohort = new Map<string, { calls: number; raw_tokens: number }>();
