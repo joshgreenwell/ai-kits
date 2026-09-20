@@ -166,7 +166,8 @@ pub fn find_executable(name: &str) -> Option<PathBuf> {
     if name == "codex" || name.eq_ignore_ascii_case("codex.exe") {
         return find_codex_install();
     }
-    if name == "claude" || name.eq_ignore_ascii_case("claude.exe") || name.eq_ignore_ascii_case("claude.cmd") {
+    if name == "claude" || name.eq_ignore_ascii_case("claude.exe") || name.eq_ignore_ascii_case("claude.cmd")
+    {
         return find_claude_install();
     }
     None
@@ -195,11 +196,7 @@ fn claude_search_roots() -> Vec<PathBuf> {
 }
 
 fn claude_file_names() -> &'static [&'static str] {
-    if cfg!(windows) {
-        &["claude.cmd", "claude.exe", "claude"]
-    } else {
-        &["claude"]
-    }
+    if cfg!(windows) { &["claude.cmd", "claude.exe", "claude"] } else { &["claude"] }
 }
 
 fn first_existing_claude(roots: &[PathBuf]) -> Option<PathBuf> {

@@ -62,10 +62,7 @@ mod tests {
         let now = 1_000_000_000_000;
         assert!(indicated(CredentialPresence::Expired, now));
         assert!(indicated(CredentialPresence::Present { expires_at: Some(now + LEAD_MS) }, now));
-        assert!(!indicated(
-            CredentialPresence::Present { expires_at: Some(now + LEAD_MS + 1) },
-            now
-        ));
+        assert!(!indicated(CredentialPresence::Present { expires_at: Some(now + LEAD_MS + 1) }, now));
         assert!(!indicated(CredentialPresence::Present { expires_at: None }, now));
         assert!(!indicated(CredentialPresence::Missing, now));
         assert!(!indicated(CredentialPresence::Unknown, now));

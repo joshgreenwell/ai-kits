@@ -442,7 +442,9 @@ mod tests {
         let path = observatory_core::paths::claude_credentials_file();
         let token = match observatory_core::credentials::claude_access_token_in(path.as_deref()) {
             Err(observatory_core::credentials::CredentialError::Expired) => {
-                eprintln!("live_claude_oauth skipped: access token expired (keepalive spawns Claude Code; this live parse does not)");
+                eprintln!(
+                    "live_claude_oauth skipped: access token expired (keepalive spawns Claude Code; this live parse does not)"
+                );
                 return;
             }
             other => other.expect("claude access token"),
