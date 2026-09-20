@@ -1,0 +1,5 @@
+# Golden fixtures and generated docs are compared byte for byte, so every
+# text file checks out with LF on every platform. The one CRLF fixture is
+# a parser input and is stored verbatim.
+* text=auto eol=lf
+fixtures/jsonc/crlf.json -text

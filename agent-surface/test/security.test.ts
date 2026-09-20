@@ -32,7 +32,7 @@ import { GIT_SUBCOMMANDS, defaultFs, type FsAdapter } from "../src/git.js";
 import { CREDENTIAL_PRESENT } from "../src/redact.js";
 import { makePairRepo, type DiffRepo } from "./diff-helpers.js";
 import { GoldenRepos, expectedOf, goldenCases, runGoldenInProcess } from "./golden-helpers.js";
-import { FIXTURES, makeRepo, removeDir, runCli, tempDir } from "./helpers.js";
+import { FIXTURES, makeRepo, removeDir, runCli, symlinkOrSkip, tempDir } from "./helpers.js";
 
 const SECURITY_FIXTURES = path.join(FIXTURES, "security");
 const CANARY = "/tmp/agent-surface-canary-a3f9c2e7";
@@ -444,6 +444,10 @@ describe("unreadable inputs are incomplete, never a stack trace (JG-159)", () =>
     dirs.push(repo.dir);
     const target = path.join(repo.dir, ".claude", "settings.json");
     let reason: RegExp;
+    if (process.platform === "win32") {
+      t.skip("chmod 000 does not deny reads on Windows; the injected-EACCES case above covers the mechanism");
+      return;
+    }
     if (process.getuid?.() === 0) {
       t.diagnostic("running as root: chmod 000 does not deny reads, using a directory in place of the file instead");
       fs.rmSync(target);
@@ -466,7 +470,7 @@ describe("unreadable inputs are incomplete, never a stack trace (JG-159)", () =>
     }
   });
 
-  it("negative case: a symlink inside .claude/ pointing outside the repository is refused → incomplete with reason", () => {
+  it("negative case: a symlink inside .claude/ pointing outside the repository is refused → incomplete with reason", (t) => {
     const repo = makeRepo("basic");
     dirs.push(repo.dir);
     const outside = tempDir();
@@ -475,7 +479,9 @@ describe("unreadable inputs are incomplete, never a stack trace (JG-159)", () =>
     fs.writeFileSync(secret, '{"permissions":{"allow":["Bash(outside-marker-7f3e *)"]}}');
     const target = path.join(repo.dir, ".claude", "settings.json");
     fs.rmSync(target);
-    fs.symlinkSync(secret, target);
+    if (!symlinkOrSkip(t, secret, target)) {
+      return;
+    }
     for (const args of [
       ["check", "--base", "HEAD", "--head", "."],
       ["snapshot", "."],

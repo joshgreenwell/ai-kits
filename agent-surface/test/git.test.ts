@@ -20,7 +20,7 @@ import {
 import { parseJsonc } from "../src/jsonc.js";
 import { takeSnapshot } from "../src/snapshot.js";
 import { validateSnapshotShape } from "../src/snapshotfile.js";
-import { git, makeRepo, recordingFs, recordingSpawner, removeDir, stubSpawner, tempDir } from "./helpers.js";
+import { git, makeRepo, recordingFs, recordingSpawner, removeDir, stubSpawner, symlinkOrSkip, tempDir } from "./helpers.js";
 
 const METACHAR_REFS = [
   "main; touch pwned-marker",
@@ -170,11 +170,13 @@ describe("git: reading blobs at a ref without checkout", () => {
     }
   });
 
-  it("does not follow a symlink committed at a ref (the link target text is unparseable)", () => {
+  it("does not follow a symlink committed at a ref (the link target text is unparseable)", (t) => {
     const linked = tempDir();
     try {
       fs.mkdirSync(path.join(linked, ".claude"));
-      fs.symlinkSync("../../outside.json", path.join(linked, ".claude", "settings.json"));
+      if (!symlinkOrSkip(t, "../../outside.json", path.join(linked, ".claude", "settings.json"))) {
+        return;
+      }
       git(linked, "init", "-q", "-b", "main");
       git(linked, "add", "-A");
       git(linked, "commit", "-q", "-m", "symlink");
@@ -217,9 +219,11 @@ describe("git: symlink-aware worktree reads", () => {
     assert.deepEqual(readWorktreeFile(root, "not-a-dir/.mcp.json"), { status: "absent" });
   });
 
-  it("follows a symlink that stays inside the root and notes it", () => {
+  it("follows a symlink that stays inside the root and notes it", (t) => {
     const link = path.join(root, ".claude", "settings.json");
-    fs.symlinkSync(path.join("..", "shared", "settings.json"), link);
+    if (!symlinkOrSkip(t, path.join("..", "shared", "settings.json"), link)) {
+      return;
+    }
     try {
       const read = readWorktreeFile(root, ".claude/settings.json");
       assert.equal(read.status, "present");
@@ -232,9 +236,11 @@ describe("git: symlink-aware worktree reads", () => {
     }
   });
 
-  it("refuses a symlink that resolves outside the root", () => {
+  it("refuses a symlink that resolves outside the root", (t) => {
     const link = path.join(root, ".claude", "settings.json");
-    fs.symlinkSync(path.join(outside, "settings.json"), link);
+    if (!symlinkOrSkip(t, path.join(outside, "settings.json"), link)) {
+      return;
+    }
     try {
       const read = readWorktreeFile(root, ".claude/settings.json");
       assert.equal(read.status, "incomplete");
@@ -248,10 +254,12 @@ describe("git: symlink-aware worktree reads", () => {
     }
   });
 
-  it("refuses a symlinked parent directory that leaves the root", () => {
+  it("refuses a symlinked parent directory that leaves the root", (t) => {
     const linkedRoot = tempDir();
     try {
-      fs.symlinkSync(path.join(outside, "claude-dir"), path.join(linkedRoot, ".claude"));
+      if (!symlinkOrSkip(t, path.join(outside, "claude-dir"), path.join(linkedRoot, ".claude"))) {
+        return;
+      }
       const read = readWorktreeFile(linkedRoot, ".claude/settings.json");
       assert.equal(read.status, "incomplete");
       if (read.status === "incomplete") {
@@ -262,9 +270,11 @@ describe("git: symlink-aware worktree reads", () => {
     }
   });
 
-  it("reports a dangling symlink and a directory in place of a file", () => {
+  it("reports a dangling symlink and a directory in place of a file", (t) => {
     const link = path.join(root, ".claude", "settings.json");
-    fs.symlinkSync("does-not-exist.json", link);
+    if (!symlinkOrSkip(t, "does-not-exist.json", link)) {
+      return;
+    }
     try {
       const read = readWorktreeFile(root, ".claude/settings.json");
       assert.equal(read.status, "incomplete");

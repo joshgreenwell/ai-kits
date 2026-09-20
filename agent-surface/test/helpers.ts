@@ -17,6 +17,25 @@ export function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "agent-surface-"));
 }
 
+/**
+ * Create a symlink for a test, or skip the test when the host refuses
+ * (Windows without the symlink privilege raises EPERM). Returns whether
+ * the link exists.
+ */
+export function symlinkOrSkip(t: { skip(message?: string): void }, target: string, link: string): boolean {
+  try {
+    fs.symlinkSync(target, link);
+    return true;
+  } catch (err) {
+    const code = typeof err === "object" && err !== null && "code" in err ? (err as { code?: string }).code : undefined;
+    if (code === "EPERM" || code === "EACCES") {
+      t.skip(`symlinks are not permitted on this host (${code})`);
+      return false;
+    }
+    throw err;
+  }
+}
+
 export function removeDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -29,7 +48,21 @@ export function readFixture(relative: string): Uint8Array {
 export function git(dir: string, ...args: string[]): string {
   const result = spawnSync(
     "git",
-    ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", ...args],
+    [
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      // Fixture bytes are committed verbatim on every platform: golden output
+      // embeds blob ids, which a CRLF conversion would change.
+      "-c",
+      "core.autocrlf=false",
+      "-c",
+      "core.safecrlf=false",
+      ...args,
+    ],
     {
       cwd: dir,
       encoding: "utf8",
@@ -52,6 +85,11 @@ export function initRepo(dir: string): void {
 }
 
 export function commitAll(dir: string, message: string): string {
+  // Start from an empty index so every file is hashed from its content. A
+  // fixture copy can keep the mtime and size of the file it replaces (Windows
+  // CopyFile preserves timestamps), and a stat-cache match would let
+  // `git add -A` skip a changed file.
+  git(dir, "read-tree", "--empty");
   git(dir, "add", "-A");
   git(dir, "commit", "-q", "--allow-empty", "-m", message);
   return git(dir, "rev-parse", "HEAD");
