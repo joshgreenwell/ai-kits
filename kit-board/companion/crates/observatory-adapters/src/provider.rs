@@ -396,7 +396,7 @@ pub fn count_reading(
     resets_at: Option<Stamp>,
     raw_window_id: &str,
 ) -> Option<Record> {
-    if remaining < 0.0 || remaining > 1e12 {
+    if !(0.0..=1e12).contains(&remaining) {
         return None;
     }
     let locator = format!("{}:{}:{}", reader.as_str(), meter_key, observed_at.as_str());
@@ -422,6 +422,7 @@ pub fn count_reading(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn percent_reading(
     binding: &Uuid,
     adapter: Adapter,
@@ -463,6 +464,7 @@ pub fn percent_reading(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn unlimited_reading(
     binding: &Uuid,
     adapter: Adapter,

@@ -176,7 +176,11 @@ fn capability(
     }
 }
 
-fn cursor_capabilities(detail_level: DetailLevel, requests: u64, incomplete: u64) -> Vec<CapabilityCoverage> {
+fn cursor_capabilities(
+    detail_level: DetailLevel,
+    requests: u64,
+    _incomplete: u64,
+) -> Vec<CapabilityCoverage> {
     if detail_level == DetailLevel::BucketsOnly {
         return [
             CapabilityDimension::Requests,
@@ -194,13 +198,9 @@ fn cursor_capabilities(detail_level: DetailLevel, requests: u64, incomplete: u64
         .collect();
     }
     let request_state = if requests == 0 { CapabilityState::Unknown } else { CapabilityState::Complete };
-    let token_state = if requests == 0 {
-        CapabilityState::Unknown
-    } else if incomplete > 0 {
-        CapabilityState::Partial
-    } else {
-        CapabilityState::Partial
-    };
+    // Local counters are never billed totals, so composition is partial whenever any request exists,
+    // whether or not some of them were incomplete.
+    let token_state = if requests == 0 { CapabilityState::Unknown } else { CapabilityState::Partial };
     vec![
         capability(
             CapabilityDimension::Requests,

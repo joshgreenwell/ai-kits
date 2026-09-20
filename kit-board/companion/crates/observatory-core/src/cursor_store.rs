@@ -93,7 +93,7 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, CursorStoreError>
     let mut statement = conn
         .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1")
         .map_err(|_| CursorStoreError::Read)?;
-    Ok(statement.exists([name]).map_err(|_| CursorStoreError::Read)?)
+    statement.exists([name]).map_err(|_| CursorStoreError::Read)
 }
 
 /// Non-secret Cursor sign-in fields used for identity display and hashing.
