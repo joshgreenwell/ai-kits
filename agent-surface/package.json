@@ -50,7 +50,7 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "devDependencies": {
-    "@types/node": "^20.14.0",
-    "typescript": "^5.5.0"
+    "@types/node": "^26.6.1",
+    "typescript": "^7.0.2"
   }
 }
