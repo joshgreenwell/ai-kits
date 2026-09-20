@@ -1,5 +1,29 @@
 version: 2
 updates:
+  - package-ecosystem: npm
+    directory: /kit-board
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      kit-board-dependencies:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directory: /agent-surface
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      agent-surface-dependencies:
+        patterns: ['*']
+  - package-ecosystem: uv
+    directory: /agentlint
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      agentlint-dependencies:
+        patterns: ['*']
   - package-ecosystem: cargo
     directory: /kit-board/companion
     schedule:
@@ -12,3 +36,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    ignore:
+      # The action's version tag is the Rust toolchain version, pinned together with
+      # kit-board/companion/rust-toolchain.toml and rust-version in Cargo.toml.
+      - dependency-name: dtolnay/rust-toolchain
