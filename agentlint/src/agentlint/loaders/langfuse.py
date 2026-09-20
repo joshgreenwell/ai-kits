@@ -824,15 +824,22 @@ def _runs_from_file(path: str) -> tuple[list[Run], list[LoadError]]:
 
 
 def _expand_paths(paths: str | os.PathLike[str] | Iterable[str | os.PathLike[str]]) -> list[str]:
+    """Files to parse, labelled the way the caller named them (``str``, not POSIX form).
+
+    A directory contributes its detected children as ``str(child)``. Labels
+    become ``LoadError.path``, ``Run.source_refs`` and locator prefixes, and
+    the registry matches them against the paths it passed in, so they must
+    keep the platform's separators rather than be rewritten with ``/``.
+    """
     if isinstance(paths, str | os.PathLike):
         paths = [paths]
     result: list[str] = []
     for item in paths:
         path = Path(item)
         if path.is_dir():
-            result.extend(p.as_posix() for p in sorted(path.iterdir()) if p.is_file() and detect(p))
+            result.extend(str(p) for p in sorted(path.iterdir()) if p.is_file() and detect(p))
         else:
-            result.append(path.as_posix())
+            result.append(str(item))
     return result
 
 

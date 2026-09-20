@@ -72,5 +72,12 @@ hygiene and a no-network wheel smoke test run in CI.
   newline-free head as a single document, and `otlp-jsonl` accepts a first
   line longer than the head by file size rather than decoded length, so such
   files load as `otlp-jsonl`.
+- Input manifest on Windows: the Langfuse loader labelled files in POSIX
+  form while the registry compared `str(Path(dir) / name)`, so a directory
+  of Langfuse exports listed every run under every file and Langfuse load
+  errors were reported as unattributed. The loader now labels files like
+  the other loaders (`str`), the registry normalises separators on its side
+  only when comparing, and a locator matches a file only as `<file>`,
+  `<file>#...` or `<file>:...` (`a.json` no longer claims `a.json.bak#...`).
 
 [0.0.1]: https://github.com/joshgreenwell/ai-kits/releases/tag/agentlint-v0.0.1

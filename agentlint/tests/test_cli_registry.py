@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,6 +21,7 @@ from agentlint.loaders.registry import (
     loader_by_label,
     options_from_mapping,
 )
+from agentlint.model import Event, Run
 from tests.conftest import FIXTURES
 
 CASES = [
@@ -145,6 +148,105 @@ class TestManifest:
         assert manifest.incomplete[0].locator == f"{label}#/0"
         assert manifest.incomplete[0].loader == "otlp-json"
         assert manifest.inputs_without_runs == [label]
+
+
+def _observation(obs_id: str, trace: str) -> dict[str, Any]:
+    """One synthetic Langfuse v2 observation row (test data only)."""
+    return {
+        "id": obs_id,
+        "traceId": trace,
+        "type": "GENERATION",
+        "name": "chat",
+        "startTime": "2024-01-01T00:00:00.000Z",
+        "endTime": "2024-01-01T00:00:01.000Z",
+        "model": "model-tmp",
+    }
+
+
+def _write_observations(path: Path, trace: str) -> None:
+    path.write_text(json.dumps({"data": [_observation(f"{trace}-obs", trace)]}), encoding="utf-8")
+
+
+class TestPerFileAttribution:
+    """Loader labels and registry labels must agree on every platform (LNT-2).
+
+    The Langfuse loader used to label files in POSIX form while the registry
+    built ``str(Path(dir) / name)``; on Windows the two never matched, so
+    every file in a directory listed every run and loader errors were never
+    attached to their file.
+    """
+
+    def test_directory_of_langfuse_files_attributes_each_run_to_its_file(
+        self, tmp_path: Path
+    ) -> None:
+        _write_observations(tmp_path / "a.json", "trace-a")
+        _write_observations(tmp_path / "b.json", "trace-b")
+        manifest = load_inputs([str(tmp_path)])
+        (entry,) = manifest.inputs
+        by_name = {Path(f.path).name: f for f in entry.files}
+        assert by_name["a.json"].run_ids == ["trace-a"]
+        assert by_name["b.json"].run_ids == ["trace-b"]
+        assert {f.loader for f in entry.files} == {"langfuse-observations"}
+        assert [f.status for f in entry.files] == ["loaded", "loaded"]
+        assert manifest.incomplete == []
+        assert [r.id for r in manifest.runs] == ["trace-a", "trace-b"]
+        assert [r.source_refs for r in manifest.runs] == [
+            [str(tmp_path / "a.json")],
+            [str(tmp_path / "b.json")],
+        ]
+
+    def test_malformed_second_file_error_is_attached_to_that_file(self, tmp_path: Path) -> None:
+        _write_observations(tmp_path / "a.json", "trace-a")
+        broken = tmp_path / "b.json"
+        broken.write_text('{"data": [{"traceId": "trace-b", "startTime": ', encoding="utf-8")
+        assert detect_loader(broken) == "langfuse-observations"
+        manifest = load_inputs([str(tmp_path)])
+        (entry,) = manifest.inputs
+        by_name = {Path(f.path).name: f for f in entry.files}
+        assert by_name["a.json"].status == "loaded" and by_name["a.json"].run_ids == ["trace-a"]
+        assert by_name["b.json"].status == "unloadable"
+        assert by_name["b.json"].run_ids == []
+        assert (by_name["b.json"].reason or "").startswith("invalid JSON")
+        (incomplete,) = manifest.incomplete
+        assert incomplete.path == str(tmp_path / "b.json") == by_name["b.json"].path
+        assert incomplete.loader == "langfuse-observations"
+        assert incomplete.reason.startswith("invalid JSON")
+        assert manifest.inputs_without_runs == []
+
+    def test_matching_ignores_separator_style_but_not_longer_names(self, tmp_path: Path) -> None:
+        shutil.copy(FIXTURES / "otlp" / "gen_current.json", tmp_path / "a.json")
+        shutil.copy(FIXTURES / "otlp" / "gen_current.json", tmp_path / "a.json.bak.json")
+        label = str(tmp_path / "a.json")
+        other = str(tmp_path / "a.json.bak.json")
+        flipped = label.replace("/", "|").replace("\\", "/").replace("|", "\\")
+
+        def stub(module, files, options):
+            return LoadResult(
+                format_label=module.FORMAT_LABEL,
+                runs=[
+                    Run(
+                        id="run-flipped",
+                        source_format=module.FORMAT_LABEL,
+                        source_refs=[flipped],
+                        events=[Event(id="e1", source_locator=f"{flipped}#/0", kind="model_call")],
+                    ),
+                    Run(
+                        id="run-other",
+                        source_format=module.FORMAT_LABEL,
+                        source_refs=[],
+                        events=[Event(id="e2", source_locator=f"{other}#/0", kind="model_call")],
+                    ),
+                ],
+                errors=[LoadError(path=flipped, reason="synthetic note", locator=f"{flipped}:1")],
+            )
+
+        manifest = load_inputs([str(tmp_path)], call=stub)
+        by_name = {Path(f.path).name: f for f in manifest.inputs[0].files}
+        assert by_name["a.json"].run_ids == ["run-flipped"]
+        assert by_name["a.json.bak.json"].run_ids == ["run-other"]
+        # The error names the loaded file, so it is neither unattributed nor a second entry.
+        assert by_name["a.json"].status == "loaded"
+        assert manifest.incomplete == []
 
 
 class TestOptionsFromMapping:
