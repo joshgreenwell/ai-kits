@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.32.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -38,7 +38,7 @@ Privacy = "https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/PRIVACY.
 Issues = "https://github.com/joshgreenwell/ai-kits/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "ruff>=0.16.8"]
 
 [project.scripts]
 agentlint = "agentlint.cli:main"
