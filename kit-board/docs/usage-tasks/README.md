@@ -2,7 +2,7 @@
 
 Created: 2026-09-13
 
-**34 filesystem tasks: 26 core delivery tasks, seven follow-ups, and one optional task awaiting a decision.** Twenty-one are Done, three are In progress, nine are Planned, and one waits on a decision. The [release status](#release-status) below states what is finished and what still stands between here and the release; the per-stage tables carry the authoritative status for each task. Creating and maintaining this backlog does not itself run collection, change settings, schedule work, or authorize a deployment.
+**34 filesystem tasks: 26 core delivery tasks, seven follow-ups, and one optional task awaiting a decision.** Twenty-one are Done, four are In progress, eight are Planned, and one waits on a decision. The [release status](#release-status) below states what is finished and what still stands between here and the release; the per-stage tables carry the authoritative status for each task. Creating and maintaining this backlog does not itself run collection, change settings, schedule work, or authorize a deployment.
 
 Planning and tracking for this work live in these files. Do not use Jira. The USG identifiers are local backlog IDs, not Linear issue IDs. If the user later chooses Linear, carry these scopes and acceptance criteria across and record the mapping rather than creating duplicate sources of truth.
 
@@ -22,9 +22,10 @@ Interface: [USG-015](usg-015-global-settings-and-navigation.md), [USG-017](usg-0
 
 Done here means the acceptance criteria are met in the repository and verified locally. The September 16 merge to `main` carried all of it except USG-021 and USG-022, committed later that day, to production and the two migrations behind it were applied the same day; [USG-025](usg-025-activate-backfill-and-verify-release.md) still owns source-to-screen verification against production.
 
-### In progress (3)
+### In progress (4)
 
 - [USG-002](usg-002-preserve-history-and-recover-publication.md) — unattended Windows publication is verified; the inaccessible-host inventory and production-wide reconciliation are open.
+- [USG-010](usg-010-replace-browser-quota-bridge.md) — the v2 browser collector (the quota extension at 2.0.0) pairs, binds, and uploads allowance readings with the companion's meter keys, proven against the contract and the disposable database. What remains is the owner's production verification: a real scheduled reading from each used browser profile, then the per-profile cutover.
 - [USG-016](usg-016-shared-filters-and-interactive-charts.md) — the filter bar, interval charts, legend toggles, persisted graph/table preferences, and design-system alignment shipped through USG-017 and USG-018. What remains is its own verification pass: filter URL round trips, timezone boundaries, touch and keyboard paths, long labels, and narrow screens.
 - [USG-025](usg-025-activate-backfill-and-verify-release.md) — the September 16 merge deployed the server build to production and both migrations are applied. Everything else this task owns is open: the detail-level change at the source, backfill and receipts, scheduled-cycle and source-to-screen verification, and the release record.
 
@@ -32,7 +33,7 @@ Done here means the acceptance criteria are met in the repository and verified l
 
 | Task | What it blocks | Note |
 | --- | --- | --- |
-| [USG-010](usg-010-replace-browser-quota-bridge.md) | Claude allowance readings | Every Claude allowance row still comes from the legacy v1 browser extension, which emits `five_hour` and `seven_day` only. No companion-produced Claude reading exists, so model-scoped weekly windows never arrive for Claude. Codex already produces them through the embedded reader. |
+| [USG-010](usg-010-replace-browser-quota-bridge.md) | Claude allowance readings | In production every Claude allowance row still comes from the legacy v1 browser path. The v2 collector in this checkout emits `five_hour`, `seven_day`, each model-scoped `seven_day_<model>`, and `extra_usage` with the companion's keys; it becomes the source of record only after a real scheduled reading from each used browser profile and that profile's cutover. |
 | [USG-016](usg-016-shared-filters-and-interactive-charts.md) | Nothing further | Implementation shipped; verification remains. |
 | [USG-025](usg-025-activate-backfill-and-verify-release.md) | The release itself | The migrations are applied; the detail-level change and source-to-screen verification remain. Until `execution.detail_level` leaves `buckets_only` and `project_attribution` is on, the delivered project, agent, tool, and knowledge cards show their empty states in production. See the deployment prerequisites below. |
 | [USG-026](usg-026-retire-redundant-usage-pipelines.md) | v1 retirement | Gated on USG-025 parity. |
@@ -105,7 +106,7 @@ Every implementation task inherits these requirements:
 | [USG-007: Collect and map project identities across machines and worktrees](usg-007-map-project-identities.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-004](usg-004-collect-request-and-pricing-evidence.md) | Done |
 | [USG-008: Identify access to multiple vaults and configured knowledge sources](usg-008-collect-knowledge-source-access.md) | P0 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-006](usg-006-collect-tool-invocations.md), [USG-007](usg-007-map-project-identities.md) | Done |
 | [USG-009: Fix account attribution and freshness for existing allowance collection](usg-009-fix-allowance-identity-and-freshness.md) | P0 | [USG-001](usg-001-metric-and-source-contract.md) | Done |
-| [USG-010: Build and verify the v2 replacement for the active browser quota bridge](usg-010-replace-browser-quota-bridge.md) | P1 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-009](usg-009-fix-allowance-identity-and-freshness.md) | Planned |
+| [USG-010: Build and verify the v2 replacement for the active browser quota bridge](usg-010-replace-browser-quota-bridge.md) | P1 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-009](usg-009-fix-allowance-identity-and-freshness.md) | In progress |
 | [USG-014: Make collection settings, cadence, and health reflect actual capabilities](usg-014-truthful-settings-and-collection-health.md) | P1 | [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-009](usg-009-fix-allowance-identity-and-freshness.md) | Done |
 
 ## 3. Read models

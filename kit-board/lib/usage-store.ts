@@ -119,11 +119,14 @@ function scheduleSummary(capabilities: CapabilitiesSummary, desired: number): Sc
 }
 
 const executionBlocked = new Set(['prerequisite_missing', 'credential_unavailable', 'identity_changed', 'rate_limited']);
-function healthSummary({ bindings, run, capabilities, schedule, effective, lastSeenAt, now }: {
-  bindings: BindingSummary[]; run: InstallSummary['latest_run']; capabilities: CapabilitiesSummary; schedule: ScheduleSummary;
+/** Providers a browser install can bind today: only the Claude collector exists (`browser/claude-quota/`), so its binding rung is judged over Claude alone. */
+const BROWSER_COLLECTOR_PROVIDERS = new Set<string>(['claude']);
+function healthSummary({ kind, bindings, run, capabilities, schedule, effective, lastSeenAt, now }: {
+  kind: InstallSummary['kind']; bindings: BindingSummary[]; run: InstallSummary['latest_run']; capabilities: CapabilitiesSummary; schedule: ScheduleSummary;
   effective: CollectionSettings; lastSeenAt: string | null; now: number;
 }): HealthSummary {
-  const enabledProviders = (['claude', 'codex', 'cursor'] as const).filter(provider => effective.providers[provider]);
+  const enabledProviders = (['claude', 'codex', 'cursor'] as const)
+    .filter(provider => effective.providers[provider] && (kind !== 'browser' || BROWSER_COLLECTOR_PROVIDERS.has(provider)));
   const bound = enabledProviders.filter(provider => bindings.some(b => b.provider === provider && b.enabled));
   const binding: HealthSummary['binding'] = bound.length === 0 ? 'none' : bound.length === enabledProviders.length ? 'complete' : 'partial';
   const reported = capabilities.current ? new Map(capabilities.document?.bindings.map(b => [b.binding_id, b]) ?? []) : new Map();
@@ -916,7 +919,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
           allowance: allowance_observed_at ? { observed_at: allowance_observed_at, resets_at: allowance_resets_at ?? null, reader: allowance_reader } : null,
           requests: requests_observed_at ?? null },
         last_received: { allowance: allowance_received_at ?? null } }));
-      const health = healthSummary({ bindings: own as unknown as BindingSummary[], run: (run ?? null) as unknown as InstallSummary['latest_run'], capabilities, schedule, effective, lastSeenAt: install.last_seen_at as string | null, now });
+      const health = healthSummary({ kind: install.kind as InstallSummary['kind'], bindings: own as unknown as BindingSummary[], run: (run ?? null) as unknown as InstallSummary['latest_run'], capabilities, schedule, effective, lastSeenAt: install.last_seen_at as string | null, now });
       return { ...install, bindings: own, latest_run: run ?? null,
         applied_settings_version: run ? Number(run.settings_version) : null,
         cadence_minutes: effective.cadence_minutes,

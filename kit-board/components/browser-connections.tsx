@@ -12,11 +12,13 @@ type BrowserSource = { id: string; account_id: string; machine_label: string; di
 type Connections = { sources: BrowserSource[]; cadence_minutes: number };
 
 /**
- * The v1 Claude quota extension is still the only allowance reader for a browser
- * session until the v2 browser collector ships. Its connections can be paused and
- * resumed here; a paused connection keeps its history and refuses new uploads.
- * Last contact is any accepted post, including an empty one when usage was unreadable;
- * the reading line shows what the extension actually observed.
+ * The legacy bridge: v1 browser sources of the Claude quota extension, publishing to
+ * `/api/v1/telemetry`. The same extension at version 2.0.0 pairs as a browser install
+ * (`CompanionInstalls`, kind `browser`) and may publish both during the reconciliation
+ * period; a v1 sample the v2 reading duplicates is shown once, as the v2 reading. Pausing
+ * a source here is the server-side cutover step. A paused connection keeps its history and
+ * refuses new uploads. Last contact is any accepted post, including an empty one when usage
+ * was unreadable; the reading line shows what the extension actually observed.
  */
 export function BrowserConnections() {
   const [connections, setConnections] = useState<Connections | null>(null);
@@ -46,11 +48,13 @@ export function BrowserConnections() {
   return (
     <Card className="gap-0 overflow-hidden py-0">
       <CardHeader className="p-4">
-        <CardTitle className="text-base">Browser collectors (v1 quota extension)</CardTitle>
+        <CardTitle className="text-base">Legacy browser bridge (v1 quota sources)</CardTitle>
         <CardDescription>
-          The signed-in browser is the only allowance reader for Claude sessions that never run a statusline
-          hook, such as the desktop app. These connections keep working until the v2 browser collector replaces them;
-          the local scripts are retired. The extension reads hourly while its profile is open.
+          The v1 upload path of the Claude quota extension. Its replacement is the same extension at version 2.0.0, paired
+          above as a browser install; a profile may publish both while old and new readings are compared, and a v1 sample the
+          v2 reading duplicates is shown once, as the v2 reading. Cutover per profile: once the paired install shows fresh readings
+          for the same account, pause the v1 source here, then remove the legacy connection on the extension&apos;s options page.
+          History stays visible after pausing. The extension reads while its profile is open.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-2 border-t p-4">

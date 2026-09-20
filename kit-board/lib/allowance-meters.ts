@@ -4,10 +4,11 @@
  * so the title of a meter must not flip when the current reading changes reader.
  *
  * Claude meter mapping between readers: `five_hour` and `seven_day` match. A model-scoped
- * weekly window is `seven_day_<provider key>` from the statusline and `seven_day_<slug of the
- * display name>` from the browser normalizer; until USG-010 emits statusline-compatible keys
- * the two may differ and then show as separate meters. `extra_usage` is the weekly overspend
- * meter. Cursor hosted usage-summary keys are `auto` (included Auto/Grok pool), `api` (named
+ * weekly window is `seven_day_<slug of the display name>` from the statusline, the OAuth reader,
+ * and the v2 browser collector (one slug rule); a statusline key built from a provider model key
+ * rather than a display name can still differ and then shows as its own meter. The v2 browser
+ * collector writes the companion's labels; only v1 browser samples keep "Weekly · Sonnet".
+ * `extra_usage` is the weekly overspend meter. Cursor hosted usage-summary keys are `auto` (included Auto/Grok pool), `api` (named
  * API models), and the older combined `premium_requests`. Codex keys (`<limit>:<minutes>`,
  * Spark windows) keep the producer's label.
  */

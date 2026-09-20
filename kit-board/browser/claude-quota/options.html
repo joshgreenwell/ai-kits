@@ -1,6 +1,16 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><title>Claude quota · Personal Observatory</title><link rel="stylesheet" href="options.css"></head><body>
-<p class="eyebrow">Personal Observatory</p><h1>Connect Claude usage</h1><p>This collector reads allowance percentages and reset times once an hour from an open Claude tab. It never reads conversations or exports Claude cookies.</p>
-<section><h2>1. Import your connection</h2><p>Download a browser connection for the correct account from Observatory → AI usage → Connections.</p><input id="connection" type="file" accept="application/json"><p id="connection-label"></p></section>
-<section><h2>2. Verify the signed-in account</h2><button id="inspect">Find my Claude account</button><p id="identity"></p><div id="organizations"></div></section>
-<section><h2>3. Collect</h2><button id="collect">Collect now</button><p id="status" role="status"></p><p id="health"></p></section>
-<p class="muted">Keep Claude open in this browser profile. If you sign into a different account, collection pauses. Personal subscription allowances are separate from Console API billing.</p><script type="module" src="options.js"></script></body></html>
+<p class="eyebrow">Personal Observatory · browser collector 2.0.0</p><h1>Connect Claude allowances</h1><p>This collector reads allowance percentages and reset times from an open Claude tab at the Observatory's cadence and uploads them as allowance readings. It never reads conversations, exports Claude cookies, or uploads token counts, organization names, or your email.</p>
+<section><h2>Health</h2><p id="summary" role="status"></p><dl id="health"></dl></section>
+<section><h2>1. Pair with the Observatory</h2><p>In the Observatory open Settings → Connections → <strong>Add browser</strong>, label this browser profile, and paste the one-time code here.</p>
+<div id="pair-form"><label>Pairing code <input id="code" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX" maxlength="9"></label><label>Profile label <input id="label" maxlength="100" placeholder="Chrome · personal"></label><button id="pair">Pair</button></div>
+<div id="paired" hidden><p id="paired-label"></p><button id="unpair" class="secondary">Unpair this profile</button></div></section>
+<section><h2>2. Bind the signed-in Claude account</h2><p>Find the account this profile is signed into, then bind one organization to the Observatory account that owns its readings. Use the same account id the legacy connection used so the history stays on one card.</p>
+<button id="inspect">Find my Claude account</button><p id="identity"></p>
+<label>Observatory account id <input id="account-id" autocomplete="off" spellcheck="false" placeholder="claude-personal" maxlength="80" pattern="[a-z0-9][a-z0-9-]{1,79}"></label>
+<label>Account label (optional, never an email) <input id="account-label" maxlength="80" placeholder="Claude · personal"></label>
+<div id="organizations"></div></section>
+<section><h2>3. Collect</h2><button id="collect">Collect now</button><p id="status" role="status"></p></section>
+<details id="legacy"><summary>Legacy v1 bridge (reconciliation period only)</summary>
+<p>A v1 connection keeps publishing to the old quota endpoint beside the v2 upload so old and new readings can be compared. Both carry the same observation time; the Observatory shows such a pair once, as the v2 reading. When the v1 source is disabled in the Observatory, remove the connection here to finish the cutover for this profile.</p>
+<input id="connection" type="file" accept="application/json"><p id="connection-label"></p><button id="remove-legacy" class="secondary">Remove legacy connection</button></details>
+<p class="muted">Keep Claude open in this browser profile. If you sign into a different account, collection pauses and says so above. Personal subscription allowances are separate from Console API billing.</p><script type="module" src="options.js"></script></body></html>
