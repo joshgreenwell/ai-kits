@@ -34,6 +34,7 @@ from agentlint.loaders.otlp_json import (
     SpanCollection,
     build_runs,
     collect_envelope,
+    head_is_partial,
     read_head,
     resolve_input_files,
 )
@@ -46,18 +47,25 @@ _ENVELOPE_MARKERS = ('"resourceSpans"', '"instrumentationLibrarySpans"')
 def detect(path: str | Path) -> bool:
     """Cheap sniff: the first non-blank line is a complete JSON object mentioning
     ``resourceSpans``. A pretty-printed envelope (first line ``{``) is left to
-    ``otlp-json``. Never raises.
+    ``otlp-json``. A first line longer than the sniffed head is accepted on
+    shape alone (the head shows no newline and the file goes on past it).
+    Never raises.
     """
+    p = Path(path)
     try:
-        head = read_head(Path(path))
+        head = read_head(p)
     except OSError:
         return False
     first_line, newline, _rest = head.partition("\n")
     first_line = first_line.strip()
     if not first_line.startswith("{") or not any(m in first_line for m in _ENVELOPE_MARKERS):
         return False
-    if not newline and len(head) >= 65535:
-        return True  # a single line longer than the sniffed head: accept on shape
+    if not newline:
+        try:
+            if head_is_partial(p):
+                return True  # the first line runs past the sniffed head: accept on shape
+        except OSError:
+            return False
     try:
         return isinstance(json.loads(first_line), dict)
     except ValueError:

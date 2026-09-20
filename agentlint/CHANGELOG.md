@@ -63,4 +63,21 @@ one control per loader (dual `gen_ai` names, missing usage, malformed
 records, multi-page merge, hex-ID and large-integer preservation). Fixture
 hygiene and a no-network wheel smoke test run in CI.
 
+### Fixed
+
+- OTLP detection: a Collector `file`-exporter output whose first line alone
+  exceeds the 64 KiB detection head was claimed by `otlp-json` (tried first)
+  and failed with `invalid JSON: Extra data` (exit 3). `otlp-json` now scans
+  ahead (bounded at 8 MiB) for a second non-blank line before taking a
+  newline-free head as a single document, and `otlp-jsonl` accepts a first
+  line longer than the head by file size rather than decoded length, so such
+  files load as `otlp-jsonl`.
+- Input manifest on Windows: the Langfuse loader labelled files in POSIX
+  form while the registry compared `str(Path(dir) / name)`, so a directory
+  of Langfuse exports listed every run under every file and Langfuse load
+  errors were reported as unattributed. The loader now labels files like
+  the other loaders (`str`), the registry normalises separators on its side
+  only when comparing, and a locator matches a file only as `<file>`,
+  `<file>#...` or `<file>:...` (`a.json` no longer claims `a.json.bak#...`).
+
 [0.0.1]: https://github.com/joshgreenwell/ai-kits/releases/tag/agentlint-v0.0.1

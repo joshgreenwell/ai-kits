@@ -107,7 +107,7 @@ def test_format_label_and_source_refs():
     assert result.errors == []
     for run in result.runs:
         assert run.source_format == "langfuse-observations"
-        assert run.source_refs == [V2_JSON.as_posix()]
+        assert run.source_refs == [str(V2_JSON)]
 
 
 @pytest.mark.parametrize("path", ALL_FIXTURES, ids=[p.name for p in ALL_FIXTURES])
@@ -481,7 +481,7 @@ def test_raw_records_are_identity_only():
     assert len(run_a.raw_records) == 6
     assert run_a.raw_records[0] == {
         "id": "obs-a-root",
-        "locator": f"{V2_JSON.as_posix()}#/data/0",
+        "locator": f"{V2_JSON}#/data/0",
         "parentObservationId": None,
         "traceId": TRACE_A,
         "type": "SPAN",
@@ -497,16 +497,16 @@ def test_raw_records_are_identity_only():
 
 def test_source_locators_per_layout(tmp_path: Path):
     json_run = _run(langfuse.load(V2_JSON), TRACE_A)
-    assert _event(json_run, "obs-a-root").source_locator == f"{V2_JSON.as_posix()}#/data/0"
-    assert _event(json_run, "obs-a-gen1").source_locator == f"{V2_JSON.as_posix()}#/data/1"
+    assert _event(json_run, "obs-a-root").source_locator == f"{V2_JSON}#/data/0"
+    assert _event(json_run, "obs-a-gen1").source_locator == f"{V2_JSON}#/data/1"
     jsonl_run = langfuse.load(V2_JSONL).runs[0]
-    assert _event(jsonl_run, "obs-a-gen3").source_locator == f"{V2_JSONL.as_posix()}#6"
+    assert _event(jsonl_run, "obs-a-gen3").source_locator == f"{V2_JSONL}#6"
     csv_run = langfuse.load(V2_CSV).runs[0]
-    assert _event(csv_run, "obs-c-gen1").source_locator == f"{V2_CSV.as_posix()}#1"
+    assert _event(csv_run, "obs-c-gen1").source_locator == f"{V2_CSV}#1"
     array_run = langfuse.load(LEGACY_JSON).runs[0]
-    assert _event(array_run, "obs-d-gen1").source_locator == f"{LEGACY_JSON.as_posix()}#/1"
+    assert _event(array_run, "obs-d-gen1").source_locator == f"{LEGACY_JSON}#/1"
     single = _write_json(tmp_path, "single.json", _gen("only"))
-    assert langfuse.load(single).runs[0].events[0].source_locator == f"{single.as_posix()}#/0"
+    assert langfuse.load(single).runs[0].events[0].source_locator == f"{single}#/0"
 
 
 def test_unknown_fields_ignored_with_one_note():
@@ -534,13 +534,13 @@ def test_multiple_files_merge_by_trace_id():
     assert result.errors == []
     assert [r.id for r in result.runs] == [TRACE_A, TRACE_B]
     run_a = _run(result, TRACE_A)
-    assert run_a.source_refs == [V2_JSON.as_posix(), V2_JSONL.as_posix()]
+    assert run_a.source_refs == [str(V2_JSON), str(V2_JSONL)]
     assert [e.id for e in run_a.events][-1] == "obs-a-gen3"
     assert run_a.coverage.events_total == 7
     assert run_a.coverage.events_dropped_dedup == 6
     assert run_a.conversation_id == "session-0001"
     assert _notes(run_a, "dedup_conflict") == []
-    assert _run(result, TRACE_B).source_refs == [V2_JSON.as_posix()]
+    assert _run(result, TRACE_B).source_refs == [str(V2_JSON)]
 
 
 def test_directory_loads_only_detected_files():
@@ -590,16 +590,14 @@ def test_row_without_trace_id_is_an_error_and_row_without_id_is_skipped(tmp_path
     ]
     path = _write_json(tmp_path, "bad-rows.json", rows)
     result = langfuse.load(path)
-    assert [(e.reason, e.locator) for e in result.errors] == [
-        ("row has no traceId", f"{path.as_posix()}#/1")
-    ]
+    assert [(e.reason, e.locator) for e in result.errors] == [("row has no traceId", f"{path}#/1")]
     run = result.runs[0]
     assert [e.id for e in run.events] == ["ok"]
     assert "rows_skipped" in run.coverage.reasons
     assert run.coverage.completeness == "incomplete"
     notes = _notes(run, "rows_skipped")
     assert len(notes) == 1
-    assert f"{path.as_posix()}#/2 (row has no id)" in notes[0].message
+    assert f"{path}#/2 (row has no id)" in notes[0].message
 
 
 def test_invalid_files_are_errors_not_exceptions(tmp_path: Path):
@@ -614,11 +612,11 @@ def test_invalid_files_are_errors_not_exceptions(tmp_path: Path):
     result = langfuse.load([broken, wrong, scalar, empty_csv, tmp_path / "missing.json"])
     assert result.runs == []
     assert [e.path for e in result.errors] == [
-        broken.as_posix(),
-        wrong.as_posix(),
-        scalar.as_posix(),
-        empty_csv.as_posix(),
-        (tmp_path / "missing.json").as_posix(),
+        str(broken),
+        str(wrong),
+        str(scalar),
+        str(empty_csv),
+        str(tmp_path / "missing.json"),
     ]
     assert result.errors[0].reason.startswith("invalid JSON")
     assert result.errors[-1].reason.startswith("cannot read file")
@@ -636,7 +634,7 @@ def test_invalid_jsonl_line_is_reported_and_others_load(tmp_path: Path):
         + "\n"
     )
     result = langfuse.load(path)
-    assert [e.locator for e in result.errors] == [f"{path.as_posix()}#1", f"{path.as_posix()}#2"]
+    assert [e.locator for e in result.errors] == [f"{path}#1", f"{path}#2"]
     assert [e.id for e in result.runs[0].events] == ["g1", "g2"]
 
 

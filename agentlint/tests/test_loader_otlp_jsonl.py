@@ -11,8 +11,9 @@ from typing import Any
 import pytest
 
 from agentlint.loaders import otlp_json, otlp_jsonl
+from agentlint.loaders.registry import detect_loader
 from agentlint.model import Run, to_json
-from tests.conftest import FIXTURES
+from tests.conftest import FIXTURES, run_cli
 
 JSONL = FIXTURES / "otlp" / "jsonl"
 PART1 = JSONL / "split_part1.jsonl"
@@ -115,6 +116,87 @@ class TestContractAndConvention:
         as_json["raw_records"][0].pop("source_locator")
         as_jsonl["raw_records"][0].pop("source_locator")
         assert as_json == as_jsonl
+
+
+class TestFirstLineLongerThanSniffedHead:
+    """A Collector line can exceed the 64 KiB detection head (LNT-1).
+
+    The first envelope of such a file shows no newline inside the head, which
+    used to make ``otlp-json`` (tried first) claim it as a single document and
+    fail on the second line with "Extra data". The registry must route it to
+    ``otlp-jsonl`` instead.
+    """
+
+    @staticmethod
+    def _padded_chat(span_id: str, start_s: int) -> dict[str, Any]:
+        span = _chat("0000000000000000000000000000b1f0", span_id, "conv-long-line", start_s)
+        span["attributes"].append(
+            {"key": "synthetic.padding", "value": {"stringValue": "x" * 70_000}}
+        )
+        return span
+
+    def _two_line_file(self, tmp_path: Path) -> Path:
+        path = tmp_path / "long_first_line.jsonl"
+        path.write_text(
+            _envelope_line(self._padded_chat("000000000000b1f1", 0))
+            + _envelope_line(
+                _chat("0000000000000000000000000000b1f0", "000000000000b1f2", "conv-long-line", 2)
+            ),
+            encoding="utf-8",
+        )
+        assert len(path.read_bytes().split(b"\n")[0]) > 65536
+        return path
+
+    def test_two_line_file_is_jsonl_not_json(self, tmp_path: Path) -> None:
+        path = self._two_line_file(tmp_path)
+        assert not otlp_json.detect(path)
+        assert otlp_jsonl.detect(path)
+        assert detect_loader(path) == "otlp-jsonl"
+        run = _only_run(otlp_jsonl.load(path))
+        assert sorted(e.id for e in run.events) == ["000000000000b1f1", "000000000000b1f2"]
+
+    def test_single_long_line_is_still_accepted_by_both(self, tmp_path: Path) -> None:
+        with_newline = tmp_path / "single_nl.json"
+        with_newline.write_text(_envelope_line(self._padded_chat("000000000000b1f3", 0)), "utf-8")
+        without = tmp_path / "single.json"
+        without.write_text(_envelope_line(self._padded_chat("000000000000b1f4", 0)).rstrip("\n"))
+        for path in (with_newline, without):
+            assert otlp_json.detect(path) and otlp_jsonl.detect(path)
+            assert detect_loader(path) == "otlp-json"
+            assert _only_run(otlp_json.load(path)).coverage.events_total == 1
+
+    def test_blank_lines_after_a_long_line_do_not_make_it_jsonl(self, tmp_path: Path) -> None:
+        path = tmp_path / "trailing_blank.json"
+        path.write_text(_envelope_line(self._padded_chat("000000000000b1f5", 0)) + "\n \n", "utf-8")
+        assert otlp_json.detect(path) and otlp_jsonl.detect(path)
+
+    def test_analyze_exits_zero_and_reports_the_jsonl_loader(self, tmp_path: Path) -> None:
+        # The multi-page end-to-end control (exit 0) with its first envelope padded past the head.
+        control = Path(__file__).parent / "e2e" / "otlp_jsonl_multi_page_merge"
+        first = json.loads((control / "page_1.jsonl").read_text(encoding="utf-8"))
+        first["resourceSpans"][0]["resource"]["attributes"].append(
+            {"key": "synthetic.padding", "value": {"stringValue": "x" * 70_000}}
+        )
+        path = tmp_path / "collector_output.jsonl"
+        path.write_text(
+            json.dumps(first, separators=(",", ":"))
+            + "\n"
+            + (control / "page_2.jsonl").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        assert len(path.read_bytes().split(b"\n")[0]) > 65536
+        result = run_cli(
+            "analyze", str(path), "--format", "json", "--config", str(control / "agentlint.toml")
+        )
+        assert result.code == 0, result.err or result.out[:2000]
+        document = result.json()
+        (file_entry,) = document["inputs"][0]["files"]
+        assert (file_entry["loader"], file_entry["status"]) == ("otlp-jsonl", "loaded")
+        assert file_entry["run_ids"] == ["conv-e2e-pages"]
+        assert document["incomplete"] == []
+        (run,) = document["runs"]
+        assert run["run"]["source_format"] == "otlp-jsonl"
+        assert run["coverage"]["events_total"] == 4
 
 
 class TestMultiFileMerge:

@@ -246,10 +246,37 @@ def _expand_inputs(paths: Iterable[str | Path]) -> list[InputEntry]:
     return entries
 
 
+def _canonical(path: str) -> str:
+    """Path text with one separator, so a loader's label and the registry's agree.
+
+    Loaders label files with ``str(path)``; on Windows that mixes the backslashes
+    ``Path`` writes with whatever separator the caller typed. The registry normalises
+    on its side only, when it compares, and never rewrites the labels it reports.
+    """
+    return path.replace("\\", "/")
+
+
+def _same_file(path: str, other: str) -> bool:
+    return _canonical(path) == _canonical(other)
+
+
+def _locator_in_file(locator: str, path: str) -> bool:
+    """True when ``locator`` is ``path`` itself or ``path`` followed by ``#`` or ``:``.
+
+    Locators are ``<file>#<pointer>`` or ``<file>:<line>...``; a bare prefix
+    test would let ``a.json`` claim ``a.json.bak#/0``.
+    """
+    locator = _canonical(locator)
+    path = _canonical(path)
+    return locator == path or locator.startswith(path + "#") or locator.startswith(path + ":")
+
+
 def _runs_for_file(path: str, runs: Sequence[Run]) -> list[str]:
     ids: list[str] = []
     for run in runs:
-        if path in run.source_refs or any(e.source_locator.startswith(path) for e in run.events):
+        if any(_same_file(ref, path) for ref in run.source_refs) or any(
+            _locator_in_file(e.source_locator, path) for e in run.events
+        ):
             ids.append(run.id)
     return ids
 
@@ -264,7 +291,7 @@ def _attribute(
         attributed.update(entry.run_ids)
     unattributed = [r.id for r in result.runs if r.id not in attributed]
     for entry in files:
-        errors = [e for e in result.errors if e.path == entry.path]
+        errors = [e for e in result.errors if _same_file(e.path, entry.path)]
         if entry.run_ids:
             entry.status = STATUS_LOADED
             entry.reason = None
@@ -286,9 +313,9 @@ def _attribute(
             manifest.incomplete.append(
                 IncompleteInput(path=entry.path, reason=entry.reason, loader=label)
             )
-    file_paths = {f.path for f in files}
+    file_paths = {_canonical(f.path) for f in files}
     for error in result.errors:
-        if error.path not in file_paths:
+        if _canonical(error.path) not in file_paths:
             manifest.incomplete.append(
                 IncompleteInput(
                     path=error.path, reason=error.reason, loader=label, locator=error.locator
