@@ -3,10 +3,17 @@
  * `agent-surface` command line (plan §3.8, JG-147).
  *
  * Subcommands:
- *   snapshot [path] [--json]
- *   diff  --base <ref> --head <ref|path|snapshot.json> [--json]
- *   check --base <ref> --head <ref> [--fail-on <categories>] [--strict] [--json]
+ *   snapshot [side] [--json]
+ *   diff  --base <side> --head <side> [--json]
+ *   check --base <side> --head <side> [--fail-on <categories>] [--strict] [--allow-in-repo] [--json]
  *   explain <ID>
+ *
+ * A side is `ref:<git ref>`, `dir:<directory>`, `snapshot:<snapshot.json>`,
+ * a bare git ref, or `.` for the current worktree (`sidespec.ts`); the
+ * kind is never guessed from the filesystem. `check` refuses a `dir:` or
+ * `snapshot:` side that lies inside the repository being checked (its
+ * content belongs to the change under review) unless `--allow-in-repo`
+ * is given; `diff` and `snapshot` warn instead.
  *
  * Exit codes (JG-155): 0 no change / narrowing only; 1 proven expansion in a
  * failing category; 2 unresolved- or projected-only (fails with --strict);
@@ -30,7 +37,7 @@ import { pathToFileURL } from "node:url";
 import { CATEGORIES, DEFAULT_FAILING_CATEGORIES } from "./categories.js";
 import { diffSnapshots } from "./diff.js";
 import { explain, explainIds, renderExplain } from "./explain.js";
-import { defaultFs, defaultSpawner, resolveSide, type FsAdapter, type Side, type Spawner } from "./git.js";
+import { defaultFs, defaultSpawner, placeSide, repoToplevel, resolveSide, type FsAdapter, type Side, type Spawner } from "./git.js";
 import { renderDiffJson, renderIncompleteJson, renderSnapshotJson } from "./render/json.js";
 import { describeIncomplete } from "./render/shared.js";
 import { renderDiffText, renderSnapshotText } from "./render/text.js";
@@ -46,17 +53,17 @@ export const EXIT_USAGE = 64;
 export const SUBCOMMANDS: ReadonlyArray<{ name: string; signature: string; summary: string }> = [
   {
     name: "snapshot",
-    signature: "snapshot [path] [--json]",
-    summary: "parse the repository-controlled configuration at a path, ref, or snapshot.json",
+    signature: "snapshot [side] [--json]",
+    summary: "parse the repository-controlled configuration of one side (default: the current worktree)",
   },
   {
     name: "diff",
-    signature: "diff --base <ref> --head <ref|path|snapshot.json> [--json]",
+    signature: "diff --base <side> --head <side> [--json]",
     summary: "list control-surface entries added, removed, or changed between two sides",
   },
   {
     name: "check",
-    signature: "check --base <ref> --head <ref> [--fail-on <categories>] [--strict] [--json]",
+    signature: "check --base <side> --head <side> [--fail-on <categories>] [--strict] [--allow-in-repo] [--json]",
     summary: "exit non-zero when head expands the control surface relative to base",
   },
   {
@@ -74,11 +81,19 @@ export const USAGE = [
   "Subcommands:",
   ...SUBCOMMANDS.map((cmd) => `  ${cmd.signature.padEnd(78)} ${cmd.summary}`),
   "",
+  "Sides:",
+  "  ref:<git ref>   a commit (also: any bare spec, which is always a ref)",
+  "  dir:<directory> a worktree read from the filesystem ('.' alone is the current one)",
+  "  snapshot:<file> a saved snapshot.json",
+  "  The kind is never guessed from the filesystem: a file named HEAD is not HEAD.",
+  "",
   "Options:",
   "  --json          machine-readable output with sorted keys",
   "  --fail-on <c,…> categories that exit 1 (replaces the default set); add 'projected'",
   "                  to fail on projected widenings too",
   "  --strict        turn exit 2 (undecided) into exit 1",
+  "  --allow-in-repo accept a dir: or snapshot: side that lies inside the repository",
+  "                  (check refuses it otherwise: its content belongs to the change)",
   "  --help, -h      show this help",
   "  --version       print the version",
   "",
@@ -116,7 +131,7 @@ interface ParsedArgs {
 }
 
 const VALUE_FLAGS = new Set(["base", "head", "fail-on"]);
-const BOOLEAN_FLAGS = new Set(["json", "strict", "help", "version"]);
+const BOOLEAN_FLAGS = new Set(["json", "strict", "allow-in-repo", "help", "version"]);
 
 function parseArgs(argv: readonly string[]): ParsedArgs | { error: string } {
   const flags: Flags = new Map();
@@ -177,6 +192,42 @@ function snapshotDeps(deps: CliDeps): { spawner: Spawner; fs: FsAdapter } {
   return { spawner: deps.spawner ?? defaultSpawner, fs: deps.fs ?? defaultFs };
 }
 
+/** Reason recorded when `check` refuses a side inside the repository. */
+export function inRepoRefusal(side: Side): string {
+  const what = side.kind === "worktree" ? "directory" : "snapshot file";
+  return `refusing a ${what} inside the repository being checked: its content belongs to the change under review; pass --allow-in-repo to accept it`;
+}
+
+/**
+ * Apply the in-repository rule to the resolved sides. A `dir:` or
+ * `snapshot:` side strictly inside the repository `cwd` is in is refused
+ * by `check` (returned as incomplete) and warned about by `diff` and
+ * `snapshot`, unless `--allow-in-repo` was given. The repository root
+ * itself is the ordinary "current worktree" side and always passes.
+ */
+function guardInRepo(name: "snapshot" | "diff" | "check", sides: readonly Side[], allow: boolean, io: CliIo, deps: CliDeps): Incomplete[] {
+  if (allow || sides.every((side) => side.kind === "git")) {
+    return [];
+  }
+  const { spawner, fs } = snapshotDeps(deps);
+  const toplevel = repoToplevel(deps.cwd, spawner, fs);
+  if (toplevel === null) {
+    return [];
+  }
+  const refused: Incomplete[] = [];
+  for (const side of sides) {
+    if (placeSide(side, toplevel, fs) !== "inside") {
+      continue;
+    }
+    if (name === "check") {
+      refused.push({ path: side.spec, reason: inRepoRefusal(side), lines: null });
+    } else {
+      io.stderr(`warning: ${side.spec}: lies inside the repository; its content belongs to the change under review (--allow-in-repo silences this)\n`);
+    }
+  }
+  return refused;
+}
+
 function commandSnapshot(args: ParsedArgs, io: CliIo, deps: CliDeps): number {
   if (args.positionals.length > 1) {
     io.stderr(`snapshot: expected at most one path, got ${args.positionals.length}\n${USAGE}`);
@@ -193,6 +244,7 @@ function commandSnapshot(args: ParsedArgs, io: CliIo, deps: CliDeps): number {
     }
     return EXIT_INCOMPLETE;
   }
+  guardInRepo("snapshot", [resolved.side], args.flags.get("allow-in-repo") === true, io, deps);
   const { snapshot } = takeSnapshot(resolved.side, snapshotDeps(deps));
   io.stdout(json ? renderSnapshotJson(snapshot) : renderSnapshotText(snapshot));
   if (snapshot.incomplete.length > 0) {
@@ -245,6 +297,14 @@ function commandTwoSided(name: "diff" | "check", args: ParsedArgs, io: CliIo, de
   }
   if (!("side" in resolutions.base) || !("side" in resolutions.head)) {
     return EXIT_INCOMPLETE; // unreachable; keeps the type narrowing explicit
+  }
+  const refused = guardInRepo(name, [resolutions.base.side, resolutions.head.side], args.flags.get("allow-in-repo") === true, io, deps);
+  if (refused.length > 0) {
+    io.stderr(renderIncomplete(refused));
+    if (json) {
+      io.stdout(renderIncompleteJson(refused));
+    }
+    return EXIT_INCOMPLETE;
   }
   const baseSnapshot = takeSnapshot(resolutions.base.side, snapshotDeps(deps)).snapshot;
   const headSnapshot = takeSnapshot(resolutions.head.side, snapshotDeps(deps)).snapshot;

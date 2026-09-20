@@ -28,11 +28,11 @@ import { after, before, describe, it } from "node:test";
 const requireCjs = createRequire(import.meta.url);
 
 import { EXIT_EXPANDS, EXIT_INCOMPLETE, EXIT_OK, run, type CliDeps } from "../src/cli.js";
-import { GIT_SUBCOMMANDS, defaultFs, type FsAdapter } from "../src/git.js";
+import { GIT_SUBCOMMANDS, defaultFs, resolveSide, type FsAdapter } from "../src/git.js";
 import { CREDENTIAL_PRESENT } from "../src/redact.js";
 import { makePairRepo, type DiffRepo } from "./diff-helpers.js";
 import { GoldenRepos, expectedOf, goldenCases, runGoldenInProcess } from "./golden-helpers.js";
-import { FIXTURES, makeRepo, removeDir, runCli, symlinkOrSkip, tempDir } from "./helpers.js";
+import { FIXTURES, commitAll, git, initRepo, makeRepo, recordingFs, removeDir, runCli, symlinkOrSkip, tempDir } from "./helpers.js";
 
 const SECURITY_FIXTURES = path.join(FIXTURES, "security");
 const CANARY = "/tmp/agent-surface-canary-a3f9c2e7";
@@ -390,6 +390,105 @@ describe("redaction in every renderer (JG-159)", () => {
     assert.ok(credentialKeys.includes("credential:/mcpServers/gh/args/3"));
     assert.ok(credentialKeys.some((key) => key.startsWith("credential:/permissions/allow/")), "bearer literal inside an allow rule");
     assert.ok(credentialKeys.length >= 9, `${credentialKeys.length} credential findings`);
+  });
+});
+
+describe("side specs are never guessed from the filesystem (SRF-1)", () => {
+  const BASE_SETTINGS = '{"permissions": {"allow": ["Bash(npm test)"], "deny": ["Bash(curl *)"]}}\n';
+  const HEAD_SETTINGS =
+    '{"permissions": {"allow": ["Bash(npm test)"], "deny": ["Bash(curl *)"]}, "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "touch /tmp/agent-surface-canary-a3f9c2e7"}]}]}}\n';
+  let dir: string;
+  let baseSha: string;
+  let headSha: string;
+  before(() => {
+    // main: the base settings. feature (HEAD): adds a hook, plus a file named
+    // HEAD holding a snapshot of main and a directory named main holding main's
+    // settings, so that a comparison which trusted the filesystem would compare
+    // the change against content the change itself supplies.
+    dir = tempDir();
+    initRepo(dir);
+    fs.mkdirSync(path.join(dir, ".claude"));
+    fs.writeFileSync(path.join(dir, ".claude", "settings.json"), BASE_SETTINGS);
+    baseSha = commitAll(dir, "base");
+    const baseSnapshot = inProcess(["snapshot", "ref:main", "--json"], dir).stdout;
+    git(dir, "checkout", "-q", "-b", "feature");
+    fs.writeFileSync(path.join(dir, ".claude", "settings.json"), HEAD_SETTINGS);
+    fs.writeFileSync(path.join(dir, "HEAD"), baseSnapshot);
+    fs.mkdirSync(path.join(dir, "main", ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "main", ".claude", "settings.json"), BASE_SETTINGS);
+    headSha = commitAll(dir, "head");
+    assert.notEqual(baseSha, headSha);
+  });
+  after(() => removeDir(dir));
+
+  it("check --base main --head HEAD compares the two commits (exit 1), never the directory main or the file HEAD", () => {
+    const { fs: recorder, paths } = recordingFs();
+    for (const args of [
+      ["check", "--base", "main", "--head", "HEAD"],
+      ["check", "--base", "ref:main", "--head", "ref:HEAD"],
+      ["check", "--base", baseSha, "--head", headSha],
+    ]) {
+      const result = inProcess(args, dir, { fs: recorder });
+      assert.equal(result.status, EXIT_EXPANDS, `${args.join(" ")}: ${result.stderr}`);
+      assert.match(result.stdout, new RegExp(`^CONTROL-SURFACE DIFF {2}base=${baseSha} head=${headSha}\n`));
+      assert.match(result.stdout, /\n {4}added {3}hook {8}hook:PreToolUse:Bash:[0-9a-f]{64} {2}widens proven/);
+      const cli = runCli(args, dir);
+      assert.equal(cli.status, EXIT_EXPANDS, args.join(" "));
+    }
+    assert.deepEqual(paths, [], "a ref-only comparison touches no path");
+    for (const spec of ["main", "HEAD"]) {
+      const side = resolveSide(spec, { cwd: dir, fs: recorder });
+      assert.ok(side.ok && side.side.kind === "git", `${spec} is a ref`);
+    }
+    assert.deepEqual(paths, []);
+  });
+
+  it("check refuses dir: and snapshot: sides inside the repository (exit 3) unless --allow-in-repo is given", () => {
+    const refusedDir = inProcess(["check", "--base", "dir:main", "--head", "HEAD"], dir);
+    assert.equal(refusedDir.status, EXIT_INCOMPLETE);
+    assert.match(refusedDir.stderr, /^incomplete: dir:main: refusing a directory inside the repository being checked: its content belongs to the change under review; pass --allow-in-repo to accept it\n$/);
+    assert.equal(refusedDir.stdout, "");
+    const refusedSnapshot = inProcess(["check", "--base", "snapshot:HEAD", "--head", "ref:HEAD", "--json"], dir);
+    assert.equal(refusedSnapshot.status, EXIT_INCOMPLETE);
+    assert.match(refusedSnapshot.stderr, /^incomplete: snapshot:HEAD: refusing a snapshot file inside the repository being checked/);
+    const json = JSON.parse(refusedSnapshot.stdout) as { incomplete: Array<{ path: string; reason: string }> };
+    assert.equal(json.incomplete[0]?.path, "snapshot:HEAD");
+    assert.match(json.incomplete[0]?.reason ?? "", /refusing a snapshot file inside the repository/);
+    for (const args of [
+      ["check", "--base", "dir:main", "--head", "HEAD"],
+      ["check", "--base", "snapshot:HEAD", "--head", "HEAD"],
+      ["check", "--base", "main", "--head", "dir:main"],
+    ]) {
+      assert.equal(runCli(args, dir).status, EXIT_INCOMPLETE, args.join(" "));
+    }
+    const allowed = inProcess(["check", "--base", "dir:main", "--head", "HEAD", "--allow-in-repo"], dir);
+    assert.equal(allowed.status, EXIT_EXPANDS, allowed.stderr);
+    assert.equal(allowed.stderr, "");
+    assert.match(allowed.stdout, /^CONTROL-SURFACE DIFF {2}base=worktree:main head=/);
+  });
+
+  it("diff and snapshot accept an in-repository side with a warning; the worktree root itself never warns", () => {
+    const diff = inProcess(["diff", "--base", "dir:main", "--head", "HEAD"], dir);
+    assert.equal(diff.status, EXIT_EXPANDS);
+    assert.equal(diff.stderr, "warning: dir:main: lies inside the repository; its content belongs to the change under review (--allow-in-repo silences this)\n");
+    const snapshot = inProcess(["snapshot", "snapshot:HEAD", "--json"], dir);
+    assert.equal(snapshot.status, EXIT_OK);
+    assert.match(snapshot.stderr, /^warning: snapshot:HEAD: lies inside the repository/);
+    assert.equal((JSON.parse(snapshot.stdout) as { origin: { kind: string } }).origin.kind, "snapshot");
+    assert.equal(inProcess(["snapshot", "snapshot:HEAD", "--allow-in-repo"], dir).stderr, "");
+    const bare = inProcess(["snapshot", "HEAD", "--json"], dir);
+    assert.equal(bare.stderr, "");
+    assert.deepEqual((JSON.parse(bare.stdout) as { origin: unknown }).origin, { kind: "git", spec: "HEAD", sha: headSha });
+    for (const args of [
+      ["check", "--base", "HEAD", "--head", "."],
+      ["check", "--base", "ref:HEAD", "--head", "dir:."],
+      ["snapshot", "."],
+      ["snapshot"],
+    ]) {
+      const result = inProcess(args, dir);
+      assert.equal(result.status, EXIT_OK, args.join(" "));
+      assert.equal(result.stderr, "", args.join(" "));
+    }
   });
 });
 

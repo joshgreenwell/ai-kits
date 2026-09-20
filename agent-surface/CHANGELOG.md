@@ -3,6 +3,25 @@
 All notable changes to `agent-surface`. Interpretation changes name the interpretation
 ID and the date of the Claude Code documentation they were checked against.
 
+## Unreleased
+
+Security fixes from the control-surface audit (SRF-1 … SRF-3). Interpretations unchanged;
+`semantics_doc_date` stays **2026-09-07**.
+
+- **SRF-1 (critical):** a `--base` / `--head` / `snapshot` argument is no longer
+  classified by looking at the filesystem. The kind is explicit in the spelling —
+  `ref:<git ref>`, `dir:<directory>`, `snapshot:<file>` — and a bare spec is always a git
+  ref (only `.` still means the current worktree). Before, a change that added a file
+  named `HEAD` or a directory named `main` made `check --base main --head HEAD` compare
+  the change against content the change supplied and exit 0. `check` now also refuses a
+  `dir:` or `snapshot:` side that lies inside the repository being checked unless
+  `--allow-in-repo` is given (`diff` and `snapshot` warn), a bare spec that does not
+  resolve exits 3 with a hint, and a snapshot file's `origin.sha` is dropped unless it is
+  a commit id. Documentation and the CI example name both sides by SHA
+  (`--base ref:${{ github.event.pull_request.base.sha }} --head ref:${{ github.sha }}`).
+  Existing invocations that passed a directory or a snapshot file without a prefix must
+  add `dir:` / `snapshot:`.
+
 ## 0.0.1 — 2026-09-09
 
 Initial release (V0).

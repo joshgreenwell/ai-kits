@@ -58,10 +58,15 @@ added to your `package.json`:
 <!-- verify:cli -->
 ```console
 node ~/tools/ai-kits/agent-surface/dist/src/cli.js --version
-node ~/tools/ai-kits/agent-surface/dist/src/cli.js check --base origin/main --head HEAD
+node ~/tools/ai-kits/agent-surface/dist/src/cli.js check --base ref:origin/main --head ref:HEAD
 ```
 
 The first prints `0.0.1`. The second is the real check; its output is walked through in §3.
+A side is written with its kind: `ref:<git ref>` for a commit, `dir:<directory>` for a
+worktree, `snapshot:<file>` for a saved snapshot. A bare spec is always a git ref (`.`
+alone is the current worktree), and the tool never looks at the filesystem to decide what a
+spec is — so a file named `HEAD` or a directory named `main` inside a pull request can never
+be read in place of the commit (§9).
 
 ### The packed-tarball route
 
@@ -72,7 +77,7 @@ published package will behave, so it is also the best rehearsal for the npm rele
 <!-- verify:cli -->
 ```console
 npm pack ~/tools/ai-kits/agent-surface --pack-destination .
-npx --yes ./agent-surface-0.0.1.tgz check --base origin/main --head HEAD
+npx --yes ./agent-surface-0.0.1.tgz check --base ref:origin/main --head ref:HEAD
 ```
 
 ```text
@@ -93,7 +98,7 @@ will do after publication:
 
 <!-- verify:cli -->
 ```console
-npx --yes -p ./agent-surface-0.0.1.tgz agent-surface check --base origin/main --head HEAD
+npx --yes -p ./agent-surface-0.0.1.tgz agent-surface check --base ref:origin/main --head ref:HEAD
 ```
 
 ### Known gotcha: `npx --yes ./x.tgz agent-surface check` exits 64
@@ -103,7 +108,7 @@ first argument. `agent-surface` then sees `agent-surface` where it expects a sub
 
 <!-- verify:cli-invalid -->
 ```console
-npx --yes ./agent-surface-0.0.1.tgz agent-surface check --base origin/main --head HEAD
+npx --yes ./agent-surface-0.0.1.tgz agent-surface check --base ref:origin/main --head ref:HEAD
 ```
 
 ```text
@@ -128,7 +133,7 @@ adds a `PreToolUse` hook for `Bash` (content taken verbatim from
 
 <!-- verify:cli -->
 ```console
-node ~/tools/ai-kits/agent-surface/dist/src/cli.js check --base origin/main --head HEAD
+node ~/tools/ai-kits/agent-surface/dist/src/cli.js check --base ref:origin/main --head ref:HEAD
 ```
 
 ```text
@@ -153,8 +158,9 @@ verdict: expands (exit 1); expands=true; categories=hook
 Reading it, top to bottom:
 
 **The title line** names the two sides by commit SHA, so an output can always be tied back
-to what it was produced from. A worktree side prints `worktree:<path>` instead, and a saved
-snapshot prints the SHA recorded inside it.
+to what it was produced from. A worktree side (`dir:<path>`, or `.`) prints
+`worktree:<path>` instead, and a saved snapshot (`snapshot:<file>`) prints the SHA recorded
+inside it.
 
 **The assumptions header** is eight fixed lines, printed on every diff and snapshot. Each
 states something the verdict depends on and the tool does **not** check — that the
@@ -223,14 +229,16 @@ scoped allow (`Bash(npm test *)`) grants one narrow thing and is the ordinary tr
 healthy repository, so failing on it by default would train people to ignore the job.
 
 Here is the same scoped allow with and without the category named. Either side of `check`
-may be a ref, a directory, or a saved snapshot, so these two runs point straight at the
-golden fixtures in the checkout and need no repository at all. Default:
+may be a commit (`ref:`), a directory (`dir:`), or a saved snapshot (`snapshot:`), so these
+two runs point straight at the golden fixtures in the checkout and need no repository at
+all. (`dir:` is written with `$HOME` rather than `~`: the shell expands a tilde only at the
+start of a word.) Default:
 
 <!-- verify:cli -->
 ```console
 node ~/tools/ai-kits/agent-surface/dist/src/cli.js check \
-  --base ~/tools/ai-kits/agent-surface/fixtures/golden/add-allow-scoped/base \
-  --head ~/tools/ai-kits/agent-surface/fixtures/golden/add-allow-scoped/head
+  --base "dir:$HOME/tools/ai-kits/agent-surface/fixtures/golden/add-allow-scoped/base" \
+  --head "dir:$HOME/tools/ai-kits/agent-surface/fixtures/golden/add-allow-scoped/head"
 ```
 
 ```text
@@ -250,8 +258,8 @@ With `--fail-on scoped-allow` the same input fails:
 <!-- verify:cli -->
 ```console
 node ~/tools/ai-kits/agent-surface/dist/src/cli.js check \
-  --base ~/tools/ai-kits/agent-surface/fixtures/golden/add-allow-scoped/base \
-  --head ~/tools/ai-kits/agent-surface/fixtures/golden/add-allow-scoped/head \
+  --base "dir:$HOME/tools/ai-kits/agent-surface/fixtures/golden/add-allow-scoped/base" \
+  --head "dir:$HOME/tools/ai-kits/agent-surface/fixtures/golden/add-allow-scoped/head" \
   --fail-on scoped-allow
 ```
 
@@ -275,8 +283,8 @@ fails the build:
 <!-- verify:cli -->
 ```console
 node ~/tools/ai-kits/agent-surface/dist/src/cli.js check \
-  --base ~/tools/ai-kits/agent-surface/fixtures/golden/enabled-plugins/base \
-  --head ~/tools/ai-kits/agent-surface/fixtures/golden/enabled-plugins/head \
+  --base "dir:$HOME/tools/ai-kits/agent-surface/fixtures/golden/enabled-plugins/base" \
+  --head "dir:$HOME/tools/ai-kits/agent-surface/fixtures/golden/enabled-plugins/head" \
   --strict
 ```
 
@@ -305,9 +313,13 @@ stopped being routine.
 
 The job below assumes the checkout lives at `tools/ai-kits` (a git submodule or a vendored
 copy). `fetch-depth: 0` is the load-bearing line: the default checkout is shallow and
-single-branch, so `origin/<base branch>` is simply not present, and `agent-surface` reports
-a missing ref as `incomplete` and exits 3 rather than guessing. `--base origin/${{ github.base_ref }}`
-compares the PR against the branch it targets.
+single-branch, so the base commit is simply not present, and `agent-surface` reports a
+missing ref as `incomplete` and exits 3 rather than guessing. Both sides are named by the
+commit SHAs the event carries: `ref:${{ github.event.pull_request.base.sha }}` is the
+commit the target branch was at when the event fired, `ref:${{ github.sha }}` is the
+commit under review. Two SHAs with the `ref:` prefix anchor the comparison to two commits —
+nothing a pull request adds can be mistaken for either, and a push to the base branch
+during the run cannot move the comparison.
 
 <!-- verify:cli -->
 ```yaml
@@ -333,7 +345,8 @@ jobs:
         shell: bash
         run: |
           node tools/ai-kits/agent-surface/dist/src/cli.js check \
-            --base "origin/${{ github.base_ref }}" --head HEAD | tee surface.txt
+            --base "ref:${{ github.event.pull_request.base.sha }}" \
+            --head "ref:${{ github.sha }}" | tee surface.txt
       - name: Publish the report
         if: always()
         shell: bash
@@ -363,7 +376,8 @@ the rehearsal for it.
         shell: bash
         run: |
           npx agent-surface check \
-            --base "origin/${{ github.base_ref }}" --head HEAD | tee surface.txt
+            --base "ref:${{ github.event.pull_request.base.sha }}" \
+            --head "ref:${{ github.sha }}" | tee surface.txt
 ```
 
 ## 6. Use it locally, and in a pre-commit hook
@@ -372,7 +386,7 @@ The one-liner to run before pushing — the same comparison CI will make:
 
 <!-- verify:cli -->
 ```console
-node ~/tools/ai-kits/agent-surface/dist/src/cli.js check --base origin/main --head HEAD
+node ~/tools/ai-kits/agent-surface/dist/src/cli.js check --base ref:origin/main --head ref:HEAD
 ```
 
 A pre-commit hook is worth it only if it costs nothing on an ordinary commit, so gate it on
@@ -386,11 +400,11 @@ the three supported files. `.git/hooks/pre-commit`:
 set -e
 git diff --cached --name-only --diff-filter=ACMR |
   grep -qE '^(\.claude/settings(\.local)?\.json|\.mcp\.json)$' || exit 0
-exec node "$HOME/tools/ai-kits/agent-surface/dist/src/cli.js" check --base HEAD --head .
+exec node "$HOME/tools/ai-kits/agent-surface/dist/src/cli.js" check --base ref:HEAD --head .
 ```
 
-`--head .` is the working tree, not the index, so the hook sees unstaged edits to those
-files too — the safer direction for a hook whose job is to stop a surprise. A commit that
+`--head .` (the same as `--head dir:.`) is the working tree, not the index, so the hook sees
+unstaged edits to those files too — the safer direction for a hook whose job is to stop a surprise. A commit that
 touches only source files passes straight through; one that adds an
 `additionalDirectories` entry is refused:
 
@@ -409,21 +423,29 @@ Use `git commit --no-verify` to override deliberately; the CI job is the backsto
 `snapshot --json` writes the parsed control surface of one side as a file. It is the
 answer to "what did we agree to?": commit the snapshot once, and every later run can be
 compared against that agreed baseline instead of against a moving branch. A saved snapshot
-is accepted **anywhere a ref is accepted**, on either side.
+is accepted on either side as `snapshot:<file>`.
 
 <!-- verify:cli -->
 ```console
 mkdir -p .agent-surface
-node ~/tools/ai-kits/agent-surface/dist/src/cli.js snapshot origin/main
-node ~/tools/ai-kits/agent-surface/dist/src/cli.js snapshot origin/main --json > .agent-surface/baseline.json
-node ~/tools/ai-kits/agent-surface/dist/src/cli.js check --base .agent-surface/baseline.json --head HEAD
+node ~/tools/ai-kits/agent-surface/dist/src/cli.js snapshot ref:origin/main
+node ~/tools/ai-kits/agent-surface/dist/src/cli.js snapshot ref:origin/main --json > .agent-surface/baseline.json
+node ~/tools/ai-kits/agent-surface/dist/src/cli.js check --base snapshot:.agent-surface/baseline.json --head ref:HEAD --allow-in-repo
 ```
+
+`--allow-in-repo` is required here because the baseline lives inside the repository being
+checked: a pull request can rewrite `.agent-surface/baseline.json` along with the settings
+it changes, so `check` refuses an in-repository `dir:` or `snapshot:` side (exit 3) unless
+told that this is intended. The safer shape keeps the baseline outside the checkout — a CI
+artifact, a path on the runner, a separate configuration repository — and passes it as
+`snapshot:/path/outside/baseline.json`, which needs no flag. Whichever you choose, the
+baseline is only as trustworthy as the process that writes it.
 
 The text form is a readable inventory — sources, then every entry with its key and
 location:
 
 ```text
-CONTROL-SURFACE SNAPSHOT  origin=git spec=origin/main sha=493fc872032c
+CONTROL-SURFACE SNAPSHOT  origin=git spec=ref:origin/main sha=493fc872032c
 Assumptions
   Semantics doc date     2026-09-07
   …
@@ -451,7 +473,7 @@ different one is refused outright rather than half-read — it exits 3 with a me
 tells you how to regenerate it (one line on stderr, wrapped here):
 
 ```text
-incomplete: …/schema-mismatch.json: snapshot schema_version mismatch: file has
+incomplete: snapshot:…/schema-mismatch.json: snapshot schema_version mismatch: file has
 schema_version 99, this version of agent-surface reads schema_version 1; re-run
 'agent-surface snapshot --json' with this version
 ```
@@ -526,6 +548,11 @@ readable — you can always tell which semantics produced it.
 - **Only ever spawns three git subcommands** — `git show`, `git rev-parse`, `git ls-files` —
   always as an argument array, never through a shell. Any other subcommand is refused
   before anything is spawned.
+- **Never guesses what a side is.** `ref:`, `dir:` and `snapshot:` say what to read; a bare
+  spec is always a git ref and only `.` means the current worktree. The filesystem is never
+  consulted to classify a spec, so a file named `HEAD` or a directory named `main` that a
+  pull request adds cannot be read in place of the commit. `check` refuses a `dir:` or
+  `snapshot:` side inside the repository being checked unless `--allow-in-repo` is given.
 - **Refuses symlinks that leave the repository.** Worktree reads are symlink-aware; a link
   resolving outside the root is reported as `incomplete`, never followed.
 - Credential-shaped literals are replaced with `<redacted>` in every renderer, and `env`
@@ -538,7 +565,9 @@ process are in [`../SECURITY.md`](../SECURITY.md).
 
 | symptom | cause | fix |
 | ------- | ----- | --- |
-| `incomplete: origin/main: missing ref: 'origin/main' does not resolve to a commit`, exit 3 | shallow or single-branch clone: the base branch was never fetched | `fetch-depth: 0` on `actions/checkout` (or `git fetch origin <branch>` locally). Same message for a typo'd or deleted ref |
+| `incomplete: ref:origin/main: missing ref: 'origin/main' does not resolve to a commit`, exit 3 | shallow or single-branch clone: the base branch was never fetched | `fetch-depth: 0` on `actions/checkout` (or `git fetch origin <branch>` locally). Same message for a typo'd or deleted ref |
+| `incomplete: baseline.json: missing ref: 'baseline.json' does not resolve to a commit; a directory or snapshot file must be written dir:<path> or snapshot:<path>`, exit 3 | a bare spec is always a git ref; the tool never looks at the filesystem to decide what a spec is | Write `snapshot:baseline.json` or `dir:<directory>` |
+| `incomplete: dir:main: refusing a directory inside the repository being checked`, exit 3 | a `dir:` or `snapshot:` side lies inside the repository, so its content belongs to the change under review | Name a commit (`ref:<sha>`), keep the directory or snapshot outside the checkout, or pass `--allow-in-repo` when this is intended |
 | `.mcp.json: duplicate key "mcpServers" at /mcpServers (lines 6, 7)`, exit 3 | duplicate keys in a settings file | Fix the file. The parser never picks last-wins: it refuses visibly with both line numbers, because which one Claude Code honours is not something the tool will guess |
 | `.claude/settings.local.json  ignored; ignored: not repository-controlled (untracked settings.local.json)` | the local file is untracked | Working as intended — an untracked file is not repository-controlled, so it is out of scope. A **tracked** `settings.local.json` *is* read, and adds a `Flagged (head)` line saying it is shared via Git |
 | an MCP server lands in `UNRESOLVED` with `[variable_reference]`, exit 2 | the URL contains `${VAR}` | Also intended: the tool never expands variables, so the target is unknown and it says so instead of guessing. Review the value yourself, or use `--strict` to make it block |

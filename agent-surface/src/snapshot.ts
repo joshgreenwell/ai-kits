@@ -14,6 +14,7 @@
 import { discover, type DiscoverDeps, type Document } from "./discover.js";
 import { extractEntries } from "./entries.js";
 import type { Side } from "./git.js";
+import { isCommitSha } from "./sidespec.js";
 import { SCHEMA_VERSION, SEMANTICS_DOC_DATE, type Snapshot } from "./types.js";
 
 /** Assumptions header (§3.7), printed once and stored in `Snapshot.assumptions`. */
@@ -45,11 +46,12 @@ export interface SnapshotResult {
  */
 export function takeSnapshot(side: Side, deps: DiscoverDeps = {}): SnapshotResult {
   if (side.kind === "snapshot") {
+    // The file is untrusted input: only a well-formed commit id is carried into the title line.
     const originalSha = side.snapshot.origin.sha;
     return {
       snapshot: {
         ...side.snapshot,
-        origin: { kind: "snapshot", spec: side.spec, sha: typeof originalSha === "string" ? originalSha : null },
+        origin: { kind: "snapshot", spec: side.spec, sha: isCommitSha(originalSha) ? originalSha : null },
       },
       documents: [],
     };

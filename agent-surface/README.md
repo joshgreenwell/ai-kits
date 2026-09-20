@@ -1,6 +1,6 @@
 # agent-surface
 
-Agent Control-Surface Diff. `agent-surface check --base main --head HEAD` tells a reviewer,
+Agent Control-Surface Diff. `agent-surface check --base ref:main --head ref:HEAD` tells a reviewer,
 deterministically and offline, whether a change to repository-controlled Claude Code
 configuration expands the control surface the agent gets once the repository is trusted:
 new hooks, new MCP servers, whole-tool allows, additional directories, mode changes.
@@ -25,17 +25,19 @@ looks only at what the repository controls, between two points in its history.
 ## Quick start
 
 ```
-npx agent-surface check --base origin/main --head HEAD
+npx agent-surface check --base ref:origin/main --head ref:HEAD
 ```
 
 Example GitHub Actions step (plain `npx`; no wrapper action in V0). `fetch-depth: 0` is
-required so that `origin/main` exists in the checkout:
+required so that the base commit exists in the checkout. Both sides are named by the
+commit SHAs the event carries, with the `ref:` prefix, so the comparison is anchored to
+two commits and nothing in the pull request can stand in for either:
 
 ```yaml
 - uses: actions/checkout@v4
   with:
     fetch-depth: 0
-- run: npx agent-surface check --base origin/main --head HEAD
+- run: npx agent-surface check --base ref:${{ github.event.pull_request.base.sha }} --head ref:${{ github.sha }}
 ```
 
 The step fails (exit 1) on a proven expansion in a failing category, passes (exit 0) on
@@ -134,20 +136,36 @@ exit 2 into exit 1.
 ## Usage
 
 ```
-agent-surface snapshot [path] [--json]
-agent-surface diff  --base <ref> --head <ref|path|snapshot.json> [--json]
-agent-surface check --base <ref> --head <ref> [--fail-on <categories>] [--strict] [--json]
+agent-surface snapshot [side] [--json]
+agent-surface diff  --base <side> --head <side> [--json]
+agent-surface check --base <side> --head <side> [--fail-on <categories>] [--strict] [--allow-in-repo] [--json]
 agent-surface explain <ID>
 ```
 
-Either side may be a ref, a directory (worktree), or a saved `snapshot.json`. When neither
+A side names what to read and says so explicitly:
+
+| spelling | side |
+| --- | --- |
+| `ref:<git ref>` | the commit the ref resolves to (`ref:origin/main`, `ref:HEAD`, `ref:<sha>`) |
+| `dir:<directory>` | a worktree, read from the filesystem |
+| `snapshot:<file>` | a saved `snapshot.json` |
+| `<git ref>` | a bare spec is always a git ref, never a path |
+| `.` | the current worktree; the one bare spelling that is not a ref |
+
+The kind is decided from the spelling alone. The tool never looks at the filesystem to
+decide what a spec is, so a file named `HEAD` or a directory named `main` added by the
+change under review can never replace the ref of the same name; a bare spec that does not
+resolve exits 3 with a hint to write `dir:` or `snapshot:`. `check` refuses a `dir:` or
+`snapshot:` side that lies inside the repository being checked (its content belongs to the
+change under review) unless `--allow-in-repo` is given; `diff` and `snapshot` accept it
+with a warning on stderr. The worktree root itself (`.`) is always accepted. When neither
 side carries any supported file the tool prints the header and
 "no repository-controlled agent configuration found" and exits 0.
 
 ## Inputs (V0)
 
-Read from Git blobs at each ref, or from a directory, or from a saved `snapshot.json`;
-never from textual `git diff`:
+Read from Git blobs at a commit (`ref:`), or from a directory (`dir:`), or from a saved
+`snapshot.json` (`snapshot:`); never from textual `git diff`:
 
 - `.claude/settings.json`
 - `.claude/settings.local.json`, only when tracked by Git (flagged as "local file
@@ -202,8 +220,11 @@ Security posture (details and the disclosure process in `SECURITY.md`): nothing 
 executed or expanded; inputs are limited to 1 MiB and a nesting depth of 32; JSON objects
 are prototype-less so `__proto__` and `constructor` keys are plain data; worktree reads
 are symlink-aware and refuse links that leave the repository root; permission errors are
-reported as `incomplete`, never as "clean". Only `git show`, `git rev-parse`, and
-`git ls-files` are ever spawned, always as an argument array and never through a shell.
+reported as `incomplete`, never as "clean"; a side's kind comes from its spelling
+(`ref:`, `dir:`, `snapshot:`), never from a stat of the filesystem, and `check` refuses a
+directory or snapshot inside the repository being checked unless `--allow-in-repo` is
+given. Only `git show`, `git rev-parse`, and `git ls-files` are ever spawned, always as an
+argument array and never through a shell.
 The test suite runs the whole golden fixture set with `child_process` and every network
 entry point monkeypatched to fail.
 
@@ -241,8 +262,9 @@ the diff classifies the deltas.
 Rule strings are canonicalized so that a reformat never looks like a change
 (`Bash(npm run:*)` and `Bash(npm run *)` share one key; `Bash(npm run)` is a different,
 exact key); the decisions are in `docs/normalization.md`. The snapshot shape is documented
-in `docs/snapshot.schema.json` (JSON Schema 2020-12). A saved snapshot is accepted
-wherever a ref is; a file written by another `schema_version` is refused with exit 3.
+in `docs/snapshot.schema.json` (JSON Schema 2020-12). A saved snapshot is accepted on
+either side as `snapshot:<file>`; a file written by another `schema_version` is refused
+with exit 3, and an `origin.sha` that is not a commit id is dropped rather than printed.
 
 Credential-like literals (`sk-…`, `AKIA…`, GitHub and Slack tokens, `Bearer …`, PEM
 private keys, long opaque values under keys named like token/secret/key/password) are

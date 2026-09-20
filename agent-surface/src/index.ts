@@ -19,8 +19,10 @@ export {
   GIT_SUBCOMMANDS,
   GitInvocationRefused,
   isTrackedInWorktree,
+  placeSide,
   readBlobAtRef,
   readWorktreeFile,
+  repoToplevel,
   resolveRef,
   resolveSide,
   runGit,
@@ -29,6 +31,7 @@ export {
   type RefResolution,
   type ResolveDeps,
   type Side,
+  type SidePlacement,
   type SideResolution,
   type SpawnOptions,
   type SpawnResult,
@@ -61,6 +64,17 @@ export {
   type SemanticEntry,
 } from "./entries.js";
 export { normalizeRule, normalizeSpec, type ParsedRule } from "./normalize.js";
+export {
+  COMMIT_SHA_PATTERN,
+  CURRENT_WORKTREE_SPEC,
+  isCommitSha,
+  parseSideSpec,
+  PATH_SPEC_HINT,
+  SIDE_SPEC_PREFIXES,
+  sideSpecTarget,
+  type SideSpec,
+  type SideSpecKind,
+} from "./sidespec.js";
 export {
   CREDENTIAL_PRESENT,
   looksLikeCredential,

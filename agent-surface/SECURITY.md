@@ -31,6 +31,14 @@ new patch version and noted in `CHANGELOG.md`; credit is given if wanted.
 - **Expand environment variables.** `${VAR}` and `$VAR` in commands, arguments, URLs and
   `env` values are rendered literally and reported as variable references; the process
   environment is never consulted for output.
+- **Guess what a side is.** `--base`, `--head` and the `snapshot` argument name their kind
+  in the spelling: `ref:<git ref>`, `dir:<directory>`, `snapshot:<file>`; a bare spec is
+  always a git ref and only `.` means the current worktree. The filesystem is never
+  consulted to classify a spec, so a file named `HEAD` or a directory named `main` that a
+  change adds can never be read in place of the ref. `check` refuses a `dir:` or
+  `snapshot:` side inside the repository being checked (its content belongs to the change
+  under review) unless `--allow-in-repo` is given; `diff` and `snapshot` warn. A snapshot
+  file's `origin.sha` is carried only when it is a well-formed commit id.
 - **Read outside the repository.** Only `.claude/settings.json`, a tracked
   `.claude/settings.local.json` and `.mcp.json` at the requested side are read. User,
   managed and `~/.claude.json` settings are never opened. Worktree reads are symlink-aware:
