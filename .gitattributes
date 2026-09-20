@@ -1,0 +1,6 @@
+# Generated assets, golden fixtures, and the vendored schema are compared byte for
+# byte, so every text file checks out with LF on every platform. Fixtures that are
+# deliberately CRLF parser inputs are stored verbatim; each kit lists its own below
+# or in a nested .gitattributes.
+* text=auto eol=lf
+agentlint/tests/fixtures/langfuse/*.csv -text
