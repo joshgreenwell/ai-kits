@@ -13,6 +13,7 @@ use observatory_contract::{
 };
 use observatory_core::adapter::{Adapter, BindingContext, IdentityState, MemorySink, RunContext};
 use observatory_core::paths::{file_identity, mtime_ns};
+use observatory_core::privacy::PrivacyKey;
 use observatory_core::pyjson::digest;
 use observatory_core::state::{EventRow, FileCheckpoint, State};
 use serde_json::Value;
@@ -53,6 +54,7 @@ fn context(dir: &tempfile::TempDir, detail_level: DetailLevel, binding: BindingC
         dir.path().join("statusline"),
         true,
         Duration::from_secs(60),
+        PrivacyKey::fixed_for_tests(),
     )
 }
 

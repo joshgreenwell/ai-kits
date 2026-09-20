@@ -18,6 +18,7 @@ pub mod inbox;
 pub mod lock;
 pub mod outbox;
 pub mod paths;
+pub mod privacy;
 pub mod process;
 pub mod provider_http;
 pub mod pyjson;

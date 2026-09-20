@@ -19,7 +19,7 @@ use observatory_core::adapter::{
     Adapter, BindingContext, IdentityState, MemorySink, Outcome, Preflight, RunContext,
 };
 use observatory_core::outbox::bucket_from_row;
-use observatory_core::pyjson::digest;
+use observatory_core::privacy::{PrivacyKey, project_key};
 use observatory_core::state::State;
 use serde_json::{Value, json};
 
@@ -44,6 +44,7 @@ fn context(dir: &tempfile::TempDir, bindings: Vec<BindingContext>) -> RunContext
         corpus().join("claude-statusline"),
         true,
         Duration::from_secs(60),
+        PrivacyKey::fixed_for_tests(),
     )
     // No Claude settings file: the hook status never depends on the machine running the test.
     .with_claude_settings_path(dir.path().join("claude-settings.json"))
@@ -164,8 +165,9 @@ fn hashed_project_attribution_names_directories_by_hash_only() {
     assert!(claude_outcome.capabilities.as_ref().is_some_and(|coverage| coverage.iter().any(|item| {
         item.dimension == CapabilityDimension::Project && item.state != CapabilityState::DisabledBySetting
     })));
-    let claude_project = digest(&json!(["project", "/private/synthetic/project"])).as_str().to_owned();
-    let codex_project = digest(&json!(["project", "/private/synthetic"])).as_str().to_owned();
+    let claude_project = project_key(&ctx.privacy_key, "/private/synthetic/project").as_str().to_owned();
+    let codex_project = project_key(&ctx.privacy_key, "/private/synthetic").as_str().to_owned();
+    let key_hex = ctx.privacy_key.to_hex();
     let mut seen: std::collections::BTreeMap<Option<String>, usize> = std::collections::BTreeMap::new();
     for emitted in &sink.records {
         let value = serde_json::to_value(&emitted.record).unwrap();
@@ -175,6 +177,7 @@ fn hashed_project_attribution_names_directories_by_hash_only() {
         let text = value.to_string();
         // `session_identity` is legitimately "synthetic"; the directory itself must not appear.
         assert!(!text.contains("/private") && !text.contains("synthetic/"), "path leaked: {text}");
+        assert!(!text.contains(&key_hex) && !text.contains(&key_hex[..16]), "privacy key leaked: {text}");
         if let Some(key) = value["project_hash"].as_str() {
             assert_eq!(value["project"], json!({ "key": key, "basis": "working_directory" }));
         } else {

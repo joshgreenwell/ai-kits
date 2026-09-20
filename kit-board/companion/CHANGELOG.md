@@ -4,6 +4,23 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
 
 ## Unreleased
 
+- Privacy: project keys and hashed custom tool, MCP, function, and agent names are now
+  HMAC-SHA256 under a random 32-byte key each install creates on its first run and keeps in
+  the state database (`meta.privacy_salt`). They were plain `sha256([label, value])` over a
+  public construction, so anyone with read access to the Observatory database could confirm a
+  guessed working directory or tool name by hashing it. The key is never uploaded, logged, or
+  shown by `status`, `doctor`, or `projects`; it survives re-pairing and changes only with a new
+  state file, which then changes every key this machine uploads. Output formats are unchanged
+  (64 hex digits for `project.key` and `project_hash`, `h:` plus 16 hex digits for names), so
+  the server contract does not move. Consequences: the first run of this build re-keys the
+  project keys and tool hashes already stored in its state (from the paths and names kept
+  beside them) and re-emits every detail record once under the new keys (emission shape `2`);
+  project labels assigned on the Observatory to the old keys do not carry over (a no-op today,
+  since production has never held request rows); the same custom tool now hashes differently on
+  every machine, so the Tools card shows one row per machine for it, and the same MCP tool
+  hashes the same way from Claude and Codex on one machine; a name longer than 400 characters is
+  hashed after bounding, like the stored name. Session, agent, and provider account identifiers
+  stay plain SHA-256. Adds the `hmac` crate.
 - Outbox: a body the Observatory refuses on its content (a 4xx other than 401, 403, 408, or
   429) no longer blocks the queue forever. The upload
   bisects it (coverage first, then halves) until the refused record or bucket stands alone,

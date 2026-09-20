@@ -27,6 +27,7 @@ use observatory_core::adapter::{
     Adapter, BindingContext, IdentityState, MemorySink, Outcome, Preflight, RunContext,
 };
 use observatory_core::inbox::STATUS_SIDECAR;
+use observatory_core::privacy::PrivacyKey;
 use observatory_core::state::State;
 use serde_json::{Value, json};
 
@@ -83,6 +84,7 @@ impl Harness {
             self.inbox(),
             true,
             Duration::from_secs(60),
+            PrivacyKey::fixed_for_tests(),
         )
         .with_claude_settings_path(self.settings_path())
     }
@@ -759,6 +761,7 @@ fn execution_context(dir: &tempfile::TempDir, settings: CollectionSettings) -> R
         corpus().join("claude-statusline"),
         true,
         Duration::from_secs(60),
+        PrivacyKey::fixed_for_tests(),
     )
     .with_claude_settings_path(dir.path().join("claude-settings.json"))
 }

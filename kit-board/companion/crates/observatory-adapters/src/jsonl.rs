@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use observatory_contract::{Provider, Sha256Hex};
 use observatory_core::adapter::{AdapterError, BindingContext, RunContext};
 use observatory_core::paths::{file_identity, home_dir, mtime_ns, mtime_seconds};
+use observatory_core::privacy::{PrivacyKey, project_key};
 use observatory_core::pyjson::{count, digest, epoch, hour_floor, iso, py_str, py_truthy, uuid_time};
 use observatory_core::state::{EventRow, FileCheckpoint, State};
 use serde::{Deserialize, Serialize};
@@ -123,6 +124,8 @@ pub struct EventExtras<'a> {
     pub include_subagents: bool,
     /// `None` when no source is configured: arguments are then not inspected at all.
     pub resources: Option<&'a ScanResources<'a>>,
+    /// This install's key for project keys and hashed tool names.
+    pub privacy_key: &'a PrivacyKey,
 }
 
 /// Per-line attribution beyond v1: where the request ran and from which surface.
@@ -178,9 +181,10 @@ fn project_attribution_from_cwd(value: Option<&Value>) -> (Option<&str>, &'stati
     }
 }
 
-/// `sha256(["project", cwd])` in the repository's stable JSON form; a normalized cwd only.
-pub fn project_hash(cwd: &str) -> Sha256Hex {
-    digest(&json!(["project", cwd]))
+/// `hmac_sha256(key, ["project", cwd])` over the repository's stable JSON form, under this
+/// install's privacy key; a normalized cwd only. See `observatory_core::privacy`.
+pub fn project_hash(key: &PrivacyKey, cwd: &str) -> Sha256Hex {
+    project_key(key, cwd)
 }
 
 /// Claude Code's `entrypoint` as a contract surface. A transcript without the field counts as
@@ -738,7 +742,7 @@ fn process_claude_tool_evidence(
                 }
                 let raw_id = raw_id.unwrap_or_default();
                 let invocation = invocation_key(Provider::Claude, account, raw_id);
-                let identity = claude_identity(raw_name);
+                let identity = claude_identity(extras.privacy_key, raw_name);
                 let parent = block
                     .get("parent_tool_use_id")
                     .and_then(Value::as_str)
@@ -879,7 +883,7 @@ fn process_codex_tool_evidence(
     }
     let raw_name = payload.get("name").and_then(Value::as_str);
     let raw_namespace = payload.get("namespace").and_then(Value::as_str);
-    let identity = codex_identity(kind, raw_name, raw_namespace);
+    let identity = codex_identity(extras.privacy_key, kind, raw_name, raw_namespace);
     let missing_name = !matches!(kind, "web_search_call" | "local_shell_call") && raw_name.is_none();
     state.mark_tool_coverage(binding, missing_name, identity.name_truncated)?;
     let parent = payload
@@ -1043,7 +1047,8 @@ pub fn save_event(
     if !bucket_eligible && !has_token_evidence {
         return Ok(());
     }
-    let project = attribution.cwd.and_then(normalize_cwd).map(|cwd| (project_hash(&cwd), cwd));
+    let project =
+        attribution.cwd.and_then(normalize_cwd).map(|cwd| (project_hash(extras.privacy_key, &cwd), cwd));
     if let Some((hash, cwd)) = &project {
         state.upsert_project(binding, hash.as_str(), cwd, timestamp_text)?;
     }
@@ -1780,6 +1785,7 @@ pub fn scan(
                 parent_session: parent_session
                     .map(|parent| digest(&json!([provider.as_str(), account, parent])).as_str().to_owned()),
                 resources: resources.as_ref(),
+                privacy_key: &ctx_run.privacy_key,
             };
             let path_text = resolved.to_string_lossy().into_owned();
             let size = i64::try_from(meta.len()).unwrap_or(i64::MAX);
@@ -1923,9 +1929,11 @@ mod tests {
         assert_eq!(normalize_cwd("C:\\work\\app\\").as_deref(), Some("C:\\work\\app"));
         assert_eq!(normalize_cwd("/").as_deref(), Some("/"));
         assert_eq!(normalize_cwd("   "), None);
-        let hash = project_hash("/work/app");
-        assert_eq!(hash, project_hash(normalize_cwd("/work/app/").unwrap().as_str()));
-        assert_ne!(hash, project_hash("/work/other"));
+        let key = PrivacyKey::fixed_for_tests();
+        let hash = project_hash(&key, "/work/app");
+        assert_eq!(hash, project_hash(&key, normalize_cwd("/work/app/").unwrap().as_str()));
+        assert_ne!(hash, project_hash(&key, "/work/other"));
+        assert_ne!(hash, project_hash(&PrivacyKey::from_bytes([9; 32]), "/work/app"), "keyed per install");
         assert!(!hash.as_str().contains("work"));
         assert_eq!(hash.as_str().len(), 64);
     }
@@ -1935,8 +1943,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
         let evidence = RequestEvidence::default();
-        let extras =
-            EventExtras { product: "codex", parent_session: None, include_subagents: true, resources: None };
+        let extras = EventExtras {
+            product: "codex",
+            parent_session: None,
+            include_subagents: true,
+            resources: None,
+            privacy_key: &PrivacyKey::fixed_for_tests(),
+        };
         let save = |id: &str, cwd: Option<&str>, project_basis: &str| {
             save_event(
                 &state,
@@ -1965,7 +1978,10 @@ mod tests {
         save("unknown", Some("/work/app"), "working_directory");
         let enriched = state.event("binding", "unknown").unwrap().unwrap();
         assert_eq!(enriched.project_basis, "working_directory");
-        assert_eq!(enriched.project_key, Some(project_hash("/work/app").as_str().to_owned()));
+        assert_eq!(
+            enriched.project_key,
+            Some(project_hash(&PrivacyKey::fixed_for_tests(), "/work/app").as_str().to_owned())
+        );
     }
 
     #[test]
@@ -1987,7 +2003,13 @@ mod tests {
             "account",
             0.0,
             2_000_000_000.0,
-            &EventExtras { product: "codex", parent_session: None, include_subagents: true, resources: None },
+            &EventExtras {
+                product: "codex",
+                parent_session: None,
+                include_subagents: true,
+                resources: None,
+                privacy_key: &PrivacyKey::fixed_for_tests(),
+            },
         )
         .unwrap();
         assert!(result.is_ok());
@@ -2005,8 +2027,13 @@ mod tests {
     fn codex_project_context_distinguishes_none_unknown_and_working_directory() {
         let dir = tempfile::tempdir().unwrap();
         let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
-        let extras =
-            EventExtras { product: "codex", parent_session: None, include_subagents: true, resources: None };
+        let extras = EventExtras {
+            product: "codex",
+            parent_session: None,
+            include_subagents: true,
+            resources: None,
+            privacy_key: &PrivacyKey::fixed_for_tests(),
+        };
         let process = |ctx: &mut Ctx, payload: Value| {
             process_line(
                 &state,
