@@ -164,6 +164,8 @@ export function categorize(delta: Delta): Category | null {
       return "directory";
     case "D-hooks-reenabled":
       return "hooks-reenabled";
+    case "D-env-sensitive-set":
+      return "env";
     default:
       return null;
   }

@@ -285,12 +285,16 @@ describe("environment variables are never expanded; hook commands never run (JG-
         assert.ok(json?.includes("$SECRET"), "literal $SECRET present in JSON");
         assert.ok(json?.includes("http://${MCP_HOST}/mcp?home=${HOME}"), "literal URL present in JSON");
       }
-      // MCP env: key names only, never values (the literal "$SECRET" that does appear is the args element and the hook command).
+      // MCP env: names plus a digest of each value, never the value (the literal "$SECRET" that does appear is the args element and the hook command).
+      interface Digest {
+        redacted: boolean;
+        length: number;
+        sha256: string;
+      }
       interface McpValue {
         args: string[];
         command: string;
-        env_keys: string[];
-        env?: unknown;
+        env: Record<string, Digest> | null;
       }
       type McpDelta = { key: string; head: { value: McpValue } | null };
       const checkJson = JSON.parse(outputs[1] ?? "") as { added: McpDelta[]; unresolved: McpDelta[] };
@@ -298,15 +302,22 @@ describe("environment variables are never expanded; hook commands never run (JG-
       const homeServer = [...checkJson.added, ...checkJson.unresolved].find((delta) => delta.key === "mcp:home");
       assert.ok(checkJson.unresolved.some((delta) => delta.key === "mcp:home"), "mcp:home is unresolved (variable reference), never expanded");
       assert.ok(homeServer?.head !== null && homeServer?.head !== undefined, "mcp:home delta");
-      assert.deepEqual(homeServer.head.value.env_keys, ["EXAMPLE_HOME_REF", "EXAMPLE_TOKEN_REF"]);
-      assert.equal("env" in homeServer.head.value, false, "no env values carried");
+      assert.deepEqual(Object.keys(homeServer.head.value.env ?? {}), ["EXAMPLE_HOME_REF", "EXAMPLE_TOKEN_REF"]);
+      for (const [name, digestValue] of Object.entries(homeServer.head.value.env ?? {})) {
+        assert.deepEqual(Object.keys(digestValue).sort(), ["length", "redacted", "sha256"], name);
+        assert.equal(digestValue.redacted, true);
+        assert.match(digestValue.sha256, /^[0-9a-f]{64}$/, `${name}: digest only, never the value`);
+      }
       assert.deepEqual(homeServer.head.value.args, ["--secret", "$SECRET", "--touch", "/tmp/agent-surface-canary-a3f9c2e7"]);
       assert.equal(homeServer.head.value.command, "${HOME}/bin/example-server");
       const snapshotJson = JSON.parse(outputs[3] ?? "") as { entries: Array<{ key: string; value: McpValue | string }> };
       const snapshotHome = snapshotJson.entries.find((entry) => entry.key === "mcp:home");
       assert.ok(snapshotHome !== undefined && typeof snapshotHome.value === "object");
-      assert.deepEqual(snapshotHome.value.env_keys, ["EXAMPLE_HOME_REF", "EXAMPLE_TOKEN_REF"]);
-      assert.equal(snapshotJson.entries.find((entry) => entry.key === "env_key:EXAMPLE_SECRET")?.value, "<redacted>");
+      assert.deepEqual(Object.keys(snapshotHome.value.env ?? {}), ["EXAMPLE_HOME_REF", "EXAMPLE_TOKEN_REF"]);
+      const secretEntry = snapshotJson.entries.find((entry) => entry.key === "env_key:EXAMPLE_SECRET")?.value as Digest | undefined;
+      assert.equal(secretEntry?.redacted, true);
+      assert.equal(secretEntry?.length, "$SECRET".length);
+      assert.match(secretEntry?.sha256 ?? "", /^[0-9a-f]{64}$/);
       const check = runCli(["check", "--base", repo.baseSha, "--head", repo.headSha], repo.dir, env);
       assert.equal(check.status, EXIT_EXPANDS);
       assert.match(check.stdout, /hook:PreToolUse:Bash:[0-9a-f]{64}/);

@@ -47,8 +47,12 @@ new patch version and noted in `CHANGELOG.md`; credit is given if wanted.
 - **Carry secrets.** Credential-like literals (`sk-…`, `AKIA…`, GitHub, Slack and Bearer
   tokens, PEM private-key blocks, long opaque values under keys named like token / secret /
   key / password) are replaced by `<redacted>` before any value is copied, and reported as
-  "credential-like value present" at their JSON pointer. `env` values are never carried at
-  all. Every renderer passes its output through the same redaction a final time.
+  "credential-like value present" at their JSON pointer. `env` values and MCP `env` /
+  `headers` values are never carried at all: each is represented by its length and sha256,
+  so a changed value is reported (a name on the sensitive list — `ANTHROPIC_BASE_URL`, the
+  proxy variables, `NODE_OPTIONS`, `PATH`, `LD_PRELOAD`, `CLAUDE_CODE_*`, `DYLD_*`, … — as a
+  proven widening) without the value ever being printed. Every renderer passes its output
+  through the same redaction a final time.
 - **Let redaction hide a change.** Identity and equality are computed over the raw text,
   display over the redacted text: a hook key hashes the raw command, a redacted MCP
   `command` / `args` / `url` or helper command carries a sibling `<field>_sha256` of the

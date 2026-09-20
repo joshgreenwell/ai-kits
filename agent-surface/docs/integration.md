@@ -218,13 +218,15 @@ changes". Never treat 3 as a flake to retry.
 ### The default failing categories
 
 A widening delta carries exactly one category. These fail by default: `hook`, `mcp`,
-`mode`, `whole-tool-allow`, `directory`, `hooks-reenabled`, `deny-removed`. The eighth
-category, `scoped-allow`, is annotate-only: it is printed under `EXPANDED` but does not
-change the exit code.
+`mode`, `whole-tool-allow`, `directory`, `hooks-reenabled`, `deny-removed`, `env`. The
+ninth category, `scoped-allow`, is annotate-only: it is printed under `EXPANDED` but does
+not change the exit code.
 
-The split is deliberate. The seven default categories each hand the agent a capability it
+The split is deliberate. The eight default categories each hand the agent a capability it
 did not have — a command that runs automatically, a server it may talk to, a mode that
-stops asking, a whole tool, a new directory, every hook back on, or one fewer block. A
+stops asking, a whole tool, a new directory, every hook back on, one fewer block, or a
+sensitive environment value (`ANTHROPIC_BASE_URL`, a proxy variable, `NODE_OPTIONS`, …)
+that redirects its traffic or loads code into its process. A
 scoped allow (`Bash(npm test *)`) grants one narrow thing and is the ordinary traffic of a
 healthy repository, so failing on it by default would train people to ignore the job.
 
@@ -272,7 +274,7 @@ verdict: expands (exit 1); expands=true; categories=scoped-allow
 boundary you actually care about — a repository where agents run against production
 credentials, or one whose `allow` list is reviewed by a different team than the code. Note
 that `--fail-on` **replaces** the default set, so name the whole policy:
-`--fail-on hook,mcp,mode,whole-tool-allow,directory,hooks-reenabled,deny-removed,scoped-allow`.
+`--fail-on hook,mcp,mode,whole-tool-allow,directory,hooks-reenabled,deny-removed,env,scoped-allow`.
 The one exception is `projected`, which is a pseudo-category: naming only `projected` keeps
 the default categories and additionally fails on projected widenings such as a prefix rule.
 
@@ -512,7 +514,7 @@ lists everything it knows:
   plugin-provided hooks and servers, skill `allowed-tools`, subagent frontmatter).
 - `D-…` — the direction rules; a delta's `rule` field names the one that fired, e.g.
   `explain D-deny-removed`.
-- The eight categories (`hook`, `mcp`, … `scoped-allow`) and `projected`.
+- The nine categories (`hook`, `mcp`, … `env`, `scoped-allow`) and `projected`.
 - The flags (`shadowed`, `broad`, `breadth_unresolved`, `plaintext`, `variable_reference`,
   `ignored_by_claude_code`, `tracked_local`).
 
@@ -555,8 +557,11 @@ readable — you can always tell which semantics produced it.
   `snapshot:` side inside the repository being checked unless `--allow-in-repo` is given.
 - **Refuses symlinks that leave the repository.** Worktree reads are symlink-aware; a link
   resolving outside the root is reported as `incomplete`, never followed.
-- Credential-shaped literals are replaced with `<redacted>` in every renderer, and `env`
-  values are never carried at all.
+- Credential-shaped literals are replaced with `<redacted>` in every renderer. `env` values
+  and MCP `env` / `headers` values are never carried at all: each is represented by its
+  length and sha256, so a changed value is reported — a sensitive name such as
+  `ANTHROPIC_BASE_URL` or `NODE_OPTIONS` as a proven widening (category `env`), any other
+  as unresolved — without the value ever being printed.
 
 Details, the limits (1 MiB per file, depth 32, prototype-less parsing) and the disclosure
 process are in [`../SECURITY.md`](../SECURITY.md).
@@ -572,6 +577,7 @@ process are in [`../SECURITY.md`](../SECURITY.md).
 | `.claude/settings.local.json  ignored; ignored: not repository-controlled (untracked settings.local.json)` | the local file is untracked | Working as intended — an untracked file is not repository-controlled, so it is out of scope. A **tracked** `settings.local.json` *is* read, and adds a `Flagged (head)` line saying it is shared via Git |
 | an MCP server lands in `UNRESOLVED` with `[variable_reference]`, exit 2 | the URL contains `${VAR}` | Also intended: the tool never expands variables, so the target is unknown and it says so instead of guessing. Review the value yourself, or use `--strict` to make it block |
 | a settings reformat produces `no changes`, exit 0 | rule strings are canonicalized and values compared semantically | Nothing to fix. `Bash(npm run:*)` and `Bash(npm run *)` share one key; `docs/normalization.md` has the decisions |
+| an `env_key:…` or `mcp:…` delta says `value changed (digest differs)` | env and header values are compared by their sha256, never carried; a name on the sensitive list widens (category `env`), any other value change is unresolved | Review the new value in the diff itself. Nothing to fix in the tool: the value is deliberately not printed |
 | a non-empty `enabledPlugins` forces exit 2 | plugin-provided hooks and servers are not modeled | Intended: a plugin can bring hooks and servers the tool cannot see, so a change to `enabledPlugins` is `unresolved` and adds a `Flagged (head)` line. Review the plugin, or pin the policy with `--fail-on`/`--strict` |
 | `check: unknown --fail-on category hooks`, exit 64 | the category is `hook`, not `hooks` | Use a name from `Categories:` in `--help`. 64 is a usage error, never a verdict |
 | `no repository-controlled agent configuration found`, exit 0 | neither side has any of the three files | Expected for a repository that does not configure Claude Code |

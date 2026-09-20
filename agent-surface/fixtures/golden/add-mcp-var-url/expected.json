@@ -112,6 +112,7 @@
       "categories": [
         "deny-removed",
         "directory",
+        "env",
         "hook",
         "hooks-reenabled",
         "mcp",
@@ -150,9 +151,9 @@
         "value": {
           "args": null,
           "command": null,
-          "env_keys": null,
+          "env": null,
           "extra": null,
-          "header_keys": null,
+          "headers": null,
           "name": "events",
           "transport": "sse",
           "type_raw": "sse",

@@ -125,8 +125,11 @@ direction `widens` sits in a failing category. `diff` exits with the same code a
 `enableAllProjectMcpServers` → true), `mode` (`defaultMode` → `bypassPermissions` /
 `auto` / `dontAsk`), `whole-tool-allow` (`Bash`, `Bash(*)`, `Read`, …), `directory`
 (`additionalDirectories` added), `hooks-reenabled` (`disableAllHooks` true → false),
-`deny-removed`. `scoped-allow` (`Bash(npm test)`, `Bash(npm run *)`) is annotate-only by
-default.
+`deny-removed`, `env` (a sensitive environment value — `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_AUTH_TOKEN`, the proxy variables, `NODE_OPTIONS`, `NODE_EXTRA_CA_CERTS`,
+`SSL_CERT_FILE`, `PATH`, `LD_PRELOAD`, `CLAUDE_CODE_*`, `DYLD_*` — set or changed in `env`
+or in an MCP server's `env`). `scoped-allow` (`Bash(npm test)`, `Bash(npm run *)`) is
+annotate-only by default.
 
 `--fail-on <a,b,…>` replaces that set with the named categories. `projected` may be
 added to fail on projected widenings as well (`Bash(npm run *)` widens on a projected
@@ -250,10 +253,10 @@ the diff classifies the deltas.
 | `perm` | `perm:<allow\|ask\|deny>:<canonical rule>` | `{raw, rule, tool, spec, wildcard}` |
 | `mode` | `mode:defaultMode`, `mode:disableBypassPermissionsMode` | `{raw, mode}` |
 | `hook` | `hook:<event>:<matcher>:<sha256(command)>` | `{event, matcher, type, command, prompt, timeout}`; one per hook command, recorded and hashed, never executed. The hash is of the raw command; the displayed `command` is redacted, and a redacted field gains a sibling `command_sha256` / `prompt_sha256` of the raw text |
-| `mcp` | `mcp:<server-name>` | `{transport, type_raw, command, args, url, env_keys, header_keys, extra}`; env and header values are never carried |
+| `mcp` | `mcp:<server-name>` | `{transport, type_raw, command, args, url, env, headers, extra}`; `env` and `headers` map each name to `{redacted: true, length, sha256}` of the raw value, so a changed value is a changed entry while the value itself is never carried |
 | `dir` | `dir:<path>` (from `permissions.additionalDirectories`) | `{raw, path}` |
 | `sandbox` | `sandbox:<key>` | the value as written |
-| `env_key` | `env_key:<NAME>` (from top-level `env`) | always `"<redacted>"` |
+| `env_key` | `env_key:<NAME>` (from top-level `env`) | `{redacted: true, length, sha256}` of the raw value, never the value; a name on the sensitive list that is set or changed widens (category `env`), any other value change is unresolved |
 | `helper` | `helper:<apiKeyHelper\|awsAuthRefresh\|awsCredentialExport\|otelHeadersHelper>` | `{command}`, plus `command_sha256` of the raw text when the displayed command was redacted |
 | `plugin_flag` | `plugin_flag:<enabledPlugins\|enableAllProjectMcpServers\|disableAllHooks\|enabledMcpjsonServers\|disabledMcpjsonServers>` | as written; the two server lists carry `{raw, names}` |
 | `unknown` | `unknown:<json_pointer>` | the value as written (redacted); any key the extractor does not model, never dropped |

@@ -7,10 +7,11 @@
  *   perm:<allow|ask|deny>:<canonical rule>      value {raw, rule, tool, spec, wildcard}
  *   mode:defaultMode | mode:disableBypassPermissionsMode   value {raw, mode} (mode duplicates raw so a mode change survives the raw-free semantic comparison)
  *   hook:<event>:<matcher>:<sha256(raw command)>   value {event, matcher, type, command, prompt, timeout}
- *   mcp:<server-name>                           value {transport, type_raw, command, args, url, env_keys, header_keys, extra}
+ *   mcp:<server-name>                           value {transport, type_raw, command, args, url, env, headers, extra}
+ *                                               (env / headers map each name to {redacted: true, length, sha256} of the raw value)
  *   dir:<path>                                  value {raw, path}
  *   sandbox:<key>                               value = the JSON value as written
- *   env_key:<NAME>                              value "<redacted>" (always)
+ *   env_key:<NAME>                              value {redacted: true, length, sha256} of the raw value (never the value)
  *   helper:<apiKeyHelper|awsAuthRefresh|awsCredentialExport|otelHeadersHelper>   value {command}
  *   plugin_flag:<enabledPlugins|enableAllProjectMcpServers|disableAllHooks
  *               |enabledMcpjsonServers|disabledMcpjsonServers>                     value as written / {raw, names}
@@ -25,6 +26,8 @@
  *  - hook commands, helper commands and MCP commands are recorded as
  *    strings and never executed;
  *  - `env` values and MCP `env` / `headers` values never reach an entry;
+ *    each is represented by its length and sha256 so that a changed value
+ *    is a changed entry (SRF-3) while the value stays unprintable;
  *  - credential-like literals are redacted before any value is copied, so
  *    no entry (and no key) carries one. Identity is still computed over the
  *    raw text: the hook key hashes the raw command, a redacted `command`,
@@ -44,7 +47,7 @@ import { createHash } from "node:crypto";
 import type { Document, FileRole } from "./discover.js";
 import { escapePointerToken } from "./jsonc.js";
 import { normalizeRule } from "./normalize.js";
-import { CREDENTIAL_PRESENT, REDACTED, redactTree } from "./redact.js";
+import { CREDENTIAL_PRESENT, redactTree } from "./redact.js";
 import type { Entry, EntryKind, Incomplete, JsonObject, JsonValue, Source } from "./types.js";
 
 /** Result of extracting one side's documents. */
@@ -168,6 +171,43 @@ class DocumentExtractor {
   rawString(pointer: string): string | null {
     const value = valueAt(this.raw, pointer);
     return typeof value === "string" ? value : null;
+  }
+
+  /** `{redacted: true, length, sha256}` for the raw string at `pointer`: comparable, never printable. */
+  digestValue(pointer: string): JsonObject | null {
+    const raw = this.rawString(pointer);
+    if (raw === null) {
+      return null;
+    }
+    const digest = Object.create(null) as JsonObject;
+    digest["redacted"] = true;
+    digest["length"] = raw.length;
+    digest["sha256"] = sha256Hex(raw);
+    return digest;
+  }
+
+  /**
+   * Digest map of an object of string values (`env`, `headers`): name →
+   * `{redacted, length, sha256}`, names sorted. A non-string value is
+   * reported as incomplete for its pointer and left out. `null` when
+   * `value` is not an object.
+   */
+  digestMap(value: JsonValue | undefined, pointer: string, label: string): JsonObject | null {
+    if (!isObject(value)) {
+      return null;
+    }
+    const out = Object.create(null) as JsonObject;
+    for (const name of Object.keys(value).sort()) {
+      const child = value[name];
+      const childPointer = `${pointer}/${escapePointerToken(name)}`;
+      const digest = typeof child === "string" ? this.digestValue(childPointer) : null;
+      if (digest === null) {
+        this.fail(childPointer, `${label}.${name} is ${describe(child)}, expected a string`);
+        continue;
+      }
+      out[name] = digest;
+    }
+    return out;
   }
 
   /**
@@ -407,12 +447,13 @@ class DocumentExtractor {
     for (const name of Object.keys(value)) {
       const child = value[name];
       const childPointer = `${pointer}/${escapePointerToken(name)}`;
-      if (typeof child !== "string") {
+      const digest = typeof child === "string" ? this.digestValue(childPointer) : null;
+      if (digest === null) {
         this.fail(childPointer, `env.${name} is ${describe(child)}, expected a string`);
         continue;
       }
-      // The value is never carried, credential-like or not.
-      this.add("env_key", `env_key:${name}`, REDACTED, childPointer);
+      // The value is never carried, credential-like or not; its digest makes a change visible.
+      this.add("env_key", `env_key:${name}`, digest, childPointer);
     }
   }
 
@@ -520,6 +561,9 @@ class DocumentExtractor {
     if (headers !== undefined && !isObject(headers)) {
       this.fail(`${pointer}/headers`, `mcpServers.${name}.headers is ${describe(headers)}, expected an object`);
     }
+    // Values are never carried; each is represented by its length and sha256 so a change is visible.
+    const envDigests = this.digestMap(env, `${pointer}/env`, `mcpServers.${name}.env`);
+    const headerDigests = this.digestMap(headers, `${pointer}/headers`, `mcpServers.${name}.headers`);
     const extra = Object.create(null) as Record<string, JsonValue>;
     for (const key of Object.keys(server)) {
       if (!["type", "command", "args", "url", "env", "headers"].includes(key)) {
@@ -536,8 +580,8 @@ class DocumentExtractor {
       command: typeof command === "string" ? command : null,
       args: argList,
       url: typeof url === "string" ? url : null,
-      env_keys: isObject(env) ? Object.keys(env).sort() : null,
-      header_keys: isObject(headers) ? Object.keys(headers).sort() : null,
+      env: envDigests,
+      headers: headerDigests,
       extra: Object.keys(extra).length === 0 ? null : extra,
     };
     this.digestRedacted(value, pointer, ["command", "args", "url"]);

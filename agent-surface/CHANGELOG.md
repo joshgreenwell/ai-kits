@@ -31,6 +31,19 @@ Security fixes from the control-surface audit (SRF-1 … SRF-3). Interpretations
   is now `{note, patterns, sha256}` with the digest of the raw string, so any redacted
   literal that changes is a changed (unresolved) entry; and a delta whose text was
   redacted carries a note saying so. Displayed values stay redacted everywhere.
+- **SRF-3 (high):** `env` values and MCP `env` / `headers` values are compared. They were
+  never carried at all (only key names), so repointing `ANTHROPIC_BASE_URL` or changing
+  `NODE_OPTIONS` in an existing key exited 0. Each value is now represented by
+  `{redacted: true, length, sha256}` of the raw value (never the value), so a change is a
+  `changed` delta. New direction rules: `D-env-sensitive-set` (proven `widens`, new
+  default-failing category `env`) when a name on the documented sensitive list —
+  `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`,
+  `NO_PROXY`, `NODE_OPTIONS`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `PATH`, `LD_PRELOAD`,
+  `CLAUDE_CODE_*`, `DYLD_*` (case-insensitive) — is set or changed in `env` or in an MCP
+  server's `env`; `D-env-value-changed` (`unresolved`, exit 2) for any other env or header
+  value change. The `mcp` entry value now carries `env` and `headers` digest maps in place
+  of `env_keys` / `header_keys`; the `env_key` value is the digest object instead of
+  `"<redacted>"`. `--fail-on` accepts `env`; the golden `fail_on.categories` include it.
 
 ## 0.0.1 — 2026-09-09
 

@@ -94,7 +94,7 @@ describe("CLI check: real pipeline exit codes (JG-155)", () => {
     const repo = cases.repo("hook-added");
     const run = check(repo, "--fail-on", "hook,bogus");
     assert.equal(run.status, EXIT_USAGE);
-    assert.match(run.stderr, /unknown --fail-on category bogus; valid: hook, mcp, mode, whole-tool-allow, directory, hooks-reenabled, deny-removed, scoped-allow, projected/);
+    assert.match(run.stderr, /unknown --fail-on category bogus; valid: hook, mcp, mode, whole-tool-allow, directory, hooks-reenabled, deny-removed, env, scoped-allow, projected/);
   });
 });
 
@@ -203,7 +203,7 @@ describe("docs generated from metadata (JG-154 / JG-160)", () => {
   it("README lists exit codes, default failing categories and the dated closed interpretation list", () => {
     const readme = fs.readFileSync(README_PATH, "utf8");
     assert.match(readme, /2026-09-07/);
-    for (const category of ["hook", "mcp", "mode", "whole-tool-allow", "directory", "hooks-reenabled", "deny-removed", "scoped-allow"]) {
+    for (const category of ["hook", "mcp", "mode", "whole-tool-allow", "directory", "hooks-reenabled", "deny-removed", "env", "scoped-allow"]) {
       assert.ok(readme.includes(`\`${category}\``), category);
     }
     for (const { META } of INTERPRETATIONS) {
