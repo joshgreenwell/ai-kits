@@ -16,6 +16,7 @@ pub mod codex_account;
 pub mod codex_execution;
 pub mod cursor_account;
 pub mod cursor_execution;
+pub mod emission;
 pub mod jsonl;
 pub mod openai_api;
 pub mod provider;

@@ -2,7 +2,7 @@
 //! Provider call identifiers are hashed immediately. Arguments and results are
 //! inspected only while parsing and are never retained in companion state.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 
 use observatory_contract::settings::ToolDetail;
@@ -313,30 +313,61 @@ pub fn record_from_event(
     }))
 }
 
-/// Headline invocation total plus privacy-filtered names for one request.
-pub fn request_summary(
-    rows: &[ToolEventRow],
-    request_key: &str,
-    include_subagents: bool,
+/// A binding's tool invocations grouped by the request that issued them, built
+/// once per binding so each request's summary is a lookup rather than a pass
+/// over every tool row. Rows keep their `tool_events` order within a request.
+pub struct ToolIndex<'a> {
+    by_request: HashMap<&'a str, Vec<&'a ToolEventRow>>,
+}
+
+impl<'a> ToolIndex<'a> {
+    pub fn new(rows: &'a [ToolEventRow]) -> Self {
+        let mut by_request: HashMap<&'a str, Vec<&'a ToolEventRow>> = HashMap::new();
+        for row in rows {
+            if row.event_kind == "invocation"
+                && let Some(request_key) = row.caller_request_key.as_deref()
+            {
+                by_request.entry(request_key).or_default().push(row);
+            }
+        }
+        ToolIndex { by_request }
+    }
+
+    /// Headline invocation total plus privacy-filtered names for one request.
+    pub fn request_summary(
+        &self,
+        request_key: &str,
+        include_subagents: bool,
+        detail: ToolDetail,
+    ) -> (Nullable<Counter>, Option<Vec<ToolCount>>) {
+        let invocations = self
+            .by_request
+            .get(request_key)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|row| include_subagents || !row.caller_is_subagent);
+        summarize(invocations, detail)
+    }
+}
+
+fn summarize<'a>(
+    invocations: impl Iterator<Item = &'a ToolEventRow>,
     detail: ToolDetail,
 ) -> (Nullable<Counter>, Option<Vec<ToolCount>>) {
-    let invocations: Vec<_> = rows
-        .iter()
-        .filter(|row| {
-            row.event_kind == "invocation"
-                && row.caller_request_key.as_deref() == Some(request_key)
-                && (include_subagents || !row.caller_is_subagent)
-        })
-        .collect();
-    let total = Counter::new(invocations.len() as u64).ok();
-    if detail == ToolDetail::Off {
-        return (Nullable(total), None);
-    }
+    let mut count = 0u64;
     let mut grouped = BTreeMap::<ToolName, u64>::new();
     for row in invocations {
-        if let Some(name) = display_name(row, detail) {
+        count += 1;
+        if detail != ToolDetail::Off
+            && let Some(name) = display_name(row, detail)
+        {
             *grouped.entry(name).or_default() += 1;
         }
+    }
+    let total = Counter::new(count).ok();
+    if detail == ToolDetail::Off {
+        return (Nullable(total), None);
     }
     let mut tools: Vec<_> = grouped
         .into_iter()
@@ -386,5 +417,103 @@ mod tests {
         assert!(first.name_truncated);
         assert_eq!(first.name, second.name);
         assert_ne!(first.name_hash, second.name_hash);
+    }
+
+    /// The summary as it was computed before the index: one pass over every
+    /// tool row per request.
+    fn linear_request_summary(
+        rows: &[ToolEventRow],
+        request_key: &str,
+        include_subagents: bool,
+        detail: ToolDetail,
+    ) -> (Nullable<Counter>, Option<Vec<ToolCount>>) {
+        let invocations: Vec<_> = rows
+            .iter()
+            .filter(|row| {
+                row.event_kind == "invocation"
+                    && row.caller_request_key.as_deref() == Some(request_key)
+                    && (include_subagents || !row.caller_is_subagent)
+            })
+            .collect();
+        let total = Counter::new(invocations.len() as u64).ok();
+        if detail == ToolDetail::Off {
+            return (Nullable(total), None);
+        }
+        let mut grouped = BTreeMap::<ToolName, u64>::new();
+        for row in invocations {
+            if let Some(name) = display_name(row, detail) {
+                *grouped.entry(name).or_default() += 1;
+            }
+        }
+        let mut tools: Vec<_> = grouped
+            .into_iter()
+            .filter_map(|(name, calls)| Some(ToolCount { name, calls: Counter::new(calls).ok()? }))
+            .collect();
+        tools.sort_by(|left, right| {
+            right.calls.get().cmp(&left.calls.get()).then_with(|| left.name.as_str().cmp(right.name.as_str()))
+        });
+        tools.truncate(observatory_contract::MAX_TOOLS_PER_REQUEST);
+        (Nullable(total), (!tools.is_empty()).then_some(tools))
+    }
+
+    fn row(
+        index: u64,
+        kind: &str,
+        request: Option<&str>,
+        identity: &ToolEvidence,
+        subagent: bool,
+    ) -> ToolEventRow {
+        ToolEventRow {
+            id: format!("{index:064x}"),
+            timestamp: "2026-09-04T00:00:00Z".into(),
+            event_kind: kind.into(),
+            invocation_key: format!("{:064x}", index / 2),
+            session_hash: None,
+            caller_request_key: request.map(str::to_owned),
+            caller_agent_key: None,
+            caller_is_subagent: subagent,
+            parent_invocation_key: None,
+            class: identity.class.clone(),
+            name: identity.name.clone(),
+            name_hash: identity.name_hash.clone(),
+            namespace: identity.namespace.clone(),
+            namespace_hash: identity.namespace_hash.clone(),
+            outcome: "succeeded".into(),
+            name_truncated: false,
+        }
+    }
+
+    #[test]
+    fn the_request_index_summarizes_exactly_as_the_linear_filter_did() {
+        let names = [
+            claude_identity(Some("Read")),
+            claude_identity(Some("Bash")),
+            claude_identity(Some("mcp__vault__search")),
+            claude_identity(Some("private_tool")),
+            claude_identity(None),
+        ];
+        let requests = ["r1", "r2", "r3", "r4"];
+        let mut rows = Vec::new();
+        for index in 0..120u64 {
+            let request = match index % 7 {
+                6 => None,
+                remainder => Some(requests[(remainder as usize) % requests.len()]),
+            };
+            let kind = if index % 2 == 0 { "invocation" } else { "result" };
+            rows.push(row(index, kind, request, &names[(index % 5) as usize], index % 3 == 0));
+        }
+        let index = ToolIndex::new(&rows);
+        for request in requests.iter().chain(["absent"].iter()) {
+            for include_subagents in [false, true] {
+                for detail in [ToolDetail::Off, ToolDetail::BuiltinOnly, ToolDetail::HashedCustom] {
+                    let expected = linear_request_summary(&rows, request, include_subagents, detail);
+                    let actual = index.request_summary(request, include_subagents, detail);
+                    assert_eq!(actual, expected, "{request} subagents={include_subagents} {detail:?}");
+                }
+            }
+        }
+        let (total, tools) = index.request_summary("r1", true, ToolDetail::BuiltinOnly);
+        assert!(total.as_ref().is_some_and(|count| count.get() > 0));
+        assert!(tools.is_some(), "the fixture exercises named tools");
     }
 }

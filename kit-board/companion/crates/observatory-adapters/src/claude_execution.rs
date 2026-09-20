@@ -3,20 +3,13 @@
 //! records. The statusline inbox belongs to `claude_account`, which binds each
 //! sample by the identity stamped on it.
 
-use observatory_contract::settings::DetailLevel;
 use observatory_contract::{Adapter as AdapterId, CoverageState, CursorState, DetailCode, Provider};
 use observatory_core::adapter::{Adapter, AdapterError, Cursor, Outcome, Preflight, RunContext, Sink};
 
-use crate::agents::record_from_event as agent_record_from_event;
+use crate::emission::{Evidence, emit_detail};
 use crate::jsonl::{expand_user, scan};
-use crate::requests::{
-    EvidenceSummary, ToolEvidenceSummary, execution_capabilities, request_from_event,
-    request_matches_agent_setting,
-};
-use crate::resources::{ResourceEvidenceSummary, emit_records as emit_resource_records};
-use crate::tools::{
-    matches_agent_setting as tool_matches_agent_setting, record_from_event as tool_record_from_event,
-};
+use crate::requests::{EvidenceSummary, ToolEvidenceSummary, execution_capabilities};
+use crate::resources::ResourceEvidenceSummary;
 
 #[derive(Debug, Default)]
 pub struct ClaudeExecution;
@@ -73,73 +66,21 @@ impl Adapter for ClaudeExecution {
                 outcome.detail = Some(DetailCode::PartialRead);
                 outcome.cursor_state = CursorState::More;
             }
-            if ctx.settings.execution.detail_level != DetailLevel::BucketsOnly {
-                let tool_events = state.tool_events(binding.binding_id.as_str())?;
-                tool_evidence.observe(&tool_events, state.tool_coverage(binding.binding_id.as_str())?);
-                resource_evidence.observe(state.resource_inspection_counts(binding.binding_id.as_str())?);
-                for event in state.request_events(binding.binding_id.as_str())? {
-                    if !request_matches_agent_setting(&event, include_subagents) {
-                        continue;
-                    }
-                    evidence.observe(&event);
-                    if let Some(record) = request_from_event(
-                        &binding.binding_id,
-                        AdapterId::ClaudeExecution,
-                        self.parser_version(),
-                        ctx.settings.execution.detail_level,
-                        project_attribution,
-                        ctx.settings.execution.tool_detail,
-                        include_subagents,
-                        &tool_events,
-                        &event,
-                    ) {
-                        sink.emit(record, None);
-                        outcome.records_emitted += 1;
-                    }
-                }
-                if include_subagents {
-                    for event in state.agent_events(binding.binding_id.as_str())? {
-                        if let Some(record) = agent_record_from_event(
-                            &binding.binding_id,
-                            AdapterId::ClaudeExecution,
-                            self.parser_version(),
-                            ctx.settings.execution.tool_detail,
-                            &event,
-                        ) {
-                            sink.emit(record, None);
-                            outcome.records_emitted += 1;
-                        }
-                    }
-                }
-                if ctx.settings.execution.detail_level == DetailLevel::RequestsWithTools {
-                    for event in &tool_events {
-                        if !tool_matches_agent_setting(event, include_subagents) {
-                            continue;
-                        }
-                        if let Some(record) = tool_record_from_event(
-                            &binding.binding_id,
-                            AdapterId::ClaudeExecution,
-                            self.parser_version(),
-                            ctx.settings.execution.tool_detail,
-                            event,
-                        ) {
-                            sink.emit(record, None);
-                            outcome.records_emitted += 1;
-                        }
-                    }
-                    if ctx.effective_resource_attribution() {
-                        outcome.records_emitted += emit_resource_records(
-                            &state,
-                            binding,
-                            AdapterId::ClaudeExecution,
-                            self.parser_version(),
-                            include_subagents,
-                            &tool_events,
-                            sink,
-                        )?;
-                    }
-                }
-            }
+            let emission = emit_detail(
+                &state,
+                ctx,
+                binding,
+                AdapterId::ClaudeExecution,
+                self.parser_version(),
+                Evidence {
+                    requests: &mut evidence,
+                    tools: &mut tool_evidence,
+                    resources: &mut resource_evidence,
+                },
+                sink,
+            )?;
+            outcome.records_emitted += emission.records_emitted;
+            outcome.after_persist.extend(emission.after_persist);
         }
         if history_has_parse_gaps && outcome.state == CoverageState::Ok {
             outcome.state = CoverageState::Partial;

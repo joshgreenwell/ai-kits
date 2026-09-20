@@ -262,6 +262,9 @@ pub struct Outcome {
     pub probe_requests: u64,
     pub next_cursor: Option<Cursor>,
     pub capabilities: Option<Vec<CapabilityCoverage>>,
+    /// Meta entries the run stores only once this adapter's emitted records are
+    /// persisted, such as an emission mark; never stored when collection failed.
+    pub after_persist: Vec<(String, String)>,
 }
 
 impl Outcome {
@@ -278,6 +281,7 @@ impl Outcome {
             probe_requests: 0,
             next_cursor: None,
             capabilities: None,
+            after_persist: Vec::new(),
         }
     }
 

@@ -4,6 +4,32 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
 
 ## Unreleased
 
+- Outbox: a body the Observatory refuses on its content (a 4xx other than 401, 403, 408, or
+  429) no longer blocks the queue forever. The upload
+  bisects it (coverage first, then halves) until the refused record or bucket stands alone,
+  marks that record `http_<status>` locally (never retried, like a
+  server rejection), records a refused bucket as published at its refused digest so it stays
+  local until its totals change, drops the isolated body, and continues with the rest of the
+  queue. At most 24 bisections per queued body per run; accepted halves are acknowledged, so
+  the body rebuilt next run only carries what is still unacknowledged. Transport failures,
+  5xx, 408, and 429 still stop the run and retain everything; 401 and 403 stop it because no
+  other body would be accepted. The run summary's `publication` (shown by `status`) gains
+  `rejected_bodies`, `isolated_records`, `isolated_buckets`, `splits`, and `rejection`.
+- Execution readers emit detail records incrementally instead of rebuilding, hashing, and
+  upserting every request, agent, tool, and resource record on every run. The four local event
+  tables gain a `change_generation` column (existing files migrate in place; SQLite triggers
+  stamp every insert and update, including cascades such as a result revising its invocation
+  or a profile revising its events), a run advances the generation before its adapters write
+  and again after their records are persisted, and each reader keeps a per-binding mark
+  (`emitted:<adapter>:<binding>` in `meta`, stored only after persistence) of the generation
+  and settings fingerprint it last emitted under. A run emits the rows written since, the
+  records that depend on them (a request whose tool calls changed, a resource access whose
+  invocation changed), and any row without a record; a parser version, detail level, tool
+  detail, subagent, project or resource attribution, or resource configuration change re-emits
+  everything once. Per-request tool summaries come from an index built once per binding
+  instead of a pass over every tool row per request, and the changed-bucket check reads a
+  binding's published digests in one query instead of one per bucket. The adapter's
+  `records` count in the run summary now means records emitted this run.
 - Cursor hosted allowance splits Auto vs API from each named `*PercentUsed` field on
   `/api/usage-summary` (skipping combined `totalPercentUsed` when those pools exist). Hosted
   events store a token total equal to the exclusive classes present so Tokens can count them;

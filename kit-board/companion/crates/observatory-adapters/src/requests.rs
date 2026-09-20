@@ -18,7 +18,7 @@ use observatory_core::state::{ToolCoverageRow, ToolEventRow};
 
 use crate::agents::{attribution as agent_attribution, is_known_child_fields};
 use crate::resources::ResourceEvidenceSummary;
-use crate::tools::request_summary as tool_request_summary;
+use crate::tools::ToolIndex;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EvidenceSummary {
@@ -250,7 +250,7 @@ pub fn request_from_event(
     project_attribution: ProjectAttributionSetting,
     tool_detail: ToolDetail,
     include_subagents: bool,
-    tool_events: &[ToolEventRow],
+    tools: &ToolIndex<'_>,
     event: &EventRow,
 ) -> Option<Record> {
     let counter = |value: i64| Counter::new(u64::try_from(value).ok()?).ok();
@@ -368,7 +368,7 @@ pub fn request_from_event(
         None
     };
     let (tool_calls, tools) = if detail_level == DetailLevel::RequestsWithTools {
-        tool_request_summary(tool_events, &event.id, include_subagents, tool_detail)
+        tools.request_summary(&event.id, include_subagents, tool_detail)
     } else {
         (Nullable::NULL, None)
     };
