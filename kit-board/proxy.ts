@@ -6,11 +6,13 @@ export function proxy(request: NextRequest) {
   const isRead = request.method === 'GET' || request.method === 'HEAD';
   const isPublic = path === '/login' || path.startsWith('/api/auth/');
   // These handlers authenticate their own scoped producer or cron credentials. Companion POSTs
-  // (pair, bindings, identity, capabilities) and the usage upload carry an install key.
+  // (pair, bindings, identity, capabilities) and the usage upload carry an install key; the agent
+  // routing endpoints (agent-events, quota-state) carry a telemetry-source bearer key.
   const companion = path.startsWith('/api/v1/companion/') || path === '/api/v1/usage';
-  const ingestion = (request.method === 'POST' && (path === '/api/reports' || path.startsWith('/api/v1/reports/') || path === '/api/v1/telemetry' || path === '/api/reset-feeds' || companion)) ||
+  const routing = path === '/api/v1/agent-events';
+  const ingestion = (request.method === 'POST' && (path === '/api/reports' || path.startsWith('/api/v1/reports/') || path === '/api/v1/telemetry' || path === '/api/reset-feeds' || companion || routing)) ||
     (request.method === 'PUT' && path === '/api/v1/companion/settings') ||
-    (request.method === 'GET' && (path === '/api/internal/sync-legacy-usage' || path === '/api/internal/sync-reset-feeds' || path === '/api/internal/sync-companion-release' || path === '/api/v1/companion/config'));
+    (request.method === 'GET' && (path === '/api/internal/sync-legacy-usage' || path === '/api/internal/sync-reset-feeds' || path === '/api/internal/sync-companion-release' || path === '/api/v1/companion/config' || routing || path === '/api/v1/quota-state'));
   const signedIn = verifySession(request.cookies.get(cookie)?.value ?? '', process.env.SESSION_SECRET ?? '', process.env.SITE_PASSWORD_HASH ?? '');
   if (!isPublic && !ingestion && !signedIn) {
     if (path.startsWith('/api/') || !isRead) return NextResponse.json({ error: 'Please sign in' }, { status: 401, headers: { 'Cache-Control': 'private, no-store' } });

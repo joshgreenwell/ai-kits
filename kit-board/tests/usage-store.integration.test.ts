@@ -729,3 +729,24 @@ maybe('the application role can append to every ledger but never update or delet
     await app`SELECT count(*) FROM personal_hub.token_bucket_revisions`;
   } finally { await app.end({ timeout: 1 }); }
 });
+
+maybe('no two indexes on one personal_hub table share an identical definition', async () => {
+  const sql = postgres(url!, options);
+  try {
+    // Everything after USING: access method, column list, and any partial-index predicate.
+    const rows = await sql`SELECT tablename, indexname, regexp_replace(indexdef, '^.* USING ', '') AS definition
+      FROM pg_indexes WHERE schemaname = 'personal_hub' ORDER BY tablename, indexname`;
+    assert.ok(rows.length > 20, 'the private schema is indexed');
+    const seen = new Map<string, string>();
+    const duplicates: string[] = [];
+    for (const row of rows) {
+      const key = `${row.tablename}|${row.definition}`;
+      const earlier = seen.get(key);
+      if (earlier) duplicates.push(`${row.tablename}: ${row.indexname} repeats ${earlier} (${row.definition})`);
+      else seen.set(key, row.indexname as string);
+    }
+    assert.deepEqual(duplicates, []);
+    assert.equal(rows.some(row => row.indexname === 'agent_events_semantic_time'), false, 'the duplicate of agent_events_canonical is dropped');
+    assert.equal(rows.some(row => row.indexname === 'agent_events_canonical'), true);
+  } finally { await sql.end({ timeout: 1 }); }
+});

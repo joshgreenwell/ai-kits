@@ -59,3 +59,19 @@ test('the edge proxy admits companion posts with their own credentials and nothi
   assert.equal(status('GET', '/api/usage-v2'), 401, 'session routes still need the cookie');
   assert.equal(status('GET', '/api/v1/companion/capabilities'), 401);
 });
+test('the edge proxy admits the bearer-authenticated routing endpoints and still gates session routes', async () => {
+  const { proxy } = await import('../proxy');
+  const { NextRequest } = await import('next/server');
+  const bearer = { authorization: 'Bearer example-telemetry-key' };
+  const status = (method: string, path: string, headers: Record<string, string> = {}) => proxy(new NextRequest(`http://localhost${path}`, { method, headers })).status;
+  // The handlers resolve the telemetry source from the bearer key themselves (lib/telemetry-store.ts).
+  assert.equal(status('POST', '/api/v1/agent-events', bearer), 200, 'routing event batches carry a telemetry-source bearer key');
+  assert.equal(status('GET', '/api/v1/agent-events?task_id=00000000-0000-4000-8000-000000000000', bearer), 200);
+  assert.equal(status('GET', '/api/v1/quota-state', bearer), 200);
+  assert.equal(status('PUT', '/api/v1/agent-events', bearer), 401, 'only the documented methods are admitted');
+  assert.equal(status('POST', '/api/v1/quota-state', bearer), 401);
+  assert.equal(status('GET', '/api/usage-query', bearer), 401, 'a bearer header never substitutes for the session cookie on session routes');
+  assert.equal(status('GET', '/api/artifacts/x', bearer), 401);
+  assert.equal(status('GET', '/api/usage-query'), 401);
+  assert.equal(status('GET', '/api/artifacts/x'), 401);
+});
