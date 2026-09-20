@@ -63,7 +63,7 @@ function synthetic(): UsageQueryResult {
     knowledge: { rows: [
       { source_id: 's1', label: 'Fixture vault', state: 'source', accesses: 3, distinct_invocations: 2, distinct_sessions: 1, distinct_agents: 1, by_access_kind: { read: 2, search: 1 }, earlier_configuration_accesses: 1 },
       { source_id: null, label: null, state: 'unassigned', accesses: 1, distinct_invocations: 1, distinct_sessions: 1, distinct_agents: 1, by_access_kind: { unknown: 1 }, earlier_configuration_accesses: 0 },
-    ], distinct_invocations: 2, note: 'Per-source access counts overlap when one invocation touches several sources; distinct_invocations is the unduplicated total.' },
+    ], distinct_invocations: 2, note: 'Per-source access counts overlap when one invocation touches several sources; distinct_invocations is the unduplicated total.', unsupported_filters: ['models'] },
     environmental_inputs: { cohorts: [], coverage: coverage(9, 9, 9, 'calls'), note: '' },
     cost: { kind: 'api_equivalent_estimate', currency: 'USD', estimated_cost_usd: 1.25, priced_tokens: 1_200, unpriced_tokens: 200, priced_token_coverage: 1_200 / 1_400,
       component_costs_usd: { input_cost_usd: 0.5, cached_input_cost_usd: 0.1, cache_write_input_cost_usd: 0.15, reasoning_output_cost_usd: 0.25, other_output_cost_usd: 0.25 },
@@ -193,7 +193,7 @@ test('the tool card keeps invocations, model calls, and spawns apart and lists k
   assert.match(body, /Read built-in 3 60%/); assert.match(body, /search_notes MCP · obsidian 2 40%/);
   assert.match(body, /Explore bbbbbbbb m1 3/); assert.match(body, /No caller recorded not recorded 2/);
   assert.match(body, /Knowledge sources Tool calls that touched a configured vault or connector/);
-  assert.match(body, /1 configured source 2 distinct tool calls Configure sources/);
+  assert.match(body, /model filter not applied to knowledge access 1 configured source 2 distinct tool calls Configure sources/, 'the knowledge area reports its own unapplied filters');
   assert.match(html, /href="\/settings\/sources"/, 'the card links to source configuration in global Settings');
   assert.match(body, /Fixture vault 3 2 1 1 2 1 0 0 1/, 'accesses, distinct tool calls, sessions, agents, read/search/write/unknown, earlier-configuration accesses');
   assert.match(body, /Unassigned identity not yet named 1 1 1 1 0 0 0 1 —/);
@@ -203,7 +203,7 @@ test('the tool card keeps invocations, model calls, and spawns apart and lists k
 
   const bare = synthetic();
   bare.tools = { invocations: 0, by_tool: [], by_caller: [], by_outcome: {}, caller_coverage: coverage(0, 0, 0, 'invocations'), outcome_coverage: coverage(0, 0, 0, 'invocations'), unsupported_filters: [] };
-  bare.knowledge = { rows: [], distinct_invocations: 0, note: '' };
+  bare.knowledge = { rows: [], distinct_invocations: 0, note: '', unsupported_filters: [] };
   const bareBody = text(renderToStaticMarkup(<ToolKnowledgeCard result={bare} />));
   assert.match(bareBody, /Tool invocations 0/); assert.match(bareBody, /Outcomes not collected for these invocations; success and failure are unknown rather than assumed/);
   assert.match(bareBody, /No tool invocations in scope/); assert.match(bareBody, /No caller attribution/); assert.match(bareBody, /No knowledge-source access in scope/);

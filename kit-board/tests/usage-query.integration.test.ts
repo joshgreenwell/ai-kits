@@ -139,6 +139,7 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     assert.deepEqual([all.tools.invocations, all.tools.by_outcome, all.tools.by_tool.map(t => [t.name, t.invocations])], [2, { succeeded: 1, unknown: 1 }, [['Bash', 1], ['Read', 1]]]);
     assert.deepEqual([all.tools.caller_coverage.classified, all.tools.outcome_coverage.classified], [2, 1]);
     assert.deepEqual(all.knowledge.rows.map(r => [r.label, r.accesses, r.distinct_invocations, r.distinct_sessions, r.by_access_kind.read]), [['Fixture vault', 1, 1, 1, 1]]);
+    assert.deepEqual([all.knowledge.unsupported_filters, all.tools.unsupported_filters], [[], []]);
     assert.deepEqual(all.pricing_inputs.rows.map(r => [r.model, r.service_tier, r.context_band, r.rate_date, r.total_tokens]),
       [['m3', null, 'short', '2026-09-03', 400], ['m1', null, 'short', '2026-09-02', 170], ['m2', null, 'short', '2026-09-03', 40], ['m1', null, 'short', '2026-09-14', 5]],
       'hourly buckets price without waiting for request-level tier or effort');
@@ -168,11 +169,16 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     assert.equal((await query({ surfaces: 'desktop' })).headline.total_tokens, 40);
     assert.equal((await query({ agent_scope: 'subagent' })).headline.total_tokens, 20);
     assert.equal((await query({ agents: childKey })).headline.total_tokens, 20);
-    assert.equal((await query({ agents: childKey })).tools.invocations, 1);
+    const childOnly = await query({ agents: childKey });
+    assert.equal(childOnly.tools.invocations, 1);
+    assert.deepEqual([childOnly.knowledge.rows, childOnly.knowledge.distinct_invocations, childOnly.agents.summary.spawns], [[], 0, 1], 'the vault access came from the main agent, so the agent filter leaves no access; the child\'s spawn stays');
+    assert.deepEqual((await query({ agents: mainKey })).knowledge.rows.map(r => [r.label, r.accesses]), [['Fixture vault', 1]]);
 
     // 4. Bucket-level filters keep the bucket basis; dimensions AND together.
     const model = await query({ models: 'm1' });
     assert.deepEqual([model.headline.total_tokens, model.headline.calls, model.headline.basis, model.request_detail.covered_tokens], [175, 4, 'buckets', 170]);
+    assert.deepEqual([model.knowledge.unsupported_filters, model.tools.unsupported_filters, model.knowledge.rows.length], [['models'], ['models'], 1], 'a model filter alone is reported, not applied, by both areas');
+    assert.match(model.knowledge.note, /model filter is not applied/);
     const both = await query({ models: 'm1', projects: projectId });
     assert.deepEqual([both.headline.total_tokens, both.headline.basis, both.headline.unfilterable_tokens], [170, 'requests', 5]);
     assert.deepEqual([(await query({ accounts: codex })).headline.total_tokens, (await query({ providers: 'claude' })).headline.total_tokens], [400, 215], 'accounts and providers intersect');
@@ -315,6 +321,97 @@ maybe('provider account usage is the Tokens headline for Cursor and Admin API ac
     const localOnly = await query(claude);
     assert.deepEqual([localOnly.headline.total_tokens, localOnly.headline.calls, localOnly.headline.conversations], [100, 2, 1]);
     assert.ok(both.notes.some(note => note.includes('Provider-reported account usage')));
+  } finally {
+    await sql.end({ timeout: 1 });
+  }
+});
+
+maybe('knowledge accesses and spawn evidence follow the machine, agent, and detail filters the tools area applies', async () => {
+  const { createUsageQuery, parseUsageQuery } = await import('../lib/usage-query');
+  const sql = postgres(url!, options);
+  const layer = createUsageQuery(() => sql);
+  const suffix = randomUUID().slice(0, 8);
+  const account = `q-know-${suffix}`;
+  // Two companion installs on one account: machine A carries the main agent's vault read, machine B a subagent's vault search.
+  const sourceA = randomUUID(), sourceB = randomUUID(), installA = randomUUID(), installB = randomUUID(), bindingA = randomUUID(), bindingB = randomUUID();
+  const mainKey = sha(`agent:main:${suffix}`), childKey = sha(`agent:child:${suffix}`), otherChildKey = sha(`agent:other:${suffix}`);
+  try {
+    await sql`INSERT INTO personal_hub.usage_accounts (id, provider, label) VALUES (${account}, 'claude', 'Knowledge fixture')`;
+    await sql`INSERT INTO personal_hub.telemetry_sources (id, account_id, machine_label, mode, key_hash, last_seen_at) VALUES
+      (${sourceA}, ${account}, 'machine A', 'companion', ${sha(randomUUID())}, '2026-09-14T20:10:00Z'), (${sourceB}, ${account}, 'machine B', 'companion', ${sha(randomUUID())}, '2026-09-14T20:10:00Z')`;
+    await sql`INSERT INTO personal_hub.companion_installs (id, machine_label, kind, platform, arch, key_hash) VALUES
+      (${installA}, 'machine A', 'companion', 'linux', 'amd64', ${sha(randomUUID())}), (${installB}, 'machine B', 'companion', 'darwin', 'arm64', ${sha(randomUUID())})`;
+    await sql`INSERT INTO personal_hub.companion_bindings (id, install_id, account_id, source_id, provider, identity_hash) VALUES
+      (${bindingA}, ${installA}, ${account}, ${sourceA}, 'claude', ${sha(`id-a:${suffix}`)}), (${bindingB}, ${installB}, ${account}, ${sourceB}, 'claude', ${sha(`id-b:${suffix}`)})`;
+    // One named vault, identified separately on each install (identities are install-scoped) and mapped to the same source.
+    const vaultId = randomUUID();
+    await sql`INSERT INTO personal_hub.usage_knowledge_sources (id, label) VALUES (${vaultId}, 'Shared vault')`;
+    for (const install of [installA, installB]) {
+      const identity = randomUUID();
+      await sql`INSERT INTO personal_hub.usage_knowledge_source_identities (id, install_id, resource_key, configuration_version, first_seen, last_seen) VALUES (${identity}, ${install}, ${`vault.${suffix}`}, 'cfg:1', '2026-09-02T14:10:00Z', '2026-09-03T14:10:00Z')`;
+      await sql`INSERT INTO personal_hub.usage_knowledge_source_mapping_revisions (id, identity_id, source_id) VALUES (${randomUUID()}, ${identity}, ${vaultId})`;
+    }
+    const request = (binding: string, semantic: string, session: string, at: string, model: string, extra: Record<string, unknown>) =>
+      sql`INSERT INTO personal_hub.activity_requests ${sql({ id: randomUUID(), account_id: account, binding_id: binding, provider: 'claude', adapter: 'claude_execution', channel: 'local_file',
+        record_id: randomUUID(), semantic_key: sha(`${semantic}:${suffix}`), product: 'claude_code', surface: 'cli', execution_host: 'local', session_hash: sha(`${session}:${suffix}`), session_identity: 'provider',
+        model_actual: model, observed_at: at, input_fresh_tokens: 100, input_cached_tokens: 0, input_cache_write_tokens: 0, output_tokens: 10,
+        basis: 'exact', outcome: 'completed', parser_version: '2.0.0', content_hash: sha(randomUUID()), ...extra })}`;
+    await request(bindingA, 'rA', 'sA', '2026-09-02T14:10:00Z', 'm1', { reasoning_effort: 'high', agent_key: mainKey, agent_identity_basis: 'provider', parent_agent_identity_basis: 'none', agent_class: 'main', agent_depth: 0, project_basis: 'none' });
+    await request(bindingB, 'rB', 'sB', '2026-09-03T14:10:00Z', 'm2', { reasoning_effort: 'low', surface: 'desktop', agent_key: childKey, agent_identity_basis: 'provider', parent_agent_key: mainKey, parent_agent_identity_basis: 'provider', agent_class: 'builtin', agent_name: 'Explore', agent_depth: 1 });
+    const tool = (binding: string, invocation: string, caller: string, agent: string, session: string, at: string) =>
+      sql`INSERT INTO personal_hub.tool_events ${sql({ id: randomUUID(), account_id: account, binding_id: binding, provider: 'claude', adapter: 'claude_execution', channel: 'local_file', record_id: randomUUID(),
+        semantic_key: sha(`tool:${invocation}:${suffix}`), invocation_key: sha(`tool:${invocation}:${suffix}`), event_kind: 'invocation', session_hash: sha(`${session}:${suffix}`),
+        caller_request_key: sha(`${caller}:${suffix}`), caller_agent_key: agent, tool_name: 'Read', tool_class: 'builtin', outcome: 'unknown', basis: 'exact', observed_at: at, parser_version: '2.0.0', content_hash: sha(randomUUID()) })}`;
+    await tool(bindingA, 'tA', 'rA', mainKey, 'sA', '2026-09-02T14:12:00Z');
+    await tool(bindingB, 'tB', 'rB', childKey, 'sB', '2026-09-03T14:12:00Z');
+    const access = (binding: string, invocation: string, kind: string, at: string) =>
+      sql`INSERT INTO personal_hub.resource_accesses ${sql({ id: randomUUID(), account_id: account, binding_id: binding, provider: 'claude', adapter: 'claude_execution', channel: 'local_file', record_id: randomUUID(),
+        semantic_key: sha(`access:${invocation}:${suffix}`), invocation_key: sha(`tool:${invocation}:${suffix}`), resource_key: `vault.${suffix}`, configuration_version: 'cfg:1', access_kind: kind, evidence_basis: 'explicit_argument',
+        outcome: 'succeeded', basis: 'exact', observed_at: at, parser_version: '2.0.0', content_hash: sha(randomUUID()) })}`;
+    await access(bindingA, 'tA', 'read', '2026-09-02T14:12:00Z');
+    await access(bindingB, 'tB', 'search', '2026-09-03T14:12:00Z');
+    const spawn = (binding: string, seed: string, agent: string, at: string) =>
+      sql`INSERT INTO personal_hub.agent_events ${sql({ id: randomUUID(), account_id: account, binding_id: binding, provider: 'claude', adapter: 'claude_execution', channel: 'local_file', record_id: randomUUID(),
+        semantic_key: sha(`${seed}:${suffix}`), event_kind: 'spawn', session_hash: sha(`sA:${suffix}`), outcome: 'succeeded', basis: 'exact', observed_at: at, parser_version: '2.0.0', content_hash: sha(randomUUID()),
+        agent_key: agent, agent_identity_basis: 'provider', parent_agent_key: mainKey, parent_agent_identity_basis: 'provider', agent_class: 'builtin', agent_name: 'Explore', agent_depth: 1 })}`;
+    await spawn(bindingA, 'spawn-a', childKey, '2026-09-02T14:11:00Z');
+    await spawn(bindingB, 'spawn-b', otherChildKey, '2026-09-03T14:11:00Z');
+
+    const query = (extra: Record<string, unknown> = {}) => layer.usageQuery(parseUsageQuery(new URLSearchParams(Object.entries({ ...SEPTEMBER, accounts: account, ...extra }).map(([k, v]) => [k, String(v)]))), { now: NOW });
+    const vault = (result: Awaited<ReturnType<typeof query>>) => result.knowledge.rows.map(r => [r.label, r.accesses, r.distinct_invocations, r.distinct_sessions, r.distinct_agents, r.by_access_kind.read, r.by_access_kind.search]);
+
+    const all = await query();
+    assert.deepEqual(vault(all), [['Shared vault', 2, 2, 2, 2, 1, 1]]);
+    assert.deepEqual([all.knowledge.distinct_invocations, all.knowledge.unsupported_filters, all.agents.summary.spawns], [2, [], 2]);
+    assert.match(all.knowledge.note, /follow the account, machine, and agent filters/);
+
+    // Machine: the access's own binding, without ranking any request.
+    const machineA = await query({ machines: sourceA });
+    assert.deepEqual([vault(machineA), machineA.knowledge.distinct_invocations, machineA.knowledge.unsupported_filters, machineA.agents.summary.spawns], [[['Shared vault', 1, 1, 1, 1, 1, 0]], 1, [], 1]);
+    assert.deepEqual(vault(await query({ machines: sourceB, section: 'knowledge' })), [['Shared vault', 1, 1, 1, 1, 0, 1]], 'the sectioned read applies the same machine filter');
+    // Agent: the invocation's caller, and the spawn event's own agent key.
+    const child = await query({ agents: childKey });
+    assert.deepEqual([vault(child), child.knowledge.distinct_invocations, child.agents.summary.spawns, child.tools.invocations], [[['Shared vault', 1, 1, 1, 1, 0, 1]], 1, 1, 1], 'knowledge and tools agree on the agent');
+    const other = await query({ agents: otherChildKey });
+    assert.deepEqual([vault(other), other.agents.summary.spawns], [[], 1], 'a spawned agent that never called a tool has a spawn and no access');
+    // Detail filters reach accesses through the calling request, exactly as tools apply them.
+    assert.deepEqual(vault(await query({ efforts: 'high' })), [['Shared vault', 1, 1, 1, 1, 1, 0]]);
+    assert.deepEqual(vault(await query({ surfaces: 'desktop' })), [['Shared vault', 1, 1, 1, 1, 0, 1]]);
+    assert.deepEqual(vault(await query({ agent_scope: 'subagent' })), [['Shared vault', 1, 1, 1, 1, 0, 1]]);
+    assert.deepEqual(vault(await query({ agent_scope: 'main' })), [['Shared vault', 1, 1, 1, 1, 1, 0]]);
+    assert.deepEqual(vault(await query({ projects: 'no_project' })), [['Shared vault', 1, 1, 1, 1, 1, 0]]);
+    assert.deepEqual(vault(await query({ machines: sourceB, efforts: 'high' })), [], 'dimensions AND together: machine B\'s only access was a low-effort request');
+    const detail = await query({ efforts: 'high' });
+    assert.deepEqual([detail.knowledge.unsupported_filters, detail.tools.unsupported_filters], [
+      ['detail filters apply through the calling request; invocations without a retained caller request are excluded'],
+      ['detail filters apply through the calling request; invocations without a retained caller request are excluded']]);
+    assert.match(detail.agents.coverage.note, /the efforts filter does not apply to them/);
+    // A model filter alone is reported by both areas rather than applied; with a detail filter it applies through the request.
+    const model = await query({ models: 'm2' });
+    assert.deepEqual([vault(model), model.knowledge.unsupported_filters, model.tools.unsupported_filters], [[['Shared vault', 2, 2, 2, 2, 1, 1]], ['models'], ['models']]);
+    assert.match(model.knowledge.note, /The model filter is not applied to knowledge accesses/);
+    assert.deepEqual(vault(await query({ models: 'm2', agent_scope: 'subagent' })), [['Shared vault', 1, 1, 1, 1, 0, 1]]);
+    assert.deepEqual(vault(await query({ models: 'm1', agent_scope: 'subagent' })), []);
   } finally {
     await sql.end({ timeout: 1 });
   }

@@ -203,3 +203,10 @@ export function rangeDates(range: { start: string; end: string }, timezone: stri
 }
 
 export type ResultLike = Pick<UsageQueryResult, 'scope' | 'headline' | 'series' | 'historical' | 'unsupported' | 'notes' | 'request_detail' | 'as_of'>;
+
+/** Tool invocations and knowledge accesses report the filters they could not apply in one shape; a bare filter name becomes a badge for that area. */
+export type UnsupportedFilterArea = 'tools' | 'knowledge';
+export function unsupportedFilterLabel(entry: string, area: UnsupportedFilterArea) {
+  const noun = area === 'tools' ? 'tools' : 'knowledge access';
+  return entry === 'models' ? `model filter not applied to ${noun}` : entry;
+}

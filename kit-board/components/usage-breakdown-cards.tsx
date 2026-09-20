@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable, EmptyState, Stat, StatGroup, type Column } from '@/components/kit';
 import type { UsageQueryResult } from '@/lib/usage-query';
-import { PROJECT_STATE_LABELS, compactTokens, exactTokens, percent, type TokensFilters } from '@/lib/usage-view';
+import { PROJECT_STATE_LABELS, compactTokens, exactTokens, percent, unsupportedFilterLabel, type TokensFilters } from '@/lib/usage-view';
 
 type ProjectRow = UsageQueryResult['projects']['rows'][number];
 type AgentRow = UsageQueryResult['agents']['rows'][number];
@@ -178,7 +178,7 @@ export function ProjectAgentBreakdown({ result, filters, onFiltersChange, loadin
 }
 
 function KnowledgeSources({ result }: { result: UsageQueryResult }) {
-  const { rows, distinct_invocations, note } = result.knowledge;
+  const { rows, distinct_invocations, note, unsupported_filters } = result.knowledge;
   const configured = rows.filter(row => row.state === 'source');
   const label = (row: KnowledgeRow) => row.label ?? KNOWLEDGE_STATE_LABELS[row.state] ?? row.state;
   const columns: Column<KnowledgeRow>[] = [
@@ -203,6 +203,7 @@ function KnowledgeSources({ result }: { result: UsageQueryResult }) {
           <p className="text-muted-foreground text-xs">Tool calls that touched a configured vault or connector, one row per source. Access counts overlap; the distinct tool-call total does not.</p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
+          {unsupported_filters.map(entry => <Badge key={entry} variant="soft-warning" title={entry}>{unsupportedFilterLabel(entry, 'knowledge')}</Badge>)}
           <Badge variant="outline">{count(configured.length, 'configured source')}</Badge>
           <Badge variant="outline">{count(distinct_invocations, 'distinct tool call')}</Badge>
           <Button size="xs" variant="outline" asChild><Link href="/settings/sources">Configure sources</Link></Button>
@@ -259,7 +260,7 @@ export function ToolKnowledgeCard({ result, loading, knowledgeLoading }: { resul
         <CardTitle className="text-base">Tool calls and knowledge sources</CardTitle>
         <CardDescription>Reported tool invocations in scope, who issued them, and which knowledge sources they reached.</CardDescription>
         <CardAction className="flex flex-wrap justify-end gap-1.5">
-          {tools.unsupported_filters.map(note => <Badge key={note} variant="soft-warning" title={note}>{note === 'models' ? 'model filter not applied to tools' : note}</Badge>)}
+          {tools.unsupported_filters.map(entry => <Badge key={entry} variant="soft-warning" title={entry}>{unsupportedFilterLabel(entry, 'tools')}</Badge>)}
         </CardAction>
       </CardHeader>
       <StatGroup className="border-border border-y">
@@ -297,7 +298,7 @@ export function ToolKnowledgeCard({ result, loading, knowledgeLoading }: { resul
         )
         : <KnowledgeSources result={result} />}
       <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed" data-testid="tools-footnote">
-        Tool invocations, model calls, and agent spawns are three different counts and are never summed. {tools.caller_coverage.note} {tools.outcome_coverage.note} Tool events follow the requests that issued them through the account, project, machine, and agent filters; a model filter cannot be applied to them where no calling request is recorded.
+        Tool invocations, model calls, and agent spawns are three different counts and are never summed. {tools.caller_coverage.note} {tools.outcome_coverage.note} Tool events and knowledge accesses follow the requests that issued them through the account, project, machine, and agent filters; a model filter cannot be applied to either where no calling request is recorded.
       </p>
     </Card>
   );
