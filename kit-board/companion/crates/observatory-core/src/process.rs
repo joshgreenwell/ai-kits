@@ -216,7 +216,13 @@ mod tests {
         let (program, args): (PathBuf, Vec<&str>) = if cfg!(windows) {
             (PathBuf::from("cmd.exe"), vec!["/C", "exit", "0"])
         } else {
-            (PathBuf::from("/bin/true"), vec![])
+            // Debian keeps `true` under /bin; macOS only under /usr/bin.
+            let program = ["/bin/true", "/usr/bin/true"]
+                .into_iter()
+                .map(PathBuf::from)
+                .find(|path| path.exists())
+                .expect("a `true` binary");
+            (program, vec![])
         };
         assert_eq!(run_discarded(&program, &args, Duration::from_secs(5)), Ok(true));
     }
