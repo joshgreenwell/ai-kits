@@ -892,7 +892,7 @@ dependencies = [
 
 [[package]]
 name = "observatory"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "clap",
  "jiff",
@@ -909,12 +909,13 @@ dependencies = [
 
 [[package]]
 name = "observatory-adapters"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "insta",
  "jiff",
  "observatory-contract",
  "observatory-core",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
@@ -924,7 +925,7 @@ dependencies = [
 
 [[package]]
 name = "observatory-contract"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "jiff",
  "jsonschema",
@@ -937,7 +938,7 @@ dependencies = [
 
 [[package]]
 name = "observatory-core"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "hmac",
  "jiff",
