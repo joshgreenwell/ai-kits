@@ -10,7 +10,7 @@ The [direction document](../usage-direction.md) defines the intended experience.
 
 ## Release status
 
-Updated 2026-09-22. The Tokens and Allowances interface is deployed, all seventeen migrations are applied to production and then squashed into one baseline for the Aurora move, and request detail has been collecting at the source since September 18.
+Updated 2026-09-22. The Tokens and Allowances interface is deployed, all seventeen migrations are applied to production, and request detail has been collecting at the source since September 18.
 
 ### Done (21)
 
@@ -42,7 +42,7 @@ Done here means the acceptance criteria are met in the repository and verified l
 
 Neither is a code change. The first is now done:
 
-1. **Schema migrations are applied to production.** All seventeen are applied, the last two on September 21, 2026: `20260919090000_drop_duplicate_agent_events_index.sql` and `20260921090000_request_ledger_revision_uniqueness.sql`, which collapsed 392,397 Cursor replay rows to 8,785 and renamed the request ledger's revision key. `supabase_migrations.schema_migrations` holds seventeen rows from `20260908050538` to `20260921090000` and nothing is pending. The seventeen files were squashed into `supabase/migrations/00000000000000_baseline.sql` on September 22 and moved to `supabase/migrations-archive/`; the baseline is for a NEW database only and must never be applied over production.
+1. **Schema migrations are applied to production.** All seventeen are applied, the last two on September 21, 2026: `20260919090000_drop_duplicate_agent_events_index.sql` and `20260921090000_request_ledger_revision_uniqueness.sql`, which collapsed 392,397 Cursor replay rows to 8,785 and renamed the request ledger's revision key. `supabase_migrations.schema_migrations` holds seventeen rows from `20260908050538` to `20260921090000` and nothing is pending. A squashed baseline for a future move off Supabase lives on the `kit-board/aurora-cutover` branch, not on `main`.
 2. **Request detail is on at the source, and the first days of it are recorded.** The owner raised the shared settings to version 9 on September 18 (06:03 UTC): `execution.detail_level: "requests_with_tools"`, `project_attribution: "hashed"`, `tool_detail: "hashed_custom"`, both companions enabled for Claude, Codex, and Cursor. Production read on September 21: 472,713 request rows (Claude 14,504; Codex 65,812; Cursor 392,397 rows for only 8,785 requests), 161,671 tool events, 1,259 agent events, 99 project identities under 5 named projects, 0 resource accesses (no knowledge source is configured), 887 allowance readings. The Cursor rows were a replay: the `cursor_execution` reader parsed Cursor's ISO-8601 `createdAt` as an integer, stamped the run clock instead, and re-emitted every bubble each hour with a new content hash, about 130k rows a day, which is what made the request reads take 9 seconds on average (38 seconds worst) and surface as 503s. Companion 2.1.0 (tag `observatory-v2.1.0`) stops that at the source and is installed on this PC; `20260921090000_request_ledger_revision_uniqueness.sql` collapsed the replay on September 21: 392,397 rows became 8,785, one per request, and the request ledger fell from 563,992 rows to 171,406. It is applied; nothing is pending. The read layer now runs under a single 30-second budget and answers an exhausted read with 504 instead of 503.
 
 ### Follow-ups, not release gates (7 + 1 optional)

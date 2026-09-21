@@ -8,7 +8,7 @@ This note organizes the Usage & pace page around three questions:
 
 The recommendation is to keep token activity and allowance usage as separate ledgers, make an allowance cycle a durable first-class record, and carry a historical prior into each new cycle. A reset should select a new active cycle; it should never erase the cycles used to inform the next forecast.
 
-This is a product and data-model note, not an implementation record. It builds on the current [usage collection contract](usage-collection.md), [telemetry schema](../supabase/migrations-archive/20260909184129_usage_telemetry_and_reset_feeds.sql), [live telemetry reader](../lib/telemetry-store.ts), and [allowance forecast](../lib/telemetry-contract.ts).
+This is a product and data-model note, not an implementation record. It builds on the current [usage collection contract](usage-collection.md), [telemetry schema](../supabase/migrations/20260909184129_usage_telemetry_and_reset_feeds.sql), [live telemetry reader](../lib/telemetry-store.ts), and [allowance forecast](../lib/telemetry-contract.ts).
 
 ## Current-state gap
 

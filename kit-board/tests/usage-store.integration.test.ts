@@ -709,12 +709,7 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
 
 maybe('the application role can append to every ledger but never update or delete one', async () => {
   const app = postgres(url!, { ...options, username: 'personal_hub_app' });
-  // The install this test hangs its identities off is its own. It used to borrow one seeded before an
-  // archived migration, which tied a privilege test to an upgrade fixture that a baseline never seeds.
-  const ownInstall = randomUUID();
   try {
-    await app`INSERT INTO personal_hub.companion_installs (id, machine_label, kind, platform, arch, key_hash)
-      VALUES (${ownInstall}, 'privilege test', 'companion', 'linux', 'amd64', ${sha(ownInstall)})`;
     for (const table of ['activity_requests', 'account_usage_buckets', 'allowance_readings', 'money_entries',
       'agent_events', 'tool_events', 'resource_accesses']) {
       await assert.rejects(app.unsafe(`UPDATE personal_hub.${table} SET content_hash = content_hash WHERE false`), /permission denied/, `${table} update`);
@@ -745,7 +740,7 @@ maybe('the application role can append to every ledger but never update or delet
     await app`INSERT INTO personal_hub.usage_projects (id, label) VALUES (${writableProject}, 'Application role project')`;
     await app`INSERT INTO personal_hub.usage_project_identities
       (id, basis, evidence_key, install_id, first_seen, last_seen)
-      VALUES (${writableIdentity}, 'working_directory', ${sha(writableIdentity)}, ${ownInstall},
+      VALUES (${writableIdentity}, 'working_directory', ${sha(writableIdentity)}, '00000000-0000-4000-8000-000000000302',
         '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
     const [appendedMapping] = await app`INSERT INTO personal_hub.usage_project_mapping_revisions (id, identity_id, project_id)
       VALUES (${randomUUID()}, ${writableIdentity}, ${writableProject}) RETURNING revision_order`;
@@ -754,7 +749,7 @@ maybe('the application role can append to every ledger but never update or delet
     await app`INSERT INTO personal_hub.usage_knowledge_sources (id, label) VALUES (${writableSource}, 'Application role source')`;
     await app`INSERT INTO personal_hub.usage_knowledge_source_identities
       (id, install_id, resource_key, configuration_version, first_seen, last_seen)
-      VALUES (${writableResource}, ${ownInstall}, ${`app.${writableResource.slice(0, 8)}`}, 'cfg:0123456789abcdef',
+      VALUES (${writableResource}, '00000000-0000-4000-8000-000000000302', ${`app.${writableResource.slice(0, 8)}`}, 'cfg:0123456789abcdef',
         '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
     await app`UPDATE personal_hub.usage_knowledge_source_identities SET configuration_version = 'cfg:fedcba9876543210', last_seen = '2026-09-01T00:01:00Z'
       WHERE id = ${writableResource}`;

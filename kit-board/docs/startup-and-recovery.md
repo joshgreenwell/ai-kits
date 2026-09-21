@@ -43,9 +43,7 @@ Create login and publisher secrets in a protected local setup session, then stor
 
 ## Database bootstrap and recovery
 
-The app uses postgres.js directly, not a public Supabase Data API. Use an isolated Supabase/Postgres database for development. Its administrator applies **all** SQL files in `supabase/migrations/` in lexicographic filename order. Since the September 22, 2026 squash that is one file, `00000000000000_baseline.sql`, which builds the whole schema from nothing. Each file there is a migration, not an idempotent initialization script: track applied filenames and do not rerun them against an existing database. Keep `personal_hub` unexposed, RLS enabled and public grants revoked.
-
-**The baseline is for new databases only.** Production was built by running the seventeen migrations dated 2026-09-08 through 2026-09-21 in sequence, and those files are kept verbatim in `supabase/migrations-archive/` with their own README. Never apply the baseline to a database that ran them, or them to a database that started from the baseline. The baseline needs no `anon` or `authenticated` role; replaying the archived sequence does, so vanilla Postgres needs both created first.
+The app uses postgres.js directly, not a public Supabase Data API. Use an isolated Supabase/Postgres database for development. Its administrator applies **all** SQL files in `supabase/migrations/` in lexicographic filename order. That is seventeen files, dated 2026-09-08 through 2026-09-21. Each file there is a migration, not an idempotent initialization script: track applied filenames and do not rerun them against an existing database. Keep `personal_hub` unexposed, RLS enabled and public grants revoked.
 
 The baseline creates `personal_hub_app` without a password, guarded so an existing login role is left alone. Set a strong password using the administrator's protected channel (for example an interactive psql `\password personal_hub_app` session), then configure the application with only that restricted identity and the correct verified TLS connection. Retain the connection queue and disabled prepared statements in `lib/db.ts`.
 

@@ -1,11 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import postgres from 'postgres';
-import { upgradeFixtureReason } from './upgrade-fixture';
 
-// Asserts what the archived upgrade migrations did to rows that already existed; skips against
-// the baseline, which has no upgrade path. See tests/upgrade-fixture.ts.
 const url = process.env.TEST_DATABASE_URL;
+const maybe = (name: string, fn: () => Promise<void>) => test(name, { skip: !url }, fn);
 const options = {
   prepare: false,
   ...(process.env.TEST_DATABASE_HOST
@@ -15,9 +13,6 @@ const options = {
 
 const accountId = 'migration-upgrade-legacy';
 const bindingId = '00000000-0000-4000-8000-000000000303';
-
-const reason = await upgradeFixtureReason(url, options, accountId);
-const maybe = (name: string, fn: () => Promise<void>) => test(name, { skip: reason }, fn);
 
 maybe('usage detail migration preserves legacy bucket evidence and enforces new accounting states', async () => {
   const sql = postgres(url!, options);
