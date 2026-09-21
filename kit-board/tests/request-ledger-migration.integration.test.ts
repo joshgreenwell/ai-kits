@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import postgres from 'postgres';
+import { upgradeFixtureReason } from './upgrade-fixture';
 
-// Runs under scripts/test-db.mjs, which seeds the Cursor replay fixture (seedRequestLedgerReplayFixture)
-// before 20260921090000_request_ledger_revision_uniqueness.sql applies.
+// Runs under scripts/test-db.mjs when it seeds the Cursor replay fixture (seedRequestLedgerReplayFixture)
+// before the archived 20260921090000_request_ledger_revision_uniqueness.sql applies. Skips against the
+// baseline, which has no upgrade path. See tests/upgrade-fixture.ts.
 const url = process.env.TEST_DATABASE_URL;
-const maybe = (name: string, fn: () => Promise<void>) => test(name, { skip: !url }, fn);
 const options = { prepare: false, ...(process.env.TEST_DATABASE_HOST ? { host: process.env.TEST_DATABASE_HOST, port: Number(process.env.TEST_DATABASE_PORT) } : {}) };
 
 const accountId = 'migration-upgrade-legacy';
@@ -13,18 +14,15 @@ const bindingId = '00000000-0000-4000-8000-000000000303';
 const cursorRecord = '00000000-0000-4000-8000-000000000361';
 const claudeRecord = '00000000-0000-4000-8000-000000000366';
 
-maybe('the request ledger migration keeps one earliest sighting per identical Cursor content and names the revision key', async () => {
+const reason = await upgradeFixtureReason(url, options, accountId);
+const maybe = (name: string, fn: () => Promise<void>) => test(name, { skip: reason }, fn);
+// The revision key is a property of the schema, not of the upgrade, so it is checked on whatever
+// supabase/migrations/ built: the baseline today, the archived sequence when that is replayed.
+const always = (name: string, fn: () => Promise<void>) => test(name, { skip: !url }, fn);
+
+always('the four detail ledgers share one revision key, named alike and indexed once', async () => {
   const sql = postgres(url!, options);
   try {
-    const cursorRows = await sql`SELECT id, model_actual, observed_at, ended_at, received_at FROM personal_hub.activity_requests
-      WHERE account_id = ${accountId} AND record_id = ${cursorRecord} ORDER BY observed_at`;
-    assert.deepEqual(cursorRows.map(row => [row.id, row.model_actual, new Date(row.observed_at as string).toISOString()]), [
-      ['00000000-0000-4000-8000-000000000362', null, '2026-09-03T01:00:00.000Z'],
-      ['00000000-0000-4000-8000-000000000365', 'cursor-synthetic-model', '2026-09-03T04:00:00.000Z'],
-    ], 'three identical sightings collapse to the earliest observed_at (the one received last); the differing revision stays');
-    const claudeRows = await sql`SELECT count(*)::int AS rows FROM personal_hub.activity_requests WHERE account_id = ${accountId} AND record_id = ${claudeRecord}`;
-    assert.equal(Number(claudeRows[0].rows), 2, 'a claude pair differing only in ended_at is not the Cursor replay and is untouched');
-
     const constraints = await sql`SELECT conname FROM pg_constraint
       WHERE conrelid = 'personal_hub.activity_requests'::regclass AND contype = 'u' ORDER BY conname`;
     assert.deepEqual(constraints.map(row => row.conname), ['activity_requests_revision'], 'the inline UNIQUE constraint carries the ledgers\' shared name');
@@ -38,6 +36,20 @@ maybe('the request ledger migration keeps one earliest sighting per identical Cu
     for (const row of revisionIndexes) assert.match(row.indexdef as string, /^CREATE UNIQUE INDEX \w+ ON personal_hub\.\w+ USING btree \(account_id, semantic_key, channel, content_hash\)$/);
     assert.equal((await sql`SELECT count(*)::int AS n FROM pg_indexes WHERE schemaname = 'personal_hub' AND tablename = 'activity_requests'
       AND indexdef LIKE '%(account_id, semantic_key, channel, content_hash)'`)[0].n, 1, 'one revision index, not a second copy');
+  } finally { await sql.end({ timeout: 1 }); }
+});
+
+maybe('the request ledger migration keeps one earliest sighting per identical Cursor content', async () => {
+  const sql = postgres(url!, options);
+  try {
+    const cursorRows = await sql`SELECT id, model_actual, observed_at, ended_at, received_at FROM personal_hub.activity_requests
+      WHERE account_id = ${accountId} AND record_id = ${cursorRecord} ORDER BY observed_at`;
+    assert.deepEqual(cursorRows.map(row => [row.id, row.model_actual, new Date(row.observed_at as string).toISOString()]), [
+      ['00000000-0000-4000-8000-000000000362', null, '2026-09-03T01:00:00.000Z'],
+      ['00000000-0000-4000-8000-000000000365', 'cursor-synthetic-model', '2026-09-03T04:00:00.000Z'],
+    ], 'three identical sightings collapse to the earliest observed_at (the one received last); the differing revision stays');
+    const claudeRows = await sql`SELECT count(*)::int AS rows FROM personal_hub.activity_requests WHERE account_id = ${accountId} AND record_id = ${claudeRecord}`;
+    assert.equal(Number(claudeRows[0].rows), 2, 'a claude pair differing only in ended_at is not the Cursor replay and is untouched');
 
     // An exact replay of the surviving sighting is refused by the key, as ingestion's ON CONFLICT DO NOTHING relies on.
     const replay = await sql`INSERT INTO personal_hub.activity_requests

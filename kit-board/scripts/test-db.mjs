@@ -3,6 +3,19 @@
 // contract tests and every tests/*.integration.test.ts against the fresh cluster.
 // Uses local `initdb`/`pg_ctl` when they are on PATH (CI), else a `postgres:17-alpine` Docker
 // container bound to loopback (developer machines without PostgreSQL tools).
+//
+// supabase/migrations/ holds one file since the September 22, 2026 squash: the baseline that
+// recreates the whole schema. The seventeen files it replaced are in
+// supabase/migrations-archive/ with their own README. The upgrade fixtures below are keyed to
+// the archived filename each one belongs before, so they seed nothing against the baseline and
+// still work if that sequence is ever applied through this runner; the two tests that read
+// them skip themselves when they are absent.
+//
+// One row is not an upgrade fixture and is seeded either way: the synthetic companion install.
+// It was buried in the usage-detail fixture, but tests/usage-store.integration.test.ts needs it
+// as the `install_id` its grant test points the two identity tables at, and that test asserts a
+// property of the schema, not of an upgrade. Leaving it inside the fixture made the baseline run
+// fail on a foreign key. See seedSharedInstall.
 import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,15 +27,33 @@ const run = promisify(execFile);
 const root = process.cwd();
 const port = String(55440 + Math.floor(Math.random() * 100));
 const databaseName = 'personal_hub_test';
-const usageDetailMigration = '20260913230451_extend_usage_detail_contract.sql';
-const knowledgeSourceMigration = '20260914003000_knowledge_source_registry.sql';
-const allowanceBasisMigration = '20260914010000_allowance_basis_and_run_counts.sql';
-const requestLedgerMigration = '20260921090000_request_ledger_revision_uniqueness.sql';
+// Archived filename -> the fixture that must exist before it applies. See migrations-archive/README.md.
+const upgradeFixtures = new Map([
+  ['20260913230451_extend_usage_detail_contract.sql', seedUsageDetailUpgradeFixture],
+  ['20260914003000_knowledge_source_registry.sql', seedKnowledgeSourceUpgradeFixture],
+  ['20260914010000_allowance_basis_and_run_counts.sql', seedAllowanceBasisUpgradeFixture],
+  ['20260921090000_request_ledger_revision_uniqueness.sql', seedRequestLedgerReplayFixture],
+]);
+
+// The shared synthetic install. Every upgrade fixture hangs off it and so does the grant test in
+// tests/usage-store.integration.test.ts, which runs against whatever supabase/migrations/ built.
+// Seeded before the first upgrade fixture when the archived sequence is replayed, and after the
+// migrations otherwise; idempotent so both paths can call it.
+async function seedSharedInstall(db) {
+  await db.unsafe(`
+    INSERT INTO personal_hub.companion_installs
+      (id, machine_label, kind, platform, arch, key_hash)
+      VALUES ('00000000-0000-4000-8000-000000000302', 'Synthetic upgrade fixture',
+        'companion', 'linux', 'amd64', repeat('2', 64))
+      ON CONFLICT (id) DO NOTHING;
+  `);
+}
 
 async function seedUsageDetailUpgradeFixture(db) {
   // Synthetic row accepted by the original bucket schema. Its reasoning count is
   // intentionally above output so the next migration must preserve it without
-  // weakening enforcement for subsequent writes.
+  // weakening enforcement for subsequent writes. The install these rows hang off is
+  // seeded separately by seedSharedInstall.
   await db.unsafe(`
     INSERT INTO personal_hub.usage_accounts (id, provider, label)
       VALUES ('migration-upgrade-legacy', 'claude', 'Migration upgrade legacy fixture');
@@ -30,10 +61,6 @@ async function seedUsageDetailUpgradeFixture(db) {
       (id, account_id, machine_label, mode, key_hash)
       VALUES ('00000000-0000-4000-8000-000000000301', 'migration-upgrade-legacy',
         'Synthetic upgrade fixture', 'companion', repeat('1', 64));
-    INSERT INTO personal_hub.companion_installs
-      (id, machine_label, kind, platform, arch, key_hash)
-      VALUES ('00000000-0000-4000-8000-000000000302', 'Synthetic upgrade fixture',
-        'companion', 'linux', 'amd64', repeat('2', 64));
     INSERT INTO personal_hub.companion_bindings
       (id, install_id, account_id, source_id, provider, identity_hash)
       VALUES ('00000000-0000-4000-8000-000000000303',
@@ -225,15 +252,16 @@ try {
   await admin.end({ timeout: 1 });
   const db = postgres({ ...options, database: databaseName, prepare: false });
   const migrations = (await readdir(join(root, 'supabase/migrations'))).filter(file => file.endsWith('.sql')).sort();
+  let seeded = 0;
   for (const migration of migrations) {
-    if (migration === usageDetailMigration) await seedUsageDetailUpgradeFixture(db);
-    if (migration === knowledgeSourceMigration) await seedKnowledgeSourceUpgradeFixture(db);
-    if (migration === allowanceBasisMigration) await seedAllowanceBasisUpgradeFixture(db);
-    if (migration === requestLedgerMigration) await seedRequestLedgerReplayFixture(db);
+    const fixture = upgradeFixtures.get(migration);
+    if (fixture) { await seedSharedInstall(db); await fixture(db); seeded++; }
     await db.file(join(root, 'supabase/migrations', migration));
   }
+  await seedSharedInstall(db);
   await db.end({ timeout: 1 });
-  console.log(`Applied ${migrations.length} migrations.`);
+  console.log(`Applied ${migrations.length} migration${migrations.length === 1 ? '' : 's'}`
+    + `, ${seeded} upgrade fixture${seeded === 1 ? '' : 's'} seeded.`);
   const tests = (await readdir(join(root, 'tests'))).filter(file => file.endsWith('.integration.test.ts') || file.endsWith('-contract.test.ts')).sort().map(file => `tests/${file}`);
   // One file at a time: the files share one database and its global settings version, so a
   // browser-collector pause running beside the store test made the store's version and ETag
