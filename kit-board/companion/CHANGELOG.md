@@ -4,6 +4,28 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
 
 ## Unreleased
 
+## 2.1.0 — 2026-09-21
+
+- Cursor local requests are stable and incremental. Every `cursor_execution` record uploaded since
+  2026-09-18 carried the run's clock as `observed_at` and `ended_at`: current Cursor builds write a
+  bubble's `createdAt` as an ISO-8601 string, the reader parsed it as an integer, got nothing, and fell
+  back to `now`; the content hash covers `ended_at`, so each hourly run stored every bubble as a new
+  revision (392,397 `activity_requests` rows for 8,785 records in production). The reader now observes a
+  bubble at its own `createdAt` (integer milliseconds or RFC 3339 text), else at the owning composer's
+  `createdAt` read from `composerData:<composer_id>` in SQLite (bodies never loaded), and skips a bubble
+  the store holds no time for, counting it as malformed (coverage `partial`, `parse_error`) instead of
+  substituting a clock; `ended_at` is that same store time. Bubbles whose four counters are all zero,
+  which is what current builds write for nearly every message, carry no usage evidence and are skipped:
+  the local store yields request existence only, the capability rows report Requests `unknown` and
+  TokenComposition `unsupported` with `local_counters_zero` when nothing in a store has tokens, and
+  Cursor token evidence comes from the hosted `cursor_account` reader. Each binding remembers the
+  content digest it last emitted per record in the new `cursor_emitted` state table (written by the run
+  only after the records are persisted, under a fingerprint of emission shape, parser version, and
+  detail level in `emitted:cursor_execution:<binding>`) and emits only new or changed bubbles; a
+  fingerprint change re-emits everything once. The parser version moves to `+cursor-local2`, so the
+  first run of this build re-emits each token-bearing bubble once at its store time and the server can
+  tell the fixed rows from the revisions the previous build uploaded. Existing local state needs no
+  migration; the table is created on open.
 - Privacy: project keys and hashed custom tool, MCP, function, and agent names are now
   HMAC-SHA256 under a random 32-byte key each install creates on its first run and keeps in
   the state database (`meta.privacy_salt`). They were plain `sha256([label, value])` over a
