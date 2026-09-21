@@ -126,7 +126,9 @@ async function seedRequestLedgerReplayFixture(db) {
   // three hourly runs with identical content and only observed_at/ended_at (and so content_hash)
   // moving, plus a fourth row of the same record whose content differs (a real revision), and a
   // Claude pair differing only in ended_at that the migration must leave alone. The earliest
-  // sighting arrived last so the rule is visibly observed_at, not receipt order.
+  // sighting arrived last so the rule is visibly observed_at, not receipt order. The Cursor rows carry
+  // the buggy reader's own parser version, which the migration requires: a row from the fixed reader
+  // must survive a rerun even when its content matches a collapsed sighting.
   await db.unsafe(`
     INSERT INTO personal_hub.activity_requests
       (id, account_id, binding_id, provider, adapter, channel, record_id, semantic_key, product, surface,
@@ -136,7 +138,7 @@ async function seedRequestLedgerReplayFixture(db) {
     SELECT ('00000000-0000-4000-8000-0000000003' || suffix)::uuid, 'migration-upgrade-legacy',
       '00000000-0000-4000-8000-000000000303'::uuid, 'cursor', 'cursor_execution', 'local_db',
       '00000000-0000-4000-8000-000000000361'::uuid, repeat('1', 64), 'cursor', 'ide', 'local', repeat('2', 64),
-      'derived', model, NULL, at, at, 0, 0, 0, 0, NULL, 'exact', 'completed', '2.0.0', received, hash
+      'derived', model, NULL, at, at, 0, 0, 0, 0, NULL, 'exact', 'completed', '2.0.0+cursor-local1', received, hash
     FROM (VALUES
       ('62', NULL, '2026-09-03T01:00:00Z'::timestamptz, '2026-09-03T03:05:00Z'::timestamptz, repeat('6', 64)),
       ('63', NULL, '2026-09-03T02:00:00Z'::timestamptz, '2026-09-03T02:05:00Z'::timestamptz, repeat('7', 64)),

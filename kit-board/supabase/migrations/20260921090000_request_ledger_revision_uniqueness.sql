@@ -16,6 +16,16 @@
 -- activity_requests_revision so the four ledgers read alike, without a second index. The three event
 -- ledgers' revision indexes are asserted with IF NOT EXISTS (production holds no duplicate on them).
 --
+-- Why the partition is a column list and not `to_jsonb(row)`. Partitioning by the whole row as a JSON
+-- document materializes every row into the sort, and on 2026-09-21 that exhausted the instance's temp
+-- space outright (`53100: could not write to file "base/pgsql_tmp/..."`) on a read-only query of the
+-- same shape. The scalar column list below sorts the same 401,182 rows in a fraction of the memory and
+-- keeps the property that matters: a row whose content genuinely differs lands in its own partition and
+-- is kept. Verified read-only against production immediately before this ran: of the 8,785
+-- (account_id, record_id) groups, zero differed in any of these columns, and all 401,182 rows carry the
+-- one buggy parser version, which is now also required so a later `+cursor-local2` row can never be
+-- collapsed by a rerun.
+--
 -- Safety on live data. The DELETE takes ROW EXCLUSIVE on the table and row locks only on the rows it
 -- removes, which no companion touches, so hourly uploads keep inserting. The rename is a catalog change.
 -- lock_timeout keeps the DDL from queueing behind a long read; if it trips, the whole file rolls back and
@@ -28,11 +38,15 @@ DELETE FROM personal_hub.activity_requests r
 USING (
   SELECT id FROM (
     SELECT id, row_number() OVER (
-      PARTITION BY account_id, record_id,
-        to_jsonb(activity_requests) - '{id,observed_at,ended_at,activity_at,received_at,content_hash,total_tokens,observed_total_tokens}'::text[]
+      PARTITION BY account_id, record_id, binding_id, semantic_key, session_hash, model_actual, model_requested,
+        input_fresh_tokens, input_cached_tokens, input_cache_write_tokens, output_tokens, reasoning_tokens,
+        unclassified_tokens, reported_total_tokens, token_state, outcome, surface, product, execution_host,
+        session_identity, parent_session_hash, project_key, project_basis, project_hash, agent_key, agent_class,
+        agent_name, agent_depth, parent_agent_key, reasoning_effort, service_tier, speed, context_window_tokens,
+        cache_write_ttl, tool_calls, tools, client_version, latency_ms, basis, adapter, parser_version
       ORDER BY observed_at, received_at, id) AS sighting
     FROM personal_hub.activity_requests
-    WHERE provider = 'cursor' AND channel = 'local_db') ranked
+    WHERE provider = 'cursor' AND channel = 'local_db' AND parser_version = '2.0.0+cursor-local1') ranked
   WHERE sighting > 1) replay
 WHERE r.id = replay.id;
 
