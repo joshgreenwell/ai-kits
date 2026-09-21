@@ -114,6 +114,17 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.deepEqual(r1.accepted, { buckets: 1, records: 2 }); assert.equal(r1.duplicates, 0); assert.deepEqual(r1.rejected, []);
     const r2 = await store.ingestUsage(current, one);
     assert.deepEqual(r2.accepted, { buckets: 0, records: 0 }); assert.equal(r2.duplicates, 3);
+    // A request re-read with the same facts under a new run timestamp (Cursor's local_db replay: observed_at and
+    // ended_at move, so the content hash moves) is a duplicate sighting, never a revision; changed facts still are one.
+    const firstRequest = one.records[0] as Extract<UsageEnvelope['records'][number], { record_type: 'activity.request' }>;
+    const replayed = envelope({ records: [{ ...firstRequest, observed_at: '2026-09-02T04:20:00.000Z', ended_at: '2026-09-02T04:20:00.000Z' }] });
+    const r3 = await store.ingestUsage(current, replayed);
+    assert.deepEqual([r3.accepted.records, r3.duplicates], [0, 1], 'a timestamp-only replay of a request is a duplicate');
+    assert.deepEqual((await sql`SELECT accepted_by_type FROM personal_hub.companion_runs WHERE run_id = ${replayed.run.run_id}`)[0].accepted_by_type,
+      { 'activity.request': { accepted: 0, duplicate: 1, rejected: 0 } });
+    assert.equal(Number((await sql`SELECT count(*) FROM personal_hub.activity_requests WHERE record_id = ${firstRequest.record_id}`)[0].count), 1);
+    const revisedRequest = envelope({ records: [{ ...firstRequest, ended_at: '2026-09-02T04:20:00.000Z', tokens: { ...firstRequest.tokens, output: 51 } }] });
+    assert.equal((await store.ingestUsage(current, revisedRequest)).accepted.records, 1, 'changed facts under a new timestamp are a revision');
     const [runRow] = await sql`SELECT accepted_buckets, accepted_records, jsonb_array_length(coverage) AS entries FROM personal_hub.companion_runs WHERE run_id = ${one.run.run_id}`;
     assert.equal(Number(runRow.accepted_buckets), 1, 'envelopes of one run accumulate on run_id');
     assert.equal(Number(runRow.entries), 2);

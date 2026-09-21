@@ -80,6 +80,12 @@ export type InstallSummary = { id: string; machine_label: string; kind: 'compani
 export type InstallsSummary = { installs: InstallSummary[]; settings: CollectionSettings; settings_version: number; latest_companion_version: string | null; settings_updated_at: string };
 
 const CHANNEL_RANK = "CASE channel WHEN 'provider_api' THEN 0 WHEN 'app_server' THEN 1 WHEN 'local_file' THEN 2 WHEN 'local_db' THEN 2 ELSE 3 END";
+/**
+ * activity_requests columns that describe a sighting rather than the request: they are dropped when two
+ * revisions of one record are compared for identical content (see ingestUsage and migration
+ * 20260921090000). The generated columns are listed because `to_jsonb` of a stored row carries them.
+ */
+const REQUEST_SIGHTING_COLUMNS = ['id', 'observed_at', 'ended_at', 'activity_at', 'received_at', 'content_hash', 'total_tokens', 'observed_total_tokens'];
 const IDENTITY_RANK = "CASE session_identity WHEN 'provider' THEN 0 WHEN 'derived' THEN 1 ELSE 2 END";
 // Closed resource.access enums, so every tally states its full denominator even at zero.
 const ACCESS_KINDS = ['read', 'search', 'write', 'unknown'] as const;
@@ -517,7 +523,29 @@ export function createUsageStore(getDatabase?: () => Sql) {
         acceptedRecords += inserted.length; duplicates += rows.length - inserted.length;
         count(type, 'accepted', inserted.length); count(type, 'duplicate', rows.length - inserted.length);
       };
-      await insert('activity_requests', 'activity.request', requests); await insert('account_usage_buckets', 'account.usage_bucket', usage);
+      // A request revision is content, never a sighting. The revision key (account, semantic key, channel,
+      // content hash) already stores an exact replay once, but a hash covers the observation time, so a
+      // record re-read with the same facts under a new run timestamp (the Cursor local_db replay that
+      // grew the ledger by ~130k rows a day) would be stored again. Such a row counts as a duplicate:
+      // the earliest sighting of each distinct content stays, and the receipt tells the companion so.
+      // Timestamp-only differences are the same set 20260921090000 collapses; anything else is a revision.
+      const insertRequests = async (rows: Row[]) => {
+        if (!rows.length) return;
+        const columns = Object.keys(rows[0]);
+        await tx`CREATE TEMP TABLE _incoming_requests ON COMMIT DROP AS SELECT ${tx(columns)} FROM personal_hub.activity_requests WITH NO DATA`;
+        await tx`INSERT INTO _incoming_requests ${tx(rows)}`;
+        const inserted = await tx`INSERT INTO personal_hub.activity_requests (${tx(columns)})
+          SELECT DISTINCT ON (account_id, semantic_key, record_id, content) ${tx(columns)}
+          FROM (SELECT i.*, to_jsonb(i) - ${REQUEST_SIGHTING_COLUMNS}::text[] AS content FROM _incoming_requests i) candidate
+          WHERE NOT EXISTS (SELECT 1 FROM personal_hub.activity_requests o
+            WHERE o.account_id = candidate.account_id AND o.semantic_key = candidate.semantic_key AND o.record_id = candidate.record_id
+              AND to_jsonb(o) - ${REQUEST_SIGHTING_COLUMNS}::text[] = candidate.content)
+          ORDER BY account_id, semantic_key, record_id, content, observed_at, id
+          ON CONFLICT DO NOTHING RETURNING id`;
+        acceptedRecords += inserted.length; duplicates += rows.length - inserted.length;
+        count('activity.request', 'accepted', inserted.length); count('activity.request', 'duplicate', rows.length - inserted.length);
+      };
+      await insertRequests(requests); await insert('account_usage_buckets', 'account.usage_bucket', usage);
       await insert('allowance_readings', 'allowance.reading', readings); await insert('money_entries', 'money.entry', money);
       await insert('agent_events', 'agent.event', agentEvents); await insert('tool_events', 'tool.event', toolEvents);
       await insert('resource_accesses', 'resource.access', resourceAccesses);
