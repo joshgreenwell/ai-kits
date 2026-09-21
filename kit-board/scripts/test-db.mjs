@@ -17,6 +17,7 @@ const databaseName = 'personal_hub_test';
 const usageDetailMigration = '20260913230451_extend_usage_detail_contract.sql';
 const knowledgeSourceMigration = '20260914003000_knowledge_source_registry.sql';
 const allowanceBasisMigration = '20260914010000_allowance_basis_and_run_counts.sql';
+const requestLedgerMigration = '20260921090000_request_ledger_revision_uniqueness.sql';
 
 async function seedUsageDetailUpgradeFixture(db) {
   // Synthetic row accepted by the original bucket schema. Its reasoning count is
@@ -120,6 +121,45 @@ async function seedAllowanceBasisUpgradeFixture(db) {
   `);
 }
 
+async function seedRequestLedgerReplayFixture(db) {
+  // The Cursor replay shape accepted before the ledger collapsed sightings: one record re-emitted by
+  // three hourly runs with identical content and only observed_at/ended_at (and so content_hash)
+  // moving, plus a fourth row of the same record whose content differs (a real revision), and a
+  // Claude pair differing only in ended_at that the migration must leave alone. The earliest
+  // sighting arrived last so the rule is visibly observed_at, not receipt order.
+  await db.unsafe(`
+    INSERT INTO personal_hub.activity_requests
+      (id, account_id, binding_id, provider, adapter, channel, record_id, semantic_key, product, surface,
+       execution_host, session_hash, session_identity, model_actual, started_at, ended_at, observed_at,
+       input_fresh_tokens, input_cached_tokens, input_cache_write_tokens, output_tokens, reasoning_tokens,
+       basis, outcome, parser_version, received_at, content_hash)
+    SELECT ('00000000-0000-4000-8000-0000000003' || suffix)::uuid, 'migration-upgrade-legacy',
+      '00000000-0000-4000-8000-000000000303'::uuid, 'cursor', 'cursor_execution', 'local_db',
+      '00000000-0000-4000-8000-000000000361'::uuid, repeat('1', 64), 'cursor', 'ide', 'local', repeat('2', 64),
+      'derived', model, NULL, at, at, 0, 0, 0, 0, NULL, 'exact', 'completed', '2.0.0', received, hash
+    FROM (VALUES
+      ('62', NULL, '2026-09-03T01:00:00Z'::timestamptz, '2026-09-03T03:05:00Z'::timestamptz, repeat('6', 64)),
+      ('63', NULL, '2026-09-03T02:00:00Z'::timestamptz, '2026-09-03T02:05:00Z'::timestamptz, repeat('7', 64)),
+      ('64', NULL, '2026-09-03T03:00:00Z'::timestamptz, '2026-09-03T01:05:00Z'::timestamptz, repeat('8', 64)),
+      ('65', 'cursor-synthetic-model', '2026-09-03T04:00:00Z'::timestamptz, '2026-09-03T04:05:00Z'::timestamptz, repeat('9', 64))
+    ) AS replay(suffix, model, at, received, hash);
+    INSERT INTO personal_hub.activity_requests
+      (id, account_id, binding_id, provider, adapter, channel, record_id, semantic_key, product, surface,
+       execution_host, session_hash, session_identity, model_actual, started_at, ended_at, observed_at,
+       input_fresh_tokens, input_cached_tokens, input_cache_write_tokens, output_tokens, reasoning_tokens,
+       basis, outcome, parser_version, received_at, content_hash)
+    SELECT ('00000000-0000-4000-8000-0000000003' || suffix)::uuid, 'migration-upgrade-legacy',
+      '00000000-0000-4000-8000-000000000303'::uuid, 'claude', 'claude_execution', 'local_file',
+      '00000000-0000-4000-8000-000000000366'::uuid, repeat('3', 64), 'claude_code', 'cli', 'local', repeat('4', 64),
+      'provider', 'synthetic-model', NULL, ended, '2026-09-03T01:02:00Z'::timestamptz, 1, 0, 0, 1, NULL, 'exact', 'completed',
+      '1.0.0', '2026-09-03T01:05:00Z'::timestamptz, hash
+    FROM (VALUES
+      ('67', '2026-09-03T01:00:00Z'::timestamptz, repeat('e', 64)),
+      ('68', '2026-09-03T02:00:00Z'::timestamptz, repeat('f', 64))
+    ) AS pair(suffix, ended, hash);
+  `);
+}
+
 async function onPath(file) {
   try { await run(process.platform === 'win32' ? 'where' : 'which', [file]); return true; } catch { return false; }
 }
@@ -187,12 +227,16 @@ try {
     if (migration === usageDetailMigration) await seedUsageDetailUpgradeFixture(db);
     if (migration === knowledgeSourceMigration) await seedKnowledgeSourceUpgradeFixture(db);
     if (migration === allowanceBasisMigration) await seedAllowanceBasisUpgradeFixture(db);
+    if (migration === requestLedgerMigration) await seedRequestLedgerReplayFixture(db);
     await db.file(join(root, 'supabase/migrations', migration));
   }
   await db.end({ timeout: 1 });
   console.log(`Applied ${migrations.length} migrations.`);
   const tests = (await readdir(join(root, 'tests'))).filter(file => file.endsWith('.integration.test.ts') || file.endsWith('-contract.test.ts')).sort().map(file => `tests/${file}`);
-  await command(process.execPath, ['--import', 'tsx', '--test', ...tests], { env: {
+  // One file at a time: the files share one database and its global settings version, so a
+  // browser-collector pause running beside the store test made the store's version and ETag
+  // assertions race.
+  await command(process.execPath, ['--import', 'tsx', '--test', '--test-concurrency=1', ...tests], { env: {
     ...process.env, ...env,
     ROUTING_TEST_DATABASE_URL: env.TEST_DATABASE_URL, ...(env.TEST_DATABASE_HOST ? { ROUTING_TEST_DATABASE_HOST: env.TEST_DATABASE_HOST, ROUTING_TEST_DATABASE_PORT: env.TEST_DATABASE_PORT } : {}),
   }, stdio: 'inherit' });

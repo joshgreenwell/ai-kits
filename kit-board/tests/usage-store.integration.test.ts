@@ -114,6 +114,14 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.deepEqual(r1.accepted, { buckets: 1, records: 2 }); assert.equal(r1.duplicates, 0); assert.deepEqual(r1.rejected, []);
     const r2 = await store.ingestUsage(current, one);
     assert.deepEqual(r2.accepted, { buckets: 0, records: 0 }); assert.equal(r2.duplicates, 3);
+    // For the Claude adapter a revision that moves only ended_at is information (first seen running, then seen
+    // finished): it is stored through the revision key, as before. Only the run-clock Cursor producer is different (below).
+    const firstRequest = one.records[0] as Extract<UsageEnvelope['records'][number], { record_type: 'activity.request' }>;
+    const finished = envelope({ records: [{ ...firstRequest, observed_at: '2026-09-02T04:20:00.000Z', ended_at: '2026-09-02T04:20:00.000Z' }] });
+    const r3 = await store.ingestUsage(current, finished);
+    assert.deepEqual([r3.accepted.records, r3.duplicates], [1, 0], 'a claude request replayed with only ended_at changed is a new revision');
+    assert.equal(Number((await sql`SELECT count(*) FROM personal_hub.activity_requests WHERE record_id = ${firstRequest.record_id}`)[0].count), 2);
+    assert.equal((await store.ingestUsage(current, finished)).duplicates, 1, 'and its exact replay is a duplicate through the revision key');
     const [runRow] = await sql`SELECT accepted_buckets, accepted_records, jsonb_array_length(coverage) AS entries FROM personal_hub.companion_runs WHERE run_id = ${one.run.run_id}`;
     assert.equal(Number(runRow.accepted_buckets), 1, 'envelopes of one run accumulate on run_id');
     assert.equal(Number(runRow.entries), 2);
@@ -202,6 +210,23 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.equal((await store.ingestUsage(secondInstall, secondEnvelope)).accepted.records, 4);
     assert.equal((await store.ingestUsage(secondInstall, secondEnvelope)).duplicates, 4, 'duplicate replay leaves identities idempotent');
 
+    // The run-clock Cursor producer (parser 2.0.0+cursor-local1, local_db) stamped observed_at and ended_at with the run
+    // clock, so its re-read of the same facts moves the content hash: that, and only that, counts as a duplicate sighting.
+    const cursorAccount = `cursor-${randomUUID().slice(0, 8)}`;
+    const cursorId = (await store.createBinding(secondInstall, { account_id: cursorAccount, provider: 'cursor', account_label: 'Cursor test', identity_hash: null })).binding.binding_id;
+    const bubble = { ...request(cursorId, 'cursor_execution', 'cursor-bubble', 'local_db'), parser_version: '2.0.0+cursor-local1', ended_at: '2026-09-02T03:20:00.000Z' };
+    assert.equal((await store.ingestUsage(secondInstall, envelope({ records: [bubble] }))).accepted.records, 1);
+    const bubbleAgain = envelope({ records: [{ ...bubble, observed_at: '2026-09-02T04:20:00.000Z', ended_at: '2026-09-02T04:20:00.000Z' }] });
+    const cursorReplay = await store.ingestUsage(secondInstall, bubbleAgain);
+    assert.deepEqual([cursorReplay.accepted.records, cursorReplay.duplicates], [0, 1], 'the run-clock replay of a Cursor bubble is a duplicate, not a revision');
+    assert.deepEqual((await sql`SELECT accepted_by_type FROM personal_hub.companion_runs WHERE run_id = ${bubbleAgain.run.run_id}`)[0].accepted_by_type,
+      { 'activity.request': { accepted: 0, duplicate: 1, rejected: 0 } });
+    assert.equal(Number((await sql`SELECT count(*) FROM personal_hub.activity_requests WHERE record_id = ${bubble.record_id}`)[0].count), 1, 'the earliest sighting stays');
+    assert.equal((await store.ingestUsage(secondInstall, envelope({ records: [{ ...bubble, ended_at: '2026-09-02T04:20:00.000Z', outcome: 'failed' }] }))).accepted.records, 1,
+      'changed facts from that producer are still a revision');
+    assert.equal((await store.ingestUsage(secondInstall, envelope({ records: [{ ...bubble, parser_version: '2.0.0+cursor-local2', ended_at: '2026-09-02T05:20:00.000Z' }] }))).accepted.records, 1,
+      'the fixed reader inserts through the revision key alone');
+
     const registryBefore = await store.listProjects();
     const identity = (key: string, installId: string | null, basis = 'working_directory') => registryBefore.identities.find(item =>
       item.evidence_key === key && item.install_id === installId && item.basis === basis)!;
@@ -269,8 +294,13 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     const registryAfter = await store.listProjects();
     assert.ok(registryAfter.coverage.evidence.with_identity >= 9);
     assert.ok(registryAfter.coverage.mapping.mapped >= 8);
-    assert.ok(registryAfter.coverage.evidence.request_observations > registryAfter.coverage.evidence.canonical_requests,
-      'raw observation coverage remains distinct from canonical request-state coverage');
+    // Raw observations are the evidence window's rows (every sighting, bounded like the dashboard ledgers), a
+    // different quantity from the canonical request states, which resolve one row per key.
+    const [recentRequests] = await sql`SELECT count(*)::int AS rows FROM personal_hub.activity_requests r
+      JOIN personal_hub.usage_accounts a ON a.id = r.account_id WHERE r.observed_at >= now() - interval '35 days'`;
+    assert.equal(registryAfter.coverage.evidence.request_observations, Number(recentRequests.rows));
+    assert.ok(registryAfter.coverage.evidence.canonical_requests >= 9, 'canonical request-state coverage counts one state per request key');
+    assert.equal(await store.listProjects(), registryAfter, 'the registry read is cached until a write or an upload invalidates it');
     assert.equal(registryAfter.identities.some(item => 'path' in item), false, 'the registry never returns local paths');
     const [eventCounts] = await sql`SELECT
         (SELECT count(*)::int FROM personal_hub.agent_events WHERE account_id = ${account}) AS agents,
@@ -357,7 +387,10 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.deepEqual([Number(ownAccesses[0].rows), Number(ownAccesses[0].invocations)], [3, 2], 'one invocation touching two sources is two rows and one call');
     assert.ok(knowledgeMapped.coverage.evidence.overlapping_invocations >= 1, 'overlap is disclosed as a count of calls with several rows');
     assert.ok(knowledgeMapped.coverage.evidence.earlier_configuration_accesses >= 1);
-    assert.ok(knowledgeMapped.coverage.evidence.access_rows >= knowledgeMapped.coverage.evidence.canonical_accesses);
+    const [recentAccesses] = await sql`SELECT count(*)::int AS rows FROM personal_hub.resource_accesses r
+      JOIN personal_hub.usage_accounts a ON a.id = r.account_id WHERE r.observed_at >= now() - interval '35 days'`;
+    assert.equal(knowledgeMapped.coverage.evidence.access_rows, Number(recentAccesses.rows), 'raw access rows are the evidence window, bounded like the dashboard ledgers');
+    assert.equal(await store.listKnowledgeSources(), knowledgeMapped, 'the registry read is cached until a write or an upload invalidates it');
     assert.equal(knowledgeMapped.coverage.evidence.canonical_accesses,
       knowledgeMapped.coverage.evidence.current_configuration_accesses + knowledgeMapped.coverage.evidence.earlier_configuration_accesses + knowledgeMapped.coverage.resolved.unknown,
       'canonical accesses split into current, earlier, and unknown without remainder');
@@ -457,7 +490,8 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
 
     // Each binding reports the newest evidence in its ledgers separately from collector contact.
     const claudeBinding = mine.bindings.find(b => b.id === bindingId)!, codexBinding = mine.bindings.find(b => b.id === codexId)!;
-    assert.deepEqual(claudeBinding.last_observation, { allowance: null, requests: '2026-09-02T03:20:00.000Z' });
+    // The newest request observation is the finished revision of the first request, ingested above.
+    assert.deepEqual(claudeBinding.last_observation, { allowance: null, requests: '2026-09-02T04:20:00.000Z' });
     assert.deepEqual(claudeBinding.last_received, { allowance: null });
     assert.deepEqual(codexBinding.last_observation, { allowance: { observed_at: '2026-09-02T03:20:00.000Z', resets_at: '2026-09-02T05:00:00.000Z', reader: 'embedded' }, requests: null });
     assert.ok(codexBinding.last_received.allowance, 'the newest receipt of a reading is reported beside its observation');

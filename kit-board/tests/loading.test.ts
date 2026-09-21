@@ -28,14 +28,25 @@ test('a lost driver promise is bounded, resets the connection, and does not repl
   assert.equal(await queue.run(async () => 'healthy'), 'healthy');
 });
 
-test('expired queued work never executes later and overload is bounded', async () => {
-  const queue = new DatabaseQueue(async () => { await delay(5); }, 15, 2);
+test('queued work keeps its whole budget once it starts; only an overlong wait or overload is refused', async () => {
+  // The budget is measured from the job's start: work that waited behind a stalled transaction still runs.
+  const queue = new DatabaseQueue(async () => { await delay(5); }, 15, 3, 1000);
   const stalled = queue.run(() => new Promise(() => {}));
+  const queued = queue.run(async () => { await delay(10); return 'ran after the stall'; });
+  await assert.rejects(stalled, { code: 'DB_TIMEOUT' });
+  assert.equal(await queued, 'ran after the stall');
+  // A separate, generous wait limit: work that waited longer never executes.
+  const strict = new DatabaseQueue(async () => {}, 50, 2, 5);
+  const slow = strict.run(() => delay(20));
   let ran = false;
-  const queued = queue.run(async () => { ran = true; });
-  await assert.rejects(queue.run(async () => {}), { code: 'DB_BUSY' });
-  const results = await Promise.allSettled([stalled, queued]);
-  assert.ok(results.every(r => r.status === 'rejected')); assert.equal(ran, false);
+  await assert.rejects(strict.run(async () => { ran = true; }), { code: 'DB_BUSY' });
+  await slow; assert.equal(ran, false);
+  // Overload is bounded by capacity before anything is queued.
+  const full = new DatabaseQueue(async () => {}, 15, 2);
+  const first = full.run(() => new Promise(() => {}));
+  const second = full.run(async () => 'second');
+  await assert.rejects(full.run(async () => {}), { code: 'DB_BUSY' });
+  await assert.rejects(first, { code: 'DB_TIMEOUT' }); assert.equal(await second, 'second');
 });
 
 test('private cache coalesces bursts, expires, and does not retain failures or invalidated loads', async () => {
@@ -53,11 +64,15 @@ test('private cache coalesces bursts, expires, and does not retain failures or i
   const fresh = changing.get(); await delay(0); release(2); assert.equal(await fresh, 2);
 });
 
-test('client retries a 503 once, bounds hanging reads, and respects navigation cancellation', async () => {
+test('client retries a 503 once, surfaces a 504 without retrying, bounds hanging reads, and respects navigation cancellation', async () => {
   const original = globalThis.fetch; let calls = 0;
   try {
     globalThis.fetch = async () => ++calls === 1 ? new Response('unavailable', { status: 503 }) : Response.json({ ok: true });
     assert.deepEqual(await fetchPrivateJson('/api/test', new AbortController().signal), { ok: true }); assert.equal(calls, 2);
+    calls = 0;
+    // A 504 is the server's read budget: a second attempt would only wait through it again.
+    globalThis.fetch = async () => { calls++; return Response.json({ error: 'slow' }, { status: 504 }); };
+    await assert.rejects(fetchPrivateJson('/api/test', new AbortController().signal), /\(504\)/); assert.equal(calls, 1);
     calls = 0;
     globalThis.fetch = async (_url, options) => { calls++; return new Promise((_resolve, reject) => {
       const signal = options!.signal!;

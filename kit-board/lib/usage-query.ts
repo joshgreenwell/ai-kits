@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type postgres from 'postgres';
 import { RequestError, stableJson } from './contracts';
+import { DATABASE_JOB_BUDGET_INTERVAL } from './database-budget';
 import {
   DISPLAY_TIMEZONE, HOUR, PRESETS, RESOLUTIONS, isSupportedTimeZone, localMonthKey, monthBounds, monthsWithin,
   periodsWithin, resolveRange, zonedInstant, type Preset, type Resolution, type ResolvedRange,
@@ -449,9 +450,13 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const needRequestGroups = wantRequests;
     const needRequestPricing = wantOverview && useRequests;
     const needAgentEvidence = wantRequests || (wantOverview && useRequests);
+    // One section is one transaction under one budget: the whole transaction on Postgres 17
+    // (`transaction_timeout`), each statement as the backstop, both the shared number the queue
+    // and the browser derive their deadlines from. Postgres cancels with SQLSTATE 57014, which the
+    // route reports as 504 with its message, before the queue would destroy the connection.
     const prepareRead = async (tx: { unsafe: Sql['unsafe'] }) => {
-      await tx.unsafe(`SET LOCAL statement_timeout = '20s'`);
-      await tx.unsafe(`SET LOCAL jit = off`);
+      await tx.unsafe(`SELECT set_config('statement_timeout', $1, true), set_config('jit', 'off', true),
+        CASE WHEN current_setting('server_version_num')::int >= 170000 THEN set_config('transaction_timeout', $1, true) END`, [DATABASE_JOB_BUDGET_INTERVAL]);
     };
 
     // 1. Canonical buckets by period and model. A bucket counts only when it lies wholly inside the range,
@@ -1089,15 +1094,30 @@ export function createUsageQuery(getDatabase?: () => Sql) {
 const defaultQuery = createUsageQuery();
 export const { listReportSubjects, updateReportSubject } = defaultQuery;
 
-/** Bounded per-scope cache: identical parameters within five minutes share one read. */
-const cache = new Map<string, { expires: number; value: Promise<UsageQueryResult> }>();
-export function usageQuery(params: UsageQuery) {
-  const key = stableJson(params);
-  const now = Date.now();
-  const hit = cache.get(key);
-  if (hit && hit.expires > now) return hit.value;
-  const value = defaultQuery.usageQuery(params, { now }).catch(error => { cache.delete(key); throw error; });
-  if (cache.size >= USAGE_QUERY_CACHE_MAX) cache.delete(cache.keys().next().value!);
-  cache.set(key, { expires: now + USAGE_QUERY_CACHE_TTL_MS, value });
-  return value;
+/**
+ * Bounded per-scope cache: identical parameters within the TTL share one read; a failed read is not
+ * kept. `clear` drops every scope, for a write that changes what a read resolves (a project or
+ * knowledge-source label or mapping), so the next read shows it instead of waiting out the TTL.
+ */
+export function createUsageQueryCache(load: (params: UsageQuery, options: { now: number }) => Promise<UsageQueryResult>,
+  { ttlMs = USAGE_QUERY_CACHE_TTL_MS, max = USAGE_QUERY_CACHE_MAX, clock = Date.now }: { ttlMs?: number; max?: number; clock?: () => number } = {}) {
+  const cache = new Map<string, { expires: number; value: Promise<UsageQueryResult> }>();
+  return {
+    get(params: UsageQuery) {
+      const key = stableJson(params);
+      const now = clock();
+      const hit = cache.get(key);
+      if (hit && hit.expires > now) return hit.value;
+      const value = load(params, { now }).catch(error => { if (cache.get(key)?.value === value) cache.delete(key); throw error; });
+      if (cache.size >= max) cache.delete(cache.keys().next().value!);
+      cache.set(key, { expires: now + ttlMs, value });
+      return value;
+    },
+    clear() { cache.clear(); },
+    get size() { return cache.size; },
+  };
 }
+const usageQueryCache = createUsageQueryCache((params, options) => defaultQuery.usageQuery(params, options));
+export const usageQuery = (params: UsageQuery) => usageQueryCache.get(params);
+/** Called by the usage store after a registry write; every process instance clears only its own memory. */
+export const clearUsageQueryCache = () => usageQueryCache.clear();

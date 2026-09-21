@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type postgres from 'postgres';
-import { createUsageQuery, parseUsageQuery, usageQuerySchema, USAGE_QUERY_CACHE_TTL_MS, USAGE_QUERY_SECTIONS } from '../lib/usage-query';
+import { createUsageQuery, createUsageQueryCache, parseUsageQuery, usageQuerySchema, USAGE_QUERY_CACHE_TTL_MS, USAGE_QUERY_SECTIONS, type UsageQueryResult } from '../lib/usage-query';
+import { DATABASE_JOB_BUDGET_INTERVAL } from '../lib/database-budget';
 
 test('the usage query accepts a section and rejects an unknown one', () => {
   assert.equal(parseUsageQuery(new URLSearchParams()).section, undefined);
@@ -91,4 +92,37 @@ test('agent lifecycle evidence follows the machine and agent filters and names t
   assert.doesNotMatch(plain.result.agents.coverage.note, /Spawn events/);
   const two = await run({ section: 'requests', models: 'm1', surfaces: 'cli' });
   assert.match(two.result.agents.coverage.note, /the models, surfaces filters do not apply to them/);
+});
+
+test('the per-scope read cache shares a read within the TTL, forgets failures, is bounded, and is cleared by a registry write', async () => {
+  let now = 1_000, loads = 0, fail = false;
+  const cache = createUsageQueryCache(async params => { loads++; if (fail) throw new Error('offline'); return { scope: { section: params.section, loads } } as unknown as UsageQueryResult; },
+    { ttlMs: 100, max: 2, clock: () => now });
+  const requests = parseUsageQuery(new URLSearchParams({ ...SEPTEMBER, section: 'requests' }));
+  const tools = parseUsageQuery(new URLSearchParams({ ...SEPTEMBER, section: 'tools' }));
+  const first = await cache.get(requests);
+  assert.equal(await cache.get(requests), first, 'identical parameters share one read'); assert.equal(loads, 1);
+  now += 101;
+  assert.notEqual(await cache.get(requests), first, 'the TTL expires a scope'); assert.equal(loads, 2);
+  cache.clear();
+  assert.equal(loads, 2); await cache.get(requests); assert.equal(loads, 3, 'a registry write clears every scope so the next read resolves the new label');
+  fail = true; await assert.rejects(cache.get(tools), /offline/); fail = false;
+  await cache.get(tools); assert.equal(loads, 5, 'a failed read is not kept');
+  await cache.get(parseUsageQuery(new URLSearchParams({ ...SEPTEMBER, section: 'knowledge' })));
+  assert.equal(cache.size, 2, 'the oldest scope leaves when the bound is reached');
+});
+
+test('every section transaction opens by setting the shared read budget on Postgres', async () => {
+  // The recording database answers the detail sections; the overview's straddle read needs a row and shares prepareRead anyway.
+  for (const section of ['requests', 'tools', 'knowledge']) {
+    const { statements } = await run({ section });
+    const budget = statements.filter(s => s.text.includes("set_config('statement_timeout'"));
+    assert.ok(budget.length >= 1, `${section} sets the budget`);
+    for (const statement of budget) {
+      assert.deepEqual(statement.values, [DATABASE_JOB_BUDGET_INTERVAL], 'one number, bound as a value, not inlined');
+      assert.match(statement.text, /set_config\('transaction_timeout', \$1, true\)/, 'the whole transaction is bounded on Postgres 17');
+      assert.match(statement.text, /server_version_num/, 'older servers get only the statement timeout');
+    }
+    assert.equal(statements[0], budget[0], `${section} sets the budget before any read`);
+  }
 });

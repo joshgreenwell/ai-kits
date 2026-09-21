@@ -242,7 +242,9 @@ function TokensOverviewLiveInner() {
     let inFlight = false;
     const filterError = (caught: unknown) => caught instanceof Error && /\(4\d\d\)/.test(caught.message)
       ? 'The selected filters were not accepted. Adjust the period or remove a filter.'
-      : 'Usage is temporarily unavailable. Retry, or wait for the next refresh.';
+      : caught instanceof Error && /\(504\)/.test(caught.message)
+        ? 'The usage read took too long. Try a shorter period or fewer filters.'
+        : 'Usage is temporarily unavailable. Retry, or wait for the next refresh.';
     const loadSection = async (section: UsageQuerySection) => {
       const cached = readClientCache(query, section);
       if (cached) return cached;
