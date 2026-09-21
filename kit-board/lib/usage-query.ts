@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type postgres from 'postgres';
 import { RequestError, stableJson } from './contracts';
+import { DATABASE_JOB_BUDGET_INTERVAL } from './database-budget';
 import {
   DISPLAY_TIMEZONE, HOUR, PRESETS, RESOLUTIONS, isSupportedTimeZone, localMonthKey, monthBounds, monthsWithin,
   periodsWithin, resolveRange, zonedInstant, type Preset, type Resolution, type ResolvedRange,
@@ -449,9 +450,13 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const needRequestGroups = wantRequests;
     const needRequestPricing = wantOverview && useRequests;
     const needAgentEvidence = wantRequests || (wantOverview && useRequests);
+    // One section is one transaction under one budget: the whole transaction on Postgres 17
+    // (`transaction_timeout`), each statement as the backstop, both the shared number the queue
+    // and the browser derive their deadlines from. Postgres cancels with SQLSTATE 57014, which the
+    // route reports as 504 with its message, before the queue would destroy the connection.
     const prepareRead = async (tx: { unsafe: Sql['unsafe'] }) => {
-      await tx.unsafe(`SET LOCAL statement_timeout = '20s'`);
-      await tx.unsafe(`SET LOCAL jit = off`);
+      await tx.unsafe(`SELECT set_config('statement_timeout', $1, true), set_config('jit', 'off', true),
+        CASE WHEN current_setting('server_version_num')::int >= 170000 THEN set_config('transaction_timeout', $1, true) END`, [DATABASE_JOB_BUDGET_INTERVAL]);
     };
 
     // 1. Canonical buckets by period and model. A bucket counts only when it lies wholly inside the range,

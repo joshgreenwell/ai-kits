@@ -86,7 +86,7 @@ The main tables are `report_revisions`, `report_assets`, `usage_accounts`, `tele
 
 Use the Supabase MCP/administrative path for DDL and write a corresponding migration. Validate privileges after DDL; the app role must not be allowed to change report history or an existing calibration coefficient. The Supabase project has no Data API requirement; keep its private schema unexposed.
 
-The postgres.js connection is deliberately serialized in `lib/db.ts` through `lib/database-queue.ts`; tagged templates, `begin`, and positional-parameter `unsafe` text all take that gate, and values stay bound. Supavisor transaction pooling plus postgres.js pipelined parameterless queries previously left promises pending and caused `/api/reports` 503s. Do not remove this queue, increase parallel DB execution, enable prepared statements, or change transaction callbacks to fire unawaited queries without a targeted reproduction and soak test. See the reliability section of `docs/architecture.md`.
+The postgres.js connection is deliberately serialized in `lib/db.ts` through `lib/database-queue.ts`; tagged templates, `begin`, and positional-parameter `unsafe` text all take that gate, and values stay bound. Supavisor transaction pooling plus postgres.js pipelined parameterless queries previously left promises pending and caused `/api/reports` 503s. Do not remove this queue, increase parallel DB execution, enable prepared statements, or change transaction callbacks to fire unawaited queries without a targeted reproduction and soak test. See the reliability section of `docs/architecture.md`. One number, `DATABASE_JOB_BUDGET_MS` in `lib/database-budget.ts` (30 s), bounds a usage read: a queued job gets that budget from the moment it starts (a wait longer than `DATABASE_QUEUE_WAIT_MS` is refused as busy instead), each Tokens section transaction sets `statement_timeout` and, on Postgres 17, `transaction_timeout` to it, the driver's deadline sits two seconds past it so Postgres cancels cleanly, and the browser waits 40 s so it never abandons a read the server will finish and cache. `lib/http.ts` answers an exhausted budget (`DatabaseUnavailable`, SQLSTATE 57014) with 504 and a message; 503 is only a database that is not configured or connected, and anything unknown is 500.
 
 ## Telemetry model
 
@@ -164,7 +164,7 @@ freshness, classification and verification boundaries (September 13, 2026).
 | --- | --- |
 | Private page/API fails | `lib/auth.ts`, `app/proxy.ts` if present, Vercel env names, safe runtime logs |
 | A report is missing or stale | `docs/schedules.md`, producer outbox/receipt under protected local config, `report_revisions`, producer scope |
-| Live usage is pending/503 | `lib/db.ts`, `lib/database-queue.ts`, `lib/read-cache.ts`, new-deployment logs, `/api/usage-live` Server-Timing |
+| Live usage is pending/503/504 | `lib/db.ts`, `lib/database-queue.ts`, `lib/read-cache.ts`, new-deployment logs, `/api/usage-live` Server-Timing |
 | Token totals disagree | `lib/usage-store.ts` canonical query, companion SQLite state, account/binding identity; never sum raw revisions |
 | Claude cloud estimate is absent | Pairing/statusline readings, source freshness/coverage, `lib/cloud-estimate.ts`, confirmed baselines |
 | Audit appears shallow or evidence links fail | `lib/report-selection.ts`, `lib/artifact.ts`, `lib/assets-store.ts`, audit coverage marker, protected artifact routes |

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type postgres from 'postgres';
 import { createUsageQuery, parseUsageQuery, usageQuerySchema, USAGE_QUERY_CACHE_TTL_MS, USAGE_QUERY_SECTIONS } from '../lib/usage-query';
+import { DATABASE_JOB_BUDGET_INTERVAL } from '../lib/database-budget';
 
 test('the usage query accepts a section and rejects an unknown one', () => {
   assert.equal(parseUsageQuery(new URLSearchParams()).section, undefined);
@@ -92,3 +93,17 @@ test('agent lifecycle evidence follows the machine and agent filters and names t
   const two = await run({ section: 'requests', models: 'm1', surfaces: 'cli' });
   assert.match(two.result.agents.coverage.note, /the models, surfaces filters do not apply to them/);
 });
+
+test('every section transaction opens by setting the shared read budget on Postgres', async () => {
+  // The recording database answers the detail sections; the overview's straddle read needs a row and shares prepareRead anyway.
+  for (const section of ['requests', 'tools', 'knowledge']) {
+    const { statements } = await run({ section });
+    const budget = statements.filter(s => s.text.includes("set_config('statement_timeout'"));
+    assert.ok(budget.length >= 1, `${section} sets the budget`);
+    for (const statement of budget) {
+      assert.deepEqual(statement.values, [DATABASE_JOB_BUDGET_INTERVAL], 'one number, bound as a value, not inlined');
+      assert.match(statement.text, /set_config\('transaction_timeout', \$1, true\)/, 'the whole transaction is bounded on Postgres 17');
+      assert.match(statement.text, /server_version_num/, 'older servers get only the statement timeout');
+    }
+    assert.equal(statements[0], budget[0], `${section} sets the budget before any read`);
+  }

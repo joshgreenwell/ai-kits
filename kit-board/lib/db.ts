@@ -3,6 +3,7 @@ import postgres from 'postgres';
 import { createHash, randomUUID } from 'node:crypto';
 import { RequestError, stableJson, type ReportInput, type ReportKind, type StoredReport } from './contracts';
 import { DatabaseQueue } from './database-queue';
+import { DATABASE_JOB_BUDGET_MS, DATABASE_JOB_GRACE_MS, DATABASE_QUEUE_WAIT_MS } from './database-budget';
 import { readCache } from './read-cache';
 
 function createDatabase() {
@@ -12,13 +13,15 @@ function createDatabase() {
     ssl: { rejectUnauthorized: true, ca: process.env.DATABASE_CA_CERT?.replace(/\\n/g, '\n') },
   });
   // Usage reads build each section's ledger once (canonical hourly buckets, in-range request keys,
-  // tool keys, knowledge accesses) as a temp table in one transaction per section.
+  // tool keys, knowledge accesses) as a temp table in one transaction per section. One job, a
+  // statement or a whole transaction, gets the shared budget from the moment it starts; the server's
+  // own timeouts (lib/usage-query.ts) fire just before this deadline so Postgres cancels cleanly.
   const queue = new DatabaseQueue(async () => {
     const failed = client; client = undefined;
     // Destroy the stalled connection before the next job. Do not retry writes:
     // a timed-out write may have committed and must use its idempotency receipt.
     if (failed) await failed.end({ timeout: 0 }).catch(() => {});
-  }, 45_000);
+  }, DATABASE_JOB_BUDGET_MS + DATABASE_JOB_GRACE_MS, 64, DATABASE_QUEUE_WAIT_MS);
   // Keep postgres's parameterization and JSON/INSERT helpers. Only execution is
   // gated; a whole transaction owns the gate, including COMMIT or ROLLBACK.
   const sql = ((first: unknown, ...values: unknown[]) => {
