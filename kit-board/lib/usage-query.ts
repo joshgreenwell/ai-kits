@@ -349,7 +349,17 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         END`;
 
   /** Canonical requests for a key set. Discover in-range keys when `keysCte` is omitted; tools pass the invocation callers. */
-  function requestCte(p: Params, q: UsageQuery, accounts: string[], range: ResolvedRange, keysCte?: string) {
+  /**
+   * Columns a caller lookup needs: what the tool and knowledge cards display about a calling request, plus
+   * every column a detail filter can test. Far narrower than the full ledger row, which matters because the
+   * ranking pass sorts these rows: the requests section's own pass carries 758-byte rows, and a caller
+   * lookup that only reports a model and an agent has no reason to drag the token columns through the sort.
+   */
+  const CALLER_COLUMNS = `r.account_id, r.semantic_key, r.activity_at, r.model_actual, r.agent_key, r.agent_class,
+        r.agent_name, r.agent_depth, r.parent_agent_key, r.reasoning_effort, r.surface`;
+
+  function requestCte(p: Params, q: UsageQuery, accounts: string[], range: ResolvedRange, keysCte?: string,
+    opts: { columns?: string; project?: boolean } = {}) {
     const detail: string[] = [];
     const modelFilter = (column: string) => {
       const named = q.models.filter(m => m !== UNKNOWN);
@@ -406,32 +416,36 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // touches the ledger heap once instead of twice. They stay separate columns: collapsing them would let a
     // sibling revision's project evidence decide the canonical row's project, which is the "unknown values
     // stay unknown" promise breaking in reverse.
-    const ledgerColumns = `r.id, r.account_id, r.provider, r.semantic_key, r.session_hash, r.model_actual, r.activity_at, r.observed_at, r.surface, r.reasoning_effort, r.service_tier, r.speed,
+    const ledgerColumns = opts.columns ?? `r.id, r.account_id, r.provider, r.semantic_key, r.session_hash, r.model_actual, r.activity_at, r.observed_at, r.surface, r.reasoning_effort, r.service_tier, r.speed,
         r.context_window_tokens, r.cache_write_ttl, r.token_state, r.outcome,
         r.input_fresh_tokens, r.input_cached_tokens, r.input_cache_write_tokens, r.output_tokens, r.reasoning_tokens, r.unclassified_tokens, r.observed_total_tokens,
         r.agent_key, r.agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.agent_identity_basis`;
+    // Project resolution is the identity joins and the second window ordering. A caller lookup only needs it
+    // when a project filter has to be evaluated through the calling request; otherwise it is pure waste, and
+    // dropping it also drops one of the two sorts the pass would otherwise perform.
+    const withProject = opts.project ?? true;
     const text = `${discover}scanned AS (
       SELECT ${ledgerColumns},
         b.source_id,
-        first_value(${projectBasis('r')}) OVER project_order AS effective_project_basis,
+        ${withProject ? `first_value(${projectBasis('r')}) OVER project_order AS effective_project_basis,
         first_value(${projectKey('r')}) OVER project_order AS effective_project_key,
         first_value(r.provider) OVER project_order AS project_provider,
-        first_value(b.install_id) OVER project_order AS project_install_id,
+        first_value(b.install_id) OVER project_order AS project_install_id,` : ''}
         row_number() OVER (PARTITION BY r.account_id, r.semantic_key ORDER BY ${rankBy('r')}) AS rank
       FROM personal_hub.activity_requests r
       JOIN ${keySource} k ON k.account_id = r.account_id AND k.semantic_key = r.semantic_key
       JOIN personal_hub.companion_bindings b ON b.id = r.binding_id
       WHERE r.activity_at >= ${p.add(new Date(range.start - widen).toISOString())}::timestamptz
         AND r.activity_at < ${p.add(new Date(range.end + widen).toISOString())}::timestamptz
-      WINDOW project_order AS (PARTITION BY r.account_id, r.semantic_key ORDER BY
+      ${withProject ? `WINDOW project_order AS (PARTITION BY r.account_id, r.semantic_key ORDER BY
         CASE (${projectBasis('r')}) WHEN 'native' THEN 0 WHEN 'working_directory' THEN 1 WHEN 'none' THEN 2 ELSE 3 END,
-        ${rankBy('r')})
+        ${rankBy('r')})` : ''}
     ), resolved AS (
       SELECT ${ledgerColumns}, r.source_id,
-        ${projectState} AS project_state,
-        m.project_id, proj.label AS project_label
+        ${withProject ? `${projectState} AS project_state, m.project_id, proj.label AS project_label`
+          : `NULL::text AS project_state, NULL::uuid AS project_id, NULL::text AS project_label`}
       FROM scanned r
-      ${projectJoins}
+      ${withProject ? projectJoins : ''}
       WHERE r.rank = 1 AND ${post.join(' AND ')}
     ), requests AS (
       SELECT r.*, ${detail.length ? `(${detail.join(' AND ')})` : 'true'} AS matches FROM resolved r
@@ -655,15 +669,20 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       };
     }) : emptyDetail;
 
+    // Tools materialize their invocation set and their caller requests before joining them, the way the
+    // knowledge card already does. As one chained statement the planner estimated the invocation CTE at a
+    // single row and joined it to the ranked request set as a nested loop with a join filter, which is
+    // ~50,000 x ~64,000 comparisons: measured over 127 s on production, past both the section budget and
+    // Supabase's own gateway. Materialising gives it real counts and an index on each join key instead.
     const toolRows = accounts.length && wantTools ? await db.begin(async tx => {
       await prepareRead(tx);
-      const tp = new Params();
-      const callers = requestCte(tp, q, accounts, range, 'caller_keys');
-      return tx.unsafe(`WITH in_range_invocations AS (
+      const ip = new Params();
+      await tx.unsafe(`CREATE TEMP TABLE _usage_invocations ON COMMIT DROP AS
+        WITH in_range_invocations AS (
           SELECT DISTINCT t.account_id, t.invocation_key
           FROM personal_hub.tool_events t
-          WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${tp.add(accounts)}::text[])
-            AND t.observed_at >= ${tp.add(rangeStartIso)}::timestamptz AND t.observed_at < ${tp.add(rangeEndIso)}::timestamptz
+          WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${ip.add(accounts)}::text[])
+            AND t.observed_at >= ${ip.add(rangeStartIso)}::timestamptz AND t.observed_at < ${ip.add(rangeEndIso)}::timestamptz
         ), canonical_invocations AS (
           SELECT DISTINCT ON (t.account_id, t.invocation_key)
             t.account_id, t.invocation_key, t.tool_name, t.tool_class, t.tool_namespace, t.caller_agent_key, t.caller_request_key, t.outcome, t.session_hash, t.observed_at, b.source_id
@@ -671,31 +690,46 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           JOIN in_range_invocations k ON k.account_id = t.account_id AND k.invocation_key = t.invocation_key
           JOIN personal_hub.companion_bindings b ON b.id = t.binding_id
           WHERE t.event_kind = 'invocation'
-            AND t.observed_at >= ${tp.add(widenStartIso)}::timestamptz AND t.observed_at < ${tp.add(widenEndIso)}::timestamptz
+            AND t.observed_at >= ${ip.add(widenStartIso)}::timestamptz AND t.observed_at < ${ip.add(widenEndIso)}::timestamptz
           ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
-        ), invocations AS (
-          SELECT * FROM canonical_invocations
-          WHERE observed_at >= ${tp.add(rangeStartIso)}::timestamptz AND observed_at < ${tp.add(rangeEndIso)}::timestamptz
-            ${q.machines.length ? `AND source_id = ANY(${tp.add(q.machines)}::uuid[])` : ''}
-            ${q.agents.length ? `AND caller_agent_key = ANY(${tp.add(q.agents)}::text[])` : ''}
-        ), results AS (
+        )
+        SELECT * FROM canonical_invocations
+        WHERE observed_at >= ${ip.add(rangeStartIso)}::timestamptz AND observed_at < ${ip.add(rangeEndIso)}::timestamptz
+          ${q.machines.length ? `AND source_id = ANY(${ip.add(q.machines)}::uuid[])` : ''}
+          ${q.agents.length ? `AND caller_agent_key = ANY(${ip.add(q.agents)}::text[])` : ''}`, ip.values);
+      await tx.unsafe(`CREATE INDEX _usage_invocations_key ON _usage_invocations (account_id, invocation_key)`);
+      await tx.unsafe(`CREATE INDEX _usage_invocations_caller ON _usage_invocations (account_id, caller_request_key)`);
+      await tx.unsafe(`ANALYZE _usage_invocations`);
+
+      // Callers are discovered the same way the requests section discovers its keys, by activity in range,
+      // not by reading the invocation table for caller keys. Both produce the same set, because a caller
+      // outside the range is filtered out either way, but the key set drawn from a temp table forces the
+      // ledger join into a merge over the whole index: measured 38-42 s against 11-30 s for the identical
+      // work driven by the in-range discovery, in the same throttle window.
+      const tp = new Params();
+      const callers = requestCte(tp, q, accounts, range, undefined, { columns: CALLER_COLUMNS, project: q.projects.length > 0 });
+      await tx.unsafe(`CREATE TEMP TABLE _usage_tool_callers ON COMMIT DROP AS
+        WITH ${callers.text}
+        SELECT account_id, semantic_key, model_actual, agent_name, agent_class, matches FROM requests`, tp.values);
+      await tx.unsafe(`CREATE INDEX _usage_tool_callers_key ON _usage_tool_callers (account_id, semantic_key)`);
+      await tx.unsafe(`ANALYZE _usage_tool_callers`);
+
+      const rp = new Params();
+      return tx.unsafe(`WITH results AS (
           SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.outcome
           FROM personal_hub.tool_events t
-          JOIN invocations i ON i.account_id = t.account_id AND i.invocation_key = t.invocation_key
+          JOIN _usage_invocations i ON i.account_id = t.account_id AND i.invocation_key = t.invocation_key
           WHERE t.event_kind = 'result'
-            AND t.observed_at >= ${tp.add(widenStartIso)}::timestamptz AND t.observed_at < ${tp.add(widenEndIso)}::timestamptz
+            AND t.observed_at >= ${rp.add(widenStartIso)}::timestamptz AND t.observed_at < ${rp.add(widenEndIso)}::timestamptz
           ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
-        ), caller_keys AS (
-          SELECT DISTINCT account_id, caller_request_key AS semantic_key
-          FROM invocations WHERE caller_request_key IS NOT NULL
-        ), ${callers.text},
-        joined AS (
+        ), joined AS (
           SELECT i.*, coalesce(res.outcome, i.outcome) AS final_outcome, r.model_actual AS caller_model, r.agent_name AS caller_name, r.agent_class AS caller_class, r.matches
-          FROM invocations i LEFT JOIN results res ON res.account_id = i.account_id AND res.invocation_key = i.invocation_key
-          LEFT JOIN requests r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key)
+          FROM _usage_invocations i
+          LEFT JOIN results res ON res.account_id = i.account_id AND res.invocation_key = i.invocation_key
+          LEFT JOIN _usage_tool_callers r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key)
         SELECT tool_name, tool_class, tool_namespace, caller_agent_key, caller_name, caller_class, caller_model, final_outcome AS outcome,
           (caller_request_key IS NOT NULL) AS has_caller_request, count(*)::int AS invocations
-        FROM joined ${useRequests ? 'WHERE matches' : ''} GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9`, tp.values);
+        FROM joined ${useRequests ? 'WHERE matches' : ''} GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9`, rp.values);
     }) : [];
 
     const knowledgeDetail = accounts.length && wantKnowledge ? await db.begin(async tx => {
@@ -740,7 +774,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       // request. The request join is built only when a detail filter needs it, over the callers of this
       // access set alone, so the knowledge card never ranks more requests than it reads.
       const ip = new Params();
-      const callers = useRequests ? requestCte(ip, q, accounts, range, 'caller_keys') : null;
+      const callers = useRequests ? requestCte(ip, q, accounts, range, 'caller_keys', { columns: CALLER_COLUMNS, project: q.projects.length > 0 }) : null;
       await tx.unsafe(`CREATE TEMP TABLE _usage_access_invocations ON COMMIT DROP AS
         WITH invocations AS (
           SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.session_hash, t.caller_agent_key, t.caller_request_key
