@@ -127,3 +127,34 @@ export const countdownLabel = (resetsAt: string, now: number) => {
 
 /** The reading's own unit stays: every window today is percent used, so the remaining figure is percentage points. */
 export const remainingLabel = (pace: Outlook | null) => (pace ? `${pace.remaining.toFixed(1)}% left` : 'no current reading');
+
+/*
+ * What the meters draw. A meter is a gauge of capacity, so it reads what is LEFT: a fresh window is a
+ * full bar and the fill retreats as the allowance is spent. The contract underneath never flips —
+ * `used_percent`, `projectedUsedPercent`, `pointsPerHour` and `usedPoints` stay in consumption space,
+ * because that is what the providers report and what the ledgers store. These three derivations are
+ * the only translation - the drawn level, the forecast end point, and one raw reading - shared by the
+ * summary bar, the detail stat, and the burn chart so the figure above a meter and the figure inside
+ * it can never disagree.
+ */
+
+/**
+ * The level the summary bar draws: remaining percentage points, clamped into the meter's own 0..100
+ * scale (a window with no current reading draws nothing, so 0 is only ever an exhausted allowance)
+ * and rounded once, so the CSS width and `aria-valuenow` carry the same figure without a float tail.
+ */
+export const meterRemaining = (pace: Outlook | null) => (pace ? Math.max(0, Math.min(100, Math.round(pace.remaining * 10) / 10)) : 0);
+
+/**
+ * What is left when the window resets, deliberately unclamped: below zero is demand beyond the
+ * allowance, and that real figure is what drives the warning colour, the "short by reset" wording,
+ * and the chart's floor. Only the drawn width is ever clamped.
+ */
+export const projectedRemaining = (pace: Outlook | null) => (pace && pace.projectedUsedPercent !== null ? 100 - pace.projectedUsedPercent : null);
+
+/**
+ * One raw reading's level. A provider reports percent used and the burn chart plots percent left, so
+ * every sample on every line - the active cycle, the faint completed ones, the tooltip and the
+ * mirror - passes through here rather than inverting by hand at each call site.
+ */
+export const sampleRemaining = (usedPercent: number) => 100 - usedPercent;

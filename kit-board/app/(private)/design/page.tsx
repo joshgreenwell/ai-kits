@@ -315,8 +315,8 @@ export default function DesignSystemPage() {
       <Section title="Kit components" description="Product-specific pieces composed from the primitives above.">
         <Card className="gap-0 py-0 overflow-hidden">
           <StatGroup className="border-border border-b">
-            <Stat label="Allowance" value="2.14M" caption="of 5.00M · resets in 3 days" />
-            <Stat label="Projected" value="3.16M" caption="1.84M under at current rate" tone="primary" />
+            <Stat label="Allowance left" value="2.86M" caption="of 5.00M · resets in 3 days" />
+            <Stat label="Projected left" value="1.84M" caption="lasts through this reset" tone="primary" />
             <Stat label="Burn, 24 h" value="14.2k" caption="1.45× the 28-day average" />
             <Stat label="Cost, March" value="$37.27" caption="console reads $36.69" />
             <Stat label="Difference" value="$0.58" caption="14 requests unsettled" tone="warning" />
@@ -325,6 +325,10 @@ export default function DesignSystemPage() {
             <div className="grid gap-2">
               <p className="text-sm font-semibold">Allowance</p>
               <Meter used={2.14} projected={3.16} limit={5} formatValue={(v) => `${v.toFixed(2)}M`} />
+              {/* The clamped path: the forecast spends more than is left, so the whole remaining fill is hatched
+                  and the hatch and the track turn destructive - the fill is smallest when the news is worst. */}
+              <p className="text-muted-foreground text-xs">Projected overrun</p>
+              <Meter used={4.2} projected={5.6} limit={5} formatValue={(v) => `${v.toFixed(2)}M`} />
             </div>
             <div className="grid gap-2">
               <p className="text-sm font-semibold">Burn rate, last 24 h</p>

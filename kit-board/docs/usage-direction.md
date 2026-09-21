@@ -223,7 +223,7 @@ The first content is a full-width accordion card for each account. The collapsed
 
 Use the provider's window names, scopes, durations, and units. Support account-wide short and weekly windows, model-specific windows, and separate pools such as Spark without assuming that every account has the same columns. Spark starts hidden, with an explicit reveal control. Allow cards to wrap on narrow screens.
 
-Expanding an account shows its burn charts for each window, side by side where practical. Preserve current useful cycle-history behavior within the expanded account. Each chart includes observed usage, a distinct forecast, the even-pace guide, reset markers, minimal axes, and interactive details.
+Expanding an account shows its burn charts for each window, side by side where practical. Preserve current useful cycle-history behavior within the expanded account. Each chart includes the observed remaining allowance, a distinct forecast, the even-pace guide, reset markers, minimal axes, and interactive details. A meter reads what is left: the summary bar and the chart both start a window full and descend toward its reset, and demand beyond the allowance falls below the zero floor.
 
 For percentage windows, burn means percentage points consumed over time. Forecast each account/window independently, using its own reset boundary and supported current or historical evidence. Show whether an outlook is based on current observations, historical cycles, or a blend. Preserve the existing protections for resets, gaps, decreases, and stale samples.
 
