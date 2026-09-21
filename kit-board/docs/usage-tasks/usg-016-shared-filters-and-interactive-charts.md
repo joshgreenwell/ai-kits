@@ -53,3 +53,18 @@ Criteria 1-4 are implemented:
 Criterion 5 was the September 16 correction. The controls had been built from Tailwind classes copied out of the vendored primitives, which does not reproduce the look: `app/theme.css` dresses shadcn primitives through unlayered `[data-slot="..."]` selectors, so a control is only styled when it carries the right slot. The filter triggers, the tooltip surface, the chart curves, and the model table were brought back onto the existing design system and the shadcn chart defaults; see the USG-018 execution record for the specific changes and the measured result.
 
 Remaining: this task's own verification pass — filter URL round trips, multi-selection, timezone boundaries, legend reset, graph/table consistency, touch and keyboard usage, long labels, and narrow screens with synthetic data. The implementation is in place; the evidence is not recorded.
+
+### 2026-09-21 · verification pass with synthetic data
+
+Run against a fresh local database (`kit_board_verify`, all migrations, two synthetic installs, two providers, four models, three projects, 855 hourly buckets, 15,509 records over 45 days) on the built app, driven from the browser:
+- URL round trips: `preset`, `timezone`, `resolution`, `agent_scope`, `models`, `machines`, `projects`, `efforts` load from a shared link; selecting an account writes `?accounts=…` and the headline narrows (18.5M to 9.5M); two accounts serialize as `accounts=a,b` with two chips; Clear all removes the list filters and keeps the period and zone; the Tokens and Allowances links carry the account selection between views.
+- Timezone boundaries: `Pacific/Auckland` shows "Sep 1 to Sep 21 (now)" with 21 daily intervals while `America/Chicago` shows 20; the last-observation time is rendered in the selected zone.
+- Legends: hiding a model removes its curve (28 to 27 paths), leaves the headline and the URL untouched, shows "Show all", and Show all restores it; legend rows are real buttons in the tab order.
+- Graph/table: the cost card's Table view lists model, calls, tokens, priced, estimate; the preference persists in `observatory.tokens.cost-view.v1` and survives a reload.
+- Long labels: an 80-character project label renders unclipped in the Projects table and in its chip; selecting the row filters the page through `?projects=<id>`.
+- Narrow screens: at 375 px the page never scrolls horizontally; wide tables scroll inside their own containers.
+- Found and fixed: the Agents table keyed rows by agent key alone, so an agent that used two models produced duplicate React keys (now keyed by agent, model, parent, and depth).
+- Not a defect: a hard load with `?accounts=` appeared to hang in this harness because the browser pane was hidden and React 19's streamed-boundary reveal waits for an animation frame, which never fires in a hidden tab. Server HTML and the client-side path were verified complete.
+
+Remaining: touch interaction on a real device (the keyboard path is verified; touch could not be exercised here). Everything else in this task's verification list is evidenced above.
+

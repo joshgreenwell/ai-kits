@@ -57,3 +57,6 @@ Started September 13, 2026. See the [sanitized recovery evidence](../usage-evide
 - Final validation passed: 72 web tests with three database-only skips, 15 publisher tests, four focused companion tests, companion formatting, typecheck, production build, `git diff --check`, and 230 documentation links. Both isolated restore verifiers passed again, and all 172 files in the finalized private manifest matched their recorded sizes and SHA-256 digests.
 
 Remaining: inspect the Mac and browser hosts, then reconcile the production-wide v1-only and disabled-source histories into the complete before/after matrix. The task remains In progress until those acceptance criteria are evidenced.
+
+2026-09-21: the two retired v1 Windows schedules (`Personal Observatory Usage 5b5c6656…` and `…8ae15756…`, still firing hourly and failing with result 1 since their sources were disabled on September 13) were exported to `~/.config/personal-hub/companion/backups/v1-schedules-2026-09-21/` and unregistered; the v1 runtime files under `Documents\PersonalObservatory` are untouched pending the retirement runbook. The Mac inventory and the production-wide before/after matrix remain open.
+
