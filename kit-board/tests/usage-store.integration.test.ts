@@ -280,8 +280,13 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     const registryAfter = await store.listProjects();
     assert.ok(registryAfter.coverage.evidence.with_identity >= 9);
     assert.ok(registryAfter.coverage.mapping.mapped >= 8);
-    assert.ok(registryAfter.coverage.evidence.request_observations > registryAfter.coverage.evidence.canonical_requests,
-      'raw observation coverage remains distinct from canonical request-state coverage');
+    // Raw observations are the evidence window's rows (every sighting, bounded like the dashboard ledgers), a
+    // different quantity from the canonical request states, which resolve one row per key.
+    const [recentRequests] = await sql`SELECT count(*)::int AS rows FROM personal_hub.activity_requests r
+      JOIN personal_hub.usage_accounts a ON a.id = r.account_id WHERE r.observed_at >= now() - interval '35 days'`;
+    assert.equal(registryAfter.coverage.evidence.request_observations, Number(recentRequests.rows));
+    assert.ok(registryAfter.coverage.evidence.canonical_requests >= 9, 'canonical request-state coverage counts one state per request key');
+    assert.equal(await store.listProjects(), registryAfter, 'the registry read is cached until a write or an upload invalidates it');
     assert.equal(registryAfter.identities.some(item => 'path' in item), false, 'the registry never returns local paths');
     const [eventCounts] = await sql`SELECT
         (SELECT count(*)::int FROM personal_hub.agent_events WHERE account_id = ${account}) AS agents,
@@ -368,7 +373,10 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.deepEqual([Number(ownAccesses[0].rows), Number(ownAccesses[0].invocations)], [3, 2], 'one invocation touching two sources is two rows and one call');
     assert.ok(knowledgeMapped.coverage.evidence.overlapping_invocations >= 1, 'overlap is disclosed as a count of calls with several rows');
     assert.ok(knowledgeMapped.coverage.evidence.earlier_configuration_accesses >= 1);
-    assert.ok(knowledgeMapped.coverage.evidence.access_rows >= knowledgeMapped.coverage.evidence.canonical_accesses);
+    const [recentAccesses] = await sql`SELECT count(*)::int AS rows FROM personal_hub.resource_accesses r
+      JOIN personal_hub.usage_accounts a ON a.id = r.account_id WHERE r.observed_at >= now() - interval '35 days'`;
+    assert.equal(knowledgeMapped.coverage.evidence.access_rows, Number(recentAccesses.rows), 'raw access rows are the evidence window, bounded like the dashboard ledgers');
+    assert.equal(await store.listKnowledgeSources(), knowledgeMapped, 'the registry read is cached until a write or an upload invalidates it');
     assert.equal(knowledgeMapped.coverage.evidence.canonical_accesses,
       knowledgeMapped.coverage.evidence.current_configuration_accesses + knowledgeMapped.coverage.evidence.earlier_configuration_accesses + knowledgeMapped.coverage.resolved.unknown,
       'canonical accesses split into current, earlier, and unknown without remainder');

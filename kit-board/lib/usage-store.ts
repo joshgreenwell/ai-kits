@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import type postgres from 'postgres';
 import { RequestError, stableJson } from './contracts';
 import { readCache } from './read-cache';
+import { clearUsageQueryCache } from './usage-query';
 import { collectionSettingsSchema, installOverrideSchema, mergeSettings, type CollectionSettings, type InstallOverride } from './companion-settings';
 import { companionCapabilitiesSchema, type CompanionCapabilities } from './companion-capabilities';
 import { readingFreshness } from './allowance-freshness';
@@ -86,6 +87,8 @@ const CHANNEL_RANK = "CASE channel WHEN 'provider_api' THEN 0 WHEN 'app_server' 
  * 20260921090000). The generated columns are listed because `to_jsonb` of a stored row carries them.
  */
 const REQUEST_SIGHTING_COLUMNS = ['id', 'observed_at', 'ended_at', 'activity_at', 'received_at', 'content_hash', 'total_tokens', 'observed_total_tokens'];
+/** Ledger evidence counts are bounded to this window (the dashboard's), so each count is an index range scan per account. */
+const LEDGER_EVIDENCE_WINDOW = '35 days';
 const IDENTITY_RANK = "CASE session_identity WHEN 'provider' THEN 0 WHEN 'derived' THEN 1 ELSE 2 END";
 // Closed resource.access enums, so every tally states its full denominator even at zero.
 const ACCESS_KINDS = ['read', 'search', 'write', 'unknown'] as const;
@@ -337,7 +340,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
   /** One transaction: buckets into v1, records into the seven v2 ledgers, coverage into the run record. */
   async function ingestUsage(install: CompanionInstallRow, envelope: UsageEnvelope, invalid: InvalidUsageRecord[] = []) {
     const db = await sql();
-    return db.begin(async transaction => {
+    const receipt = await db.begin(async transaction => {
       const tx = transaction as unknown as Sql;
       const bindingRows = await tx`SELECT id, account_id, provider, source_id, enabled, identity_hash, identity_reset_at
         FROM personal_hub.companion_bindings WHERE install_id = ${install.id}`;
@@ -587,6 +590,9 @@ export function createUsageStore(getDatabase?: () => Sql) {
       }
       return { ok: true, schema_version: 2, run_id: envelope.run.run_id, accepted: { buckets: acceptedBuckets, records: acceptedRecords }, duplicates, rejected };
     });
+    // New rows change every registry's evidence and the ledger counts, whether or not a record was accepted.
+    projectsCache.invalidate(); knowledgeSourcesCache.invalidate(); ledgerCountsCache.invalidate(); dashboardCache.invalidate();
+    return receipt;
   }
 
   /** Stores what a companion build can do; a changed digest keeps the previous one and when it flipped. */
@@ -611,8 +617,21 @@ export function createUsageStore(getDatabase?: () => Sql) {
       latest_companion_version: global.latest_companion_version, updated_at: global.updated_at };
   }
 
-  /** Privacy-safe project registry plus distinct collection and mapping coverage. */
-  async function listProjects() {
+  /**
+   * Per-account observation counts within the evidence window. The bound is what lets each count be
+   * a range scan of the ledger's (account_id, observed_at) index; the unbounded `count(*)` over
+   * activity_requests reached 10 s in production. An estimate from pg_class.reltuples was the other
+   * option; it is meaningless on a fresh or unanalyzed database, so the bounded exact count won.
+   */
+  const recentRows = (db: Sql, table: string) => db`SELECT coalesce(sum(recent.rows), 0)::int AS rows
+    FROM personal_hub.usage_accounts a
+    CROSS JOIN LATERAL (SELECT count(*) AS rows FROM personal_hub.${db(table)} l
+      WHERE l.account_id = a.id AND l.observed_at >= now() - ${LEDGER_EVIDENCE_WINDOW}::interval) recent`;
+
+  /** Privacy-safe project registry plus distinct collection and mapping coverage. Cached a minute; every write invalidates. */
+  const projectsCache = readCache(60_000, loadProjects);
+  const listProjects = () => projectsCache.get();
+  async function loadProjects() {
     const db = await sql();
     const projects = await db`SELECT id, label, created_at, updated_at
       FROM personal_hub.usage_projects ORDER BY lower(label), created_at, id`;
@@ -629,8 +648,8 @@ export function createUsageStore(getDatabase?: () => Sql) {
       ) current_mapping ON true
       LEFT JOIN personal_hub.usage_projects project ON project.id = current_mapping.project_id
       ORDER BY i.last_seen DESC, i.id`;
-    const [observations = {}] = await db`SELECT count(*)::int AS request_observations
-      FROM personal_hub.activity_requests`;
+    // Raw observations of the evidence window, bounded like the dashboard ledgers (see recentRows).
+    const [observations = {}] = await recentRows(db, 'activity_requests');
     const [evidence = {}] = await db`SELECT
         count(*)::int AS canonical_requests,
         count(*) FILTER (WHERE project_basis IN ('native','working_directory') AND project_key IS NOT NULL)::int AS with_identity,
@@ -645,7 +664,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
     const mapped = identities.filter(identity => identity.project_id !== null).length;
     return clone({ projects, identities, coverage: {
       evidence: {
-        request_observations: Number(observations.request_observations ?? 0),
+        request_observations: Number(observations.rows ?? 0),
         canonical_requests: Number(evidence.canonical_requests ?? 0),
         with_identity: Number(evidence.with_identity ?? 0),
         no_project: Number(evidence.no_project ?? 0),
@@ -689,12 +708,15 @@ export function createUsageStore(getDatabase?: () => Sql) {
       return { ok: true, action: data.action, identities: data.identity_ids.length,
         project_id: data.action === 'map' ? data.project_id : null };
     });
-    dashboardCache.invalidate();
+    // A label or mapping changes what every cached Tokens read resolves, in this process, at once.
+    projectsCache.invalidate(); dashboardCache.invalidate(); clearUsageQueryCache();
     return result;
   }
 
-  /** Privacy-safe knowledge-source registry: install-scoped resource keys, labels, and counts that disclose overlap. */
-  async function listKnowledgeSources() {
+  /** Privacy-safe knowledge-source registry: install-scoped resource keys, labels, and counts that disclose overlap. Cached a minute; every write invalidates. */
+  const knowledgeSourcesCache = readCache(60_000, loadKnowledgeSources);
+  const listKnowledgeSources = () => knowledgeSourcesCache.get();
+  async function loadKnowledgeSources() {
     const db = await sql();
     const sources = await db`SELECT id, label, created_at, updated_at
       FROM personal_hub.usage_knowledge_sources ORDER BY lower(label), created_at, id`;
@@ -763,7 +785,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
         (SELECT coalesce(jsonb_agg(jsonb_build_object('tool_name', t.tool_name, 'tool_class', t.tool_class, 'invocations', t.invocations) ORDER BY t.rank), '[]'::jsonb)
           FROM tools t WHERE t.source_id IS NOT DISTINCT FROM j.source_id AND t.identity_id IS NOT DISTINCT FROM j.identity_id AND t.rank <= 5) AS top_tools
       FROM joined j GROUP BY j.source_id, j.identity_id`;
-    const [observations = {}] = await db`SELECT count(*)::int AS access_rows FROM personal_hub.resource_accesses`;
+    const [observations = {}] = await recentRows(db, 'resource_accesses');
     const [evidence = {}] = await db`SELECT
         count(*)::int AS canonical_accesses,
         count(*) FILTER (WHERE identity_id IS NOT NULL AND current_configuration)::int AS current_configuration_accesses,
@@ -829,7 +851,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
     const mapped = identities.filter(identity => identity.source_id !== null).length;
     return clone({ sources, identities, per_source: perSource, coverage: {
       evidence: {
-        access_rows: Number(observations.access_rows ?? 0),
+        access_rows: Number(observations.rows ?? 0),
         canonical_accesses: Number(evidence.canonical_accesses ?? 0),
         current_configuration_accesses: Number(evidence.current_configuration_accesses ?? 0),
         earlier_configuration_accesses: Number(evidence.earlier_configuration_accesses ?? 0),
@@ -881,7 +903,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
       return { ok: true, action: data.action, identities: data.identity_ids.length,
         source_id: data.action === 'map' ? data.source_id : null };
     });
-    dashboardCache.invalidate();
+    knowledgeSourcesCache.invalidate(); dashboardCache.invalidate(); clearUsageQueryCache();
     return result;
   }
 
@@ -1002,6 +1024,16 @@ export function createUsageStore(getDatabase?: () => Sql) {
     return { ok: true };
   }
 
+  // Recent rows per ledger, each count a range scan of that ledger's (account_id, observed_at) index
+  // through the account list (the earlier whole-table subqueries scanned 470k request rows, up to
+  // 10 s). One minute of reuse; ingestion invalidates.
+  const LEDGERS = ['activity_requests', 'account_usage_buckets', 'allowance_readings', 'money_entries', 'agent_events', 'tool_events', 'resource_accesses'] as const;
+  const ledgerCountsCache = readCache(60_000, async () => {
+    const db = await sql();
+    const counts = await Promise.all(LEDGERS.map(table => recentRows(db, table)));
+    return Object.fromEntries(LEDGERS.map((table, i) => [table, Number(counts[i][0]?.rows ?? 0)])) as Record<typeof LEDGERS[number], number>;
+  });
+
   /**
    * The v2-only read model behind /api/usage-v2 (the live page's cards read the compatibility view,
    * which unions the v1 browser samples). The current reading per (account, meter) is the newest
@@ -1015,14 +1047,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
     const now = Date.now();
     const [installs, ledgers, current] = await Promise.all([
       listInstalls(),
-      db`SELECT
-        (SELECT count(*)::int FROM personal_hub.activity_requests WHERE observed_at >= now() - interval '35 days') AS activity_requests,
-        (SELECT count(*)::int FROM personal_hub.account_usage_buckets WHERE observed_at >= now() - interval '35 days') AS account_usage_buckets,
-        (SELECT count(*)::int FROM personal_hub.allowance_readings WHERE observed_at >= now() - interval '35 days') AS allowance_readings,
-        (SELECT count(*)::int FROM personal_hub.money_entries WHERE observed_at >= now() - interval '35 days') AS money_entries,
-        (SELECT count(*)::int FROM personal_hub.agent_events WHERE observed_at >= now() - interval '35 days') AS agent_events,
-        (SELECT count(*)::int FROM personal_hub.tool_events WHERE observed_at >= now() - interval '35 days') AS tool_events,
-        (SELECT count(*)::int FROM personal_hub.resource_accesses WHERE observed_at >= now() - interval '35 days') AS resource_accesses`,
+      ledgerCountsCache.get(),
       db`WITH ranked AS (
         SELECT r.account_id, r.meter_key, r.label, r.kind, r.value, r.unit, r.capacity, r.window_minutes, r.window_started_at, r.resets_at,
           r.raw_window_id, r.reader, r.basis, r.observed_at, r.binding_id, i.settings AS install_settings,
@@ -1053,7 +1078,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
       const freshness = readingFreshness({ observedAt: instant(row.observed_at)!, resetsAt: instant(row.resets_at), now, cadenceMinutes: cadence });
       return { ...row, cadence_minutes: cadence, stale: freshness.stale, stale_reason: freshness.reason, age_minutes: Math.round(freshness.ageMinutes) };
     });
-    return clone({ ...installs, ledgers: ledgers[0], allowance, as_of: new Date(now).toISOString() });
+    return clone({ ...installs, ledgers, allowance, as_of: new Date(now).toISOString() });
   }
   const dashboardCache = readCache(30_000, loadDashboard);
   const usageDashboard = () => dashboardCache.get();
