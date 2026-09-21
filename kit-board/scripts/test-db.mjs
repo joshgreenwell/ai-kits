@@ -10,12 +10,6 @@
 // the archived filename each one belongs before, so they seed nothing against the baseline and
 // still work if that sequence is ever applied through this runner; the two tests that read
 // them skip themselves when they are absent.
-//
-// One row is not an upgrade fixture and is seeded either way: the synthetic companion install.
-// It was buried in the usage-detail fixture, but tests/usage-store.integration.test.ts needs it
-// as the `install_id` its grant test points the two identity tables at, and that test asserts a
-// property of the schema, not of an upgrade. Leaving it inside the fixture made the baseline run
-// fail on a foreign key. See seedSharedInstall.
 import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,25 +29,10 @@ const upgradeFixtures = new Map([
   ['20260921090000_request_ledger_revision_uniqueness.sql', seedRequestLedgerReplayFixture],
 ]);
 
-// The shared synthetic install. Every upgrade fixture hangs off it and so does the grant test in
-// tests/usage-store.integration.test.ts, which runs against whatever supabase/migrations/ built.
-// Seeded before the first upgrade fixture when the archived sequence is replayed, and after the
-// migrations otherwise; idempotent so both paths can call it.
-async function seedSharedInstall(db) {
-  await db.unsafe(`
-    INSERT INTO personal_hub.companion_installs
-      (id, machine_label, kind, platform, arch, key_hash)
-      VALUES ('00000000-0000-4000-8000-000000000302', 'Synthetic upgrade fixture',
-        'companion', 'linux', 'amd64', repeat('2', 64))
-      ON CONFLICT (id) DO NOTHING;
-  `);
-}
-
 async function seedUsageDetailUpgradeFixture(db) {
   // Synthetic row accepted by the original bucket schema. Its reasoning count is
   // intentionally above output so the next migration must preserve it without
-  // weakening enforcement for subsequent writes. The install these rows hang off is
-  // seeded separately by seedSharedInstall.
+  // weakening enforcement for subsequent writes.
   await db.unsafe(`
     INSERT INTO personal_hub.usage_accounts (id, provider, label)
       VALUES ('migration-upgrade-legacy', 'claude', 'Migration upgrade legacy fixture');
@@ -61,6 +40,10 @@ async function seedUsageDetailUpgradeFixture(db) {
       (id, account_id, machine_label, mode, key_hash)
       VALUES ('00000000-0000-4000-8000-000000000301', 'migration-upgrade-legacy',
         'Synthetic upgrade fixture', 'companion', repeat('1', 64));
+    INSERT INTO personal_hub.companion_installs
+      (id, machine_label, kind, platform, arch, key_hash)
+      VALUES ('00000000-0000-4000-8000-000000000302', 'Synthetic upgrade fixture',
+        'companion', 'linux', 'amd64', repeat('2', 64));
     INSERT INTO personal_hub.companion_bindings
       (id, install_id, account_id, source_id, provider, identity_hash)
       VALUES ('00000000-0000-4000-8000-000000000303',
@@ -255,10 +238,9 @@ try {
   let seeded = 0;
   for (const migration of migrations) {
     const fixture = upgradeFixtures.get(migration);
-    if (fixture) { await seedSharedInstall(db); await fixture(db); seeded++; }
+    if (fixture) { await fixture(db); seeded++; }
     await db.file(join(root, 'supabase/migrations', migration));
   }
-  await seedSharedInstall(db);
   await db.end({ timeout: 1 });
   console.log(`Applied ${migrations.length} migration${migrations.length === 1 ? '' : 's'}`
     + `, ${seeded} upgrade fixture${seeded === 1 ? '' : 's'} seeded.`);
