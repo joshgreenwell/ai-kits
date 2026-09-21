@@ -784,3 +784,32 @@ maybe('no two indexes on one personal_hub table share an identical definition', 
     assert.equal(rows.some(row => row.indexname === 'agent_events_canonical'), true);
   } finally { await sql.end({ timeout: 1 }); }
 });
+
+maybe('revision times stay well inside the window the detail reads rank over', async () => {
+  const { REVISION_WINDOW_MS } = await import('../lib/usage-query');
+  const sql = postgres(url!, options);
+  try {
+    // Detail reads rank a key's revisions over a window widened by REVISION_WINDOW_MS on each side of the
+    // selected range and only then apply the range filter. That is safe while every revision of one key sits
+    // inside that window: `activity_at` is GENERATED from coalesce(ended_at, started_at, observed_at), so a
+    // reader that emits a request once while it is running and again once it has finished moves it, and two
+    // revisions far enough apart would fall on opposite sides of the window and disagree about which
+    // revisions exist. Production carries zero spread across all 93,771 keys; these fixtures deliberately
+    // model the running-then-finished case and their widest spread is three hours. Both are far inside a day.
+    // A reader that ever exceeds it trips here rather than silently changing which revision reads call
+    // canonical.
+    const requests = await sql`SELECT account_id, semantic_key, count(*) AS revisions,
+        extract(epoch FROM max(activity_at) - min(activity_at)) * 1000 AS span_ms
+      FROM personal_hub.activity_requests GROUP BY 1, 2`;
+    const invocations = await sql`SELECT account_id, invocation_key AS semantic_key, count(*) AS revisions,
+        extract(epoch FROM max(observed_at) - min(observed_at)) * 1000 AS span_ms
+      FROM personal_hub.tool_events WHERE event_kind = 'invocation' GROUP BY 1, 2`;
+    for (const [ledger, rows] of [['activity_requests', requests], ['tool_events', invocations]] as const) {
+      assert.ok(rows.length > 0, `${ledger} is seeded`);
+      const widest = rows.reduce((worst, row) => (Number(row.span_ms) > Number(worst.span_ms) ? row : worst), rows[0]);
+      assert.ok(Number(widest.span_ms) < REVISION_WINDOW_MS,
+        `${ledger} key ${widest.semantic_key} spreads ${Number(widest.span_ms) / 3600000}h over ${widest.revisions} revisions, `
+        + `at or beyond the ${REVISION_WINDOW_MS / 3600000}h ranking window: widen REVISION_WINDOW_MS in lib/usage-query.ts to cover it`);
+    }
+  } finally { await sql.end({ timeout: 1 }); }
+});

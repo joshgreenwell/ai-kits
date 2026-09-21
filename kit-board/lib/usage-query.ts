@@ -51,6 +51,16 @@ const CHANNEL_RANK = "CASE r.channel WHEN 'provider_api' THEN 0 WHEN 'app_server
 const IDENTITY_RANK = "CASE r.session_identity WHEN 'provider' THEN 0 WHEN 'derived' THEN 1 ELSE 2 END";
 const UNKNOWN = 'unknown';
 
+/**
+ * How far on each side of a selected range a detail read ranks a key's revisions before applying the range
+ * filter, so the canonical revision is chosen from all of them rather than from the slice that happens to
+ * fall inside. `activity_at` is GENERATED from coalesce(ended_at, started_at, observed_at), so a reader that
+ * emits a request once while it runs and again once it finishes moves it; this has to stay comfortably wider
+ * than any such spread. Production carries zero spread across all 93,771 keys and the fixtures' widest is
+ * three hours (both measured 2026-09-21); `usage-store.integration.test.ts` asserts the margin holds.
+ */
+export const REVISION_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export const PROVIDERS = ['codex', 'claude', 'cursor', 'anthropic_api', 'openai_api'] as const;
 export const SURFACES = ['cli', 'ide', 'desktop', 'sdk', 'ci', 'cloud', UNKNOWN] as const;
 export const PROJECT_STATES = ['no_project', UNKNOWN, 'unassigned'] as const;
@@ -285,63 +295,58 @@ export function createUsageQuery(getDatabase?: () => Sql) {
   const rankBy = (alias: string) =>
     `${CHANNEL_RANK.replaceAll(/\br\./g, `${alias}.`)}, ${IDENTITY_RANK.replaceAll(/\br\./g, `${alias}.`)}, ${alias}.observed_at DESC, ${alias}.received_at DESC, ${alias}.id DESC`;
 
-  /** Project identity for a discovered key set, matching `activity_request_project_resolution` without ranking the whole ledger. */
-  function projectResolvedCte(keysCte: string): string {
-    return `project_candidates AS (
-      SELECT r.account_id, r.semantic_key, r.binding_id, r.provider, r.channel, r.session_identity,
-        r.observed_at, r.received_at, r.id,
-        CASE
-          WHEN r.project_basis IN ('native','working_directory') AND r.project_key IS NOT NULL THEN r.project_basis
-          WHEN r.project_basis = 'none' THEN 'none'
-          WHEN r.project_basis IS NULL AND r.project_key IS NULL AND r.project_hash IS NOT NULL THEN 'working_directory'
+  // The effective project basis and key of one request row. Single valued, so the two identity bases below
+  // are mutually exclusive and the table's CHECK constraint already guarantees a row can satisfy only one.
+  const projectBasis = (a: string) => `CASE
+          WHEN ${a}.project_basis IN ('native','working_directory') AND ${a}.project_key IS NOT NULL THEN ${a}.project_basis
+          WHEN ${a}.project_basis = 'none' THEN 'none'
+          WHEN ${a}.project_basis IS NULL AND ${a}.project_key IS NULL AND ${a}.project_hash IS NOT NULL THEN 'working_directory'
           ELSE 'unknown'
-        END AS effective_project_basis,
-        CASE
-          WHEN r.project_basis IN ('native','working_directory') AND r.project_key IS NOT NULL THEN r.project_key
-          WHEN r.project_basis IS NULL AND r.project_key IS NULL AND r.project_hash IS NOT NULL THEN r.project_hash
+        END`;
+  const projectKey = (a: string) => `CASE
+          WHEN ${a}.project_basis IN ('native','working_directory') AND ${a}.project_key IS NOT NULL THEN ${a}.project_key
+          WHEN ${a}.project_basis IS NULL AND ${a}.project_key IS NULL AND ${a}.project_hash IS NOT NULL THEN ${a}.project_hash
           ELSE NULL
-        END AS effective_project_key
-      FROM personal_hub.activity_requests r
-      JOIN ${keysCte} k ON k.account_id = r.account_id AND k.semantic_key = r.semantic_key
-    ), project_ranked AS (
-      SELECT c.*, b.install_id,
-        row_number() OVER (
-          PARTITION BY c.account_id, c.semantic_key
-          ORDER BY
-            CASE c.effective_project_basis WHEN 'native' THEN 0 WHEN 'working_directory' THEN 1 WHEN 'none' THEN 2 ELSE 3 END,
-            ${rankBy('c')}
-        ) AS prank
-      FROM project_candidates c
-      JOIN personal_hub.companion_bindings b ON b.id = c.binding_id
-    ), project_resolved AS (
-      SELECT p.account_id, p.semantic_key,
-        CASE
-          WHEN p.effective_project_basis = 'none' THEN 'no_project'
-          WHEN p.effective_project_basis = 'unknown' THEN 'unknown'
-          WHEN i.id IS NULL THEN 'unknown'
-          WHEN m.project_id IS NULL THEN 'unassigned'
-          ELSE 'project'
-        END AS project_state,
-        m.project_id,
-        proj.label AS project_label
-      FROM project_ranked p
-      LEFT JOIN personal_hub.usage_project_identities i ON
-        (p.effective_project_basis = 'working_directory' AND i.basis = 'working_directory'
-          AND i.install_id = p.install_id AND i.evidence_key = p.effective_project_key)
-        OR
-        (p.effective_project_basis = 'native' AND i.basis = 'native'
-          AND i.account_id = p.account_id AND i.provider = p.provider AND i.evidence_key = p.effective_project_key)
+        END`;
+
+  /**
+   * Project identity for the canonical row of each key, resolved inside the single ranking pass.
+   *
+   * The project-preferred revision of a key can differ from its canonical revision, because project basis
+   * outranks channel here. Rather than rank the key set a second time, the pass carries the preferred
+   * revision's evidence onto every row of the key with `first_value` over a second window ordering, and the
+   * canonical row then reads it directly. One window ordering more is far cheaper than one ledger pass more,
+   * and it keeps the pass referenced exactly once so Postgres inlines it instead of materialising a wide
+   * intermediate to temp files.
+   *
+   * The identity lookup is two basis-specific joins rather than one OR'd join. An OR across two different
+   * column sets is not an index condition, so the planner could only evaluate it as a join filter over the
+   * whole identity table for every ranked key; split, each branch seeks its own partial unique index
+   * (`usage_project_identity_working_directory`, `usage_project_identity_native`) whose predicate it matches
+   * exactly, and the table's CHECK constraint already guarantees a row can satisfy only one of them. The
+   * mapping lateral is guarded on a resolved identity so it never loops for a key whose evidence is unknown.
+   */
+  const projectJoins = `LEFT JOIN personal_hub.usage_project_identities wd
+        ON r.effective_project_basis = 'working_directory' AND wd.basis = 'working_directory'
+        AND wd.install_id = r.project_install_id AND wd.evidence_key = r.effective_project_key
+      LEFT JOIN personal_hub.usage_project_identities nat
+        ON r.effective_project_basis = 'native' AND nat.basis = 'native'
+        AND nat.account_id = r.account_id AND nat.provider = r.project_provider AND nat.evidence_key = r.effective_project_key
       LEFT JOIN LATERAL (
         SELECT revision.project_id
         FROM personal_hub.usage_project_mapping_revisions revision
-        WHERE revision.identity_id = i.id
+        WHERE revision.identity_id = coalesce(wd.id, nat.id)
         ORDER BY revision.revision_order DESC
         LIMIT 1
-      ) m ON true
-      LEFT JOIN personal_hub.usage_projects proj ON proj.id = m.project_id
-      WHERE p.prank = 1
-    )`;
-  }
+      ) m ON coalesce(wd.id, nat.id) IS NOT NULL
+      LEFT JOIN personal_hub.usage_projects proj ON proj.id = m.project_id`;
+  const projectState = `CASE
+          WHEN r.effective_project_basis = 'none' THEN 'no_project'
+          WHEN r.effective_project_basis = 'unknown' THEN 'unknown'
+          WHEN coalesce(wd.id, nat.id) IS NULL THEN 'unknown'
+          WHEN m.project_id IS NULL THEN 'unassigned'
+          ELSE 'project'
+        END`;
 
   /** Canonical requests for a key set. Discover in-range keys when `keysCte` is omitted; tools pass the invocation callers. */
   function requestCte(p: Params, q: UsageQuery, accounts: string[], range: ResolvedRange, keysCte?: string) {
@@ -370,13 +375,18 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       const ids = q.projects.filter(v => !(PROJECT_STATES as readonly string[]).includes(v));
       const states = q.projects.filter(v => (PROJECT_STATES as readonly string[]).includes(v));
       const parts: string[] = [];
-      if (ids.length) parts.push(`pr.project_id = ANY(${p.add(ids)}::uuid[])`);
-      if (states.length) parts.push(`pr.project_state = ANY(${p.add(states)}::text[])`);
+      if (ids.length) parts.push(`r.project_id = ANY(${p.add(ids)}::uuid[])`);
+      if (states.length) parts.push(`r.project_state = ANY(${p.add(states)}::text[])`);
       detail.push(`(${parts.join(' OR ')})`);
     }
-    // Revisions of one logical request are ranked over a window widened by a week on each side, so the
-    // canonical row is chosen among all its revisions before the exact range, model, and machine filters apply.
-    const widen = 7 * 24 * HOUR;
+    // Revisions of one logical request are ranked over a window widened around the range, so the canonical
+    // row is chosen among all its revisions before the exact range, model, and machine filters apply.
+    // `activity_at` is generated from the request's own clock, not the run clock, so it is constant across
+    // the revisions of a key and a day absorbs any ordering a late upload can produce. That constancy is a
+    // property of today's readers rather than of the contract -- a reader that emitted a request once while
+    // running and again once finished would move `ended_at` and so `activity_at` -- so the ledger contract
+    // test asserts it, and such a reader trips that test rather than silently changing which revision wins.
+    const widen = REVISION_WINDOW_MS;
     const keySource = keysCte ?? 'in_range_keys';
     const discover = keysCte ? '' : `in_range_keys AS (
       SELECT DISTINCT r.account_id, r.semantic_key
@@ -386,26 +396,46 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         AND r.activity_at < ${p.add(new Date(range.end).toISOString())}::timestamptz
     ), `;
     const post = [
-      `activity_at >= ${p.add(new Date(range.start).toISOString())}::timestamptz`,
-      `activity_at < ${p.add(new Date(range.end).toISOString())}::timestamptz`,
-      ...(model ? [model.replaceAll('r.model_actual', 'model_actual')] : []),
-      ...(q.machines.length ? [`source_id = ANY(${p.add(q.machines)}::uuid[])`] : []),
+      `r.activity_at >= ${p.add(new Date(range.start).toISOString())}::timestamptz`,
+      `r.activity_at < ${p.add(new Date(range.end).toISOString())}::timestamptz`,
+      ...(model ? [model] : []),
+      ...(q.machines.length ? [`r.source_id = ANY(${p.add(q.machines)}::uuid[])`] : []),
     ];
-    const text = `${discover}${projectResolvedCte(keySource)}, ranked AS (
-      SELECT r.id, r.account_id, r.provider, r.semantic_key, r.session_hash, r.model_actual, r.activity_at, r.observed_at, r.surface, r.reasoning_effort, r.service_tier, r.speed,
+    // One pass over the key set carries both rankings. Canonical choice and project choice partition by the
+    // same key over the same rows and differ only in their leading ORDER BY term, so ranking them together
+    // touches the ledger heap once instead of twice. They stay separate columns: collapsing them would let a
+    // sibling revision's project evidence decide the canonical row's project, which is the "unknown values
+    // stay unknown" promise breaking in reverse.
+    const ledgerColumns = `r.id, r.account_id, r.provider, r.semantic_key, r.session_hash, r.model_actual, r.activity_at, r.observed_at, r.surface, r.reasoning_effort, r.service_tier, r.speed,
         r.context_window_tokens, r.cache_write_ttl, r.token_state, r.outcome,
         r.input_fresh_tokens, r.input_cached_tokens, r.input_cache_write_tokens, r.output_tokens, r.reasoning_tokens, r.unclassified_tokens, r.observed_total_tokens,
-        r.agent_key, r.agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.agent_identity_basis,
-        b.source_id, pr.project_state, pr.project_id, pr.project_label,
-        ${detail.length ? `(${detail.join(' AND ')})` : 'true'} AS matches,
+        r.agent_key, r.agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.agent_identity_basis`;
+    const text = `${discover}scanned AS (
+      SELECT ${ledgerColumns},
+        b.source_id,
+        first_value(${projectBasis('r')}) OVER project_order AS effective_project_basis,
+        first_value(${projectKey('r')}) OVER project_order AS effective_project_key,
+        first_value(r.provider) OVER project_order AS project_provider,
+        first_value(b.install_id) OVER project_order AS project_install_id,
         row_number() OVER (PARTITION BY r.account_id, r.semantic_key ORDER BY ${rankBy('r')}) AS rank
       FROM personal_hub.activity_requests r
       JOIN ${keySource} k ON k.account_id = r.account_id AND k.semantic_key = r.semantic_key
       JOIN personal_hub.companion_bindings b ON b.id = r.binding_id
-      LEFT JOIN project_resolved pr ON pr.account_id = r.account_id AND pr.semantic_key = r.semantic_key
       WHERE r.activity_at >= ${p.add(new Date(range.start - widen).toISOString())}::timestamptz
         AND r.activity_at < ${p.add(new Date(range.end + widen).toISOString())}::timestamptz
-    ), requests AS (SELECT * FROM ranked WHERE rank = 1 AND ${post.join(' AND ')})`;
+      WINDOW project_order AS (PARTITION BY r.account_id, r.semantic_key ORDER BY
+        CASE (${projectBasis('r')}) WHEN 'native' THEN 0 WHEN 'working_directory' THEN 1 WHEN 'none' THEN 2 ELSE 3 END,
+        ${rankBy('r')})
+    ), resolved AS (
+      SELECT ${ledgerColumns}, r.source_id,
+        ${projectState} AS project_state,
+        m.project_id, proj.label AS project_label
+      FROM scanned r
+      ${projectJoins}
+      WHERE r.rank = 1 AND ${post.join(' AND ')}
+    ), requests AS (
+      SELECT r.*, ${detail.length ? `(${detail.join(' AND ')})` : 'true'} AS matches FROM resolved r
+    )`;
     return { text, detailFilters: detail.length > 0 };
   }
 
@@ -455,6 +485,10 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // and the browser derive their deadlines from. Postgres cancels with SQLSTATE 57014, which the
     // route reports as 504 with its message, before the queue would destroy the connection.
     const prepareRead = async (tx: { unsafe: Sql['unsafe'] }) => {
+      // `work_mem` is deliberately left alone. Raising it to 16MB was measured on this instance and made the
+      // requests read 2.6x SLOWER: the extra budget flips the ranking pass to a parallel sequential scan and
+      // a hash join whose sort then spills anyway, which costs more CPU than the index-ordered merge it
+      // replaces. Fewer buffers is not the goal; finishing sooner on a shared vCPU is.
       await tx.unsafe(`SELECT set_config('statement_timeout', $1, true), set_config('jit', 'off', true),
         CASE WHEN current_setting('server_version_num')::int >= 170000 THEN set_config('transaction_timeout', $1, true) END`, [DATABASE_JOB_BUDGET_INTERVAL]);
     };
@@ -539,8 +573,10 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const loggedInput = 'coalesce(r.input_fresh_tokens, 0) + coalesce(r.input_cached_tokens, 0) + coalesce(r.input_cache_write_tokens, 0)';
     const rangeStartIso = new Date(range.start).toISOString();
     const rangeEndIso = new Date(range.end).toISOString();
-    const widenStartIso = new Date(range.start - 7 * 24 * HOUR).toISOString();
-    const widenEndIso = new Date(range.end + 7 * 24 * HOUR).toISOString();
+    // The same day-wide revision window the request reads use, for the same measured reason: a tool
+    // invocation's revisions all carry one `observed_at`, so the week this used to span found nothing.
+    const widenStartIso = new Date(range.start - REVISION_WINDOW_MS).toISOString();
+    const widenEndIso = new Date(range.end + REVISION_WINDOW_MS).toISOString();
     // Tool invocations and knowledge accesses share one filter contract: machine from the row's own binding,
     // agent from the invocation's caller, detail filters through the calling request. A model filter alone has
     // no request to apply through, so both sections report it rather than guessing.
