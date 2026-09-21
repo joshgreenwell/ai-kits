@@ -12,20 +12,31 @@
 //! all zero (what current Cursor builds write for nearly every message) proves
 //! nothing about usage and is skipped as well; the hosted `cursor_account`
 //! reader is where Cursor token evidence comes from.
+//!
+//! The store has no event table the change generation could stamp, so the
+//! reader remembers, per binding and record, the content digest it last
+//! emitted (`cursor_emitted`, written by the run once the records are
+//! persisted) and emits a record only when it is new or its digest changed.
+//! A parser version or emission shape change re-emits everything once.
+
+use std::collections::HashMap;
 
 use observatory_contract::settings::DetailLevel;
-use observatory_contract::stable_json::stable_json;
+use observatory_contract::stable_json::{content_hash, stable_json};
 use observatory_contract::{
     ActivityRequest, Adapter as AdapterId, Basis, CapabilityCoverage, CapabilityDimension, CapabilityState,
     Channel, Code, CoverageState, CursorState, DetailCode, ExecutionHost, Nullable, Provider, Record,
     RequestOutcome, SessionIdentity, Sha256Hex, Stamp, Surface, Text,
 };
 use observatory_core::adapter::{
-    Adapter, AdapterError, Cursor, Outcome, Preflight, RunContext, Sink, record_id,
+    Adapter, AdapterError, Cursor, EmittedMark, Outcome, Preflight, RunContext, Sink, record_id,
 };
 use observatory_core::cursor_store::{self, CursorComposerUsage};
+use observatory_core::pyjson::digest;
+use observatory_core::state::State;
 use serde_json::json;
 
+use crate::emission::EMISSION_SHAPE;
 use crate::provider::{parser_text, token_accounting, tokens_from_exclusive};
 
 /// `+cursor-local2`: observation times come from the store (bubble, then
@@ -38,7 +49,7 @@ pub struct CursorExecution;
 /// What one run saw across every Cursor binding.
 #[derive(Debug, Default)]
 struct Tally {
-    /// Bubbles with usage evidence and a store time.
+    /// Bubbles with usage evidence and a store time, whether or not re-emitted.
     requests: u64,
     /// Of those, bubbles missing an input or output counter.
     incomplete: u64,
@@ -46,6 +57,8 @@ struct Tally {
     no_tokens: u64,
     /// Bubbles skipped because neither they nor their composer carry a time.
     no_time: u64,
+    /// Bubbles whose record digests the same as the last emission.
+    unchanged: u64,
 }
 
 impl Adapter for CursorExecution {
@@ -72,6 +85,7 @@ impl Adapter for CursorExecution {
         _cursor: Option<Cursor>,
         sink: &mut dyn Sink,
     ) -> Result<Outcome, AdapterError> {
+        let state = ctx.open_state()?;
         let mut outcome = Outcome::ok();
         outcome.cursor_state = CursorState::Complete;
         let detail_level = ctx.settings.execution.detail_level;
@@ -83,6 +97,12 @@ impl Adapter for CursorExecution {
             let (bytes, rows) = cursor_store::cursor_local_usage(path).map_err(|_| AdapterError::Io)?;
             outcome.bytes_read += bytes;
             outcome.files += 1;
+            let binding_id = binding.binding_id.as_str();
+            let memory = if emit_requests {
+                Some(EmissionMemory::load(&state, binding_id, detail_level)?)
+            } else {
+                None
+            };
             for row in rows {
                 if !row.has_token_evidence() {
                     tally.no_tokens += 1;
@@ -95,10 +115,12 @@ impl Adapter for CursorExecution {
                 if !eligible(&observed_at, ctx.since) {
                     continue;
                 }
-                if !emit_requests {
-                    continue;
-                }
+                let Some(memory) = memory.as_ref() else { continue };
                 let Some(record) = request_record(&binding.binding_id, &row, &observed_at) else {
+                    outcome.malformed += 1;
+                    continue;
+                };
+                let Ok(content_digest) = content_hash(&record) else {
                     outcome.malformed += 1;
                     continue;
                 };
@@ -106,8 +128,21 @@ impl Adapter for CursorExecution {
                 if incomplete_tokens(&row) {
                     tally.incomplete += 1;
                 }
+                let record_id = record.record_id().as_str().to_owned();
+                if memory.unchanged(&record_id, content_digest.as_str()) {
+                    tally.unchanged += 1;
+                    continue;
+                }
                 sink.emit(record, None);
                 outcome.records_emitted += 1;
+                outcome.after_persist_emitted.push(EmittedMark {
+                    binding_id: binding_id.to_owned(),
+                    record_id,
+                    content_digest: content_digest.as_str().to_owned(),
+                });
+            }
+            if let Some(memory) = memory {
+                outcome.after_persist.push((mark_key(binding_id), memory.fingerprint));
             }
         }
         if tally.no_time > 0 {
@@ -124,6 +159,41 @@ impl Adapter for CursorExecution {
         }
         Ok(outcome)
     }
+}
+
+/// What one binding emitted last time, valid only under the same fingerprint.
+struct EmissionMemory {
+    fingerprint: String,
+    /// Record id to content digest; empty when the fingerprint moved, so
+    /// everything is emitted once more.
+    known: HashMap<String, String>,
+}
+
+impl EmissionMemory {
+    fn load(state: &State, binding_id: &str, detail_level: DetailLevel) -> Result<Self, AdapterError> {
+        let fingerprint = fingerprint(detail_level);
+        let known = if state.meta(&mark_key(binding_id))?.as_deref() == Some(fingerprint.as_str()) {
+            state.cursor_emitted(binding_id)?
+        } else {
+            HashMap::new()
+        };
+        Ok(EmissionMemory { fingerprint, known })
+    }
+
+    fn unchanged(&self, record_id: &str, content_digest: &str) -> bool {
+        self.known.get(record_id).is_some_and(|digest| digest == content_digest)
+    }
+}
+
+/// Everything a Cursor record's shape depends on: the emission shape, this
+/// reader's parser version, and the detail level.
+pub fn fingerprint(detail_level: DetailLevel) -> String {
+    digest(&json!([EMISSION_SHAPE, PARSER_VERSION, detail_level.as_str()])).as_str().to_owned()
+}
+
+/// The meta key holding the fingerprint a binding's `cursor_emitted` rows were written under.
+pub fn mark_key(binding_id: &str) -> String {
+    format!("emitted:{}:{binding_id}", AdapterId::CursorExecution.as_str())
 }
 
 /// The bubble's store time, never the run clock.
@@ -342,6 +412,13 @@ mod tests {
         assert!(!eligible(&stamp("2024-12-31T23:59:59.999Z"), since));
     }
 
+    #[test]
+    fn the_fingerprint_moves_with_the_parser_version_and_detail_level() {
+        assert_ne!(fingerprint(DetailLevel::Requests), fingerprint(DetailLevel::RequestsWithTools));
+        assert_eq!(fingerprint(DetailLevel::Requests), fingerprint(DetailLevel::Requests));
+        assert_eq!(mark_key("b-1"), "emitted:cursor_execution:b-1");
+    }
+
     // --- collect against a synthetic store --------------------------------
 
     fn open_store(path: &Path) -> Connection {
@@ -433,6 +510,19 @@ mod tests {
         )
     }
 
+    /// What the run does once the sink's records are stored.
+    fn persist(ctx: &RunContext, outcome: &Outcome) {
+        let state = ctx.open_state().unwrap();
+        for (key, value) in &outcome.after_persist {
+            state.set_meta(key, value).unwrap();
+        }
+        for mark in &outcome.after_persist_emitted {
+            state
+                .mark_cursor_emitted(&mark.binding_id, &mark.record_id, &mark.content_digest, RUN_NOW)
+                .unwrap();
+        }
+    }
+
     fn collect(ctx: &RunContext) -> (Outcome, Vec<Value>) {
         let mut sink = MemorySink::default();
         let outcome = CursorExecution.collect(ctx, None, &mut sink).unwrap();
@@ -481,11 +571,90 @@ mod tests {
         assert_eq!(outcome.records_emitted, 2);
         assert_eq!(outcome.malformed, 1, "the bubble with no store time is counted, not emitted");
         assert_eq!((outcome.state, outcome.detail), (CoverageState::Partial, Some(DetailCode::ParseError)));
+        assert_eq!(outcome.after_persist_emitted.len(), 2);
+        assert_eq!(outcome.after_persist.len(), 1);
         assert_eq!(capability_of(&outcome, CapabilityDimension::Requests), (CapabilityState::Complete, None));
         assert_eq!(
             capability_of(&outcome, CapabilityDimension::TokenComposition),
             (CapabilityState::Partial, Some("local_counters_not_billed".into()))
         );
+    }
+
+    #[test]
+    fn an_unchanged_store_emits_nothing_and_a_changed_bubble_emits_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("state.vscdb");
+        synthetic_store(&store);
+        let ctx = context(&dir, DetailLevel::Requests);
+        let (first, records) = collect(&ctx);
+        assert_eq!(records.len(), 2);
+        persist(&ctx, &first);
+
+        // The same store again: nothing is emitted, the evidence is still counted.
+        let (second, records) = collect(&ctx);
+        assert!(records.is_empty(), "{records:?}");
+        assert_eq!(second.records_emitted, 0);
+        assert!(second.after_persist_emitted.is_empty());
+        assert_eq!(second.capabilities, first.capabilities);
+        persist(&ctx, &second);
+
+        // A bubble whose counters moved is emitted once more, alone, then settles.
+        put(
+            &open_store(&store),
+            "bubbleId:comp-1:own-time",
+            json!({"type": 2, "text": "SECRET", "createdAt": "2025-09-14T10:00:00.250Z",
+                   "tokenCount": {"inputTokens": 5728, "outputTokens": 300}}),
+        );
+        let (third, records) = collect(&ctx);
+        assert_eq!(records.len(), 1, "{records:?}");
+        assert_eq!(records[0]["tokens"]["output"], json!(300));
+        assert_never_the_run_clock(&records);
+        persist(&ctx, &third);
+        let (fourth, records) = collect(&ctx);
+        assert!(records.is_empty(), "{records:?}");
+        assert_eq!(fourth.records_emitted, 0);
+
+        // A new bubble is emitted without touching the others.
+        put(
+            &open_store(&store),
+            "bubbleId:comp-1:later",
+            json!({"type": 2, "text": "SECRET", "createdAt": "2025-09-14T11:00:00.000Z",
+                   "tokenCount": {"inputTokens": 9, "outputTokens": 2}}),
+        );
+        let (fifth, records) = collect(&ctx);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["observed_at"], json!("2025-09-14T11:00:00.000Z"));
+        persist(&ctx, &fifth);
+        assert!(collect(&ctx).1.is_empty());
+    }
+
+    #[test]
+    fn a_fingerprint_change_re_emits_everything_once() {
+        let dir = tempfile::tempdir().unwrap();
+        synthetic_store(&dir.path().join("state.vscdb"));
+        let ctx = context(&dir, DetailLevel::Requests);
+        let (first, _) = collect(&ctx);
+        persist(&ctx, &first);
+        assert!(collect(&ctx).1.is_empty());
+
+        // The mark the previous parser version left.
+        let state = ctx.open_state().unwrap();
+        let key = mark_key(ctx.bindings[0].binding_id.as_str());
+        assert_eq!(state.meta(&key).unwrap().as_deref(), Some(fingerprint(DetailLevel::Requests).as_str()));
+        state.set_meta(&key, "previous-fingerprint").unwrap();
+        drop(state);
+
+        let (upgraded, records) = collect(&ctx);
+        assert_eq!(records.len(), 2, "every record is emitted once more");
+        persist(&ctx, &upgraded);
+        assert!(collect(&ctx).1.is_empty());
+
+        // A different detail level is a different fingerprint too.
+        let with_tools = context(&dir, DetailLevel::RequestsWithTools);
+        let (moved, records) = collect(&with_tools);
+        assert_eq!(records.len(), 2);
+        persist(&with_tools, &moved);
+        assert!(collect(&with_tools).1.is_empty());
     }
 
     #[test]
@@ -517,12 +686,13 @@ mod tests {
     }
 
     #[test]
-    fn buckets_only_reads_nothing_into_the_sink() {
+    fn buckets_only_reads_nothing_into_the_sink_and_leaves_no_mark() {
         let dir = tempfile::tempdir().unwrap();
         synthetic_store(&dir.path().join("state.vscdb"));
         let ctx = context(&dir, DetailLevel::BucketsOnly);
         let (outcome, records) = collect(&ctx);
         assert!(records.is_empty());
+        assert!(outcome.after_persist.is_empty() && outcome.after_persist_emitted.is_empty());
         assert_eq!(
             capability_of(&outcome, CapabilityDimension::Requests),
             (CapabilityState::DisabledBySetting, Some("detail_level_buckets_only".into()))

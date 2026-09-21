@@ -1123,6 +1123,18 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
                         for (key, value) in &outcome.after_persist {
                             state.set_meta(key, value)?;
                         }
+                        if !outcome.after_persist_emitted.is_empty() {
+                            state.begin()?;
+                            for mark in &outcome.after_persist_emitted {
+                                state.mark_cursor_emitted(
+                                    &mark.binding_id,
+                                    &mark.record_id,
+                                    &mark.content_digest,
+                                    stored_at.as_str(),
+                                )?;
+                            }
+                            state.commit()?;
+                        }
                         (outcome.state, outcome.detail, Some(outcome.clone()), item.elapsed, invalid, emitted)
                     }
                     Err(error) => {

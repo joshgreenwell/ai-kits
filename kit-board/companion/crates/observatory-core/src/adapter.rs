@@ -272,6 +272,18 @@ pub struct Outcome {
     /// Meta entries the run stores only once this adapter's emitted records are
     /// persisted, such as an emission mark; never stored when collection failed.
     pub after_persist: Vec<(String, String)>,
+    /// Per-record emission marks (`State::mark_cursor_emitted`) stored under the
+    /// same rule, for an adapter that remembers what it emitted by record
+    /// rather than by a stamped source row.
+    pub after_persist_emitted: Vec<EmittedMark>,
+}
+
+/// One record an adapter emitted this run, at the content digest it carried.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmittedMark {
+    pub binding_id: String,
+    pub record_id: String,
+    pub content_digest: String,
 }
 
 impl Outcome {
@@ -289,6 +301,7 @@ impl Outcome {
             next_cursor: None,
             capabilities: None,
             after_persist: Vec::new(),
+            after_persist_emitted: Vec::new(),
         }
     }
 

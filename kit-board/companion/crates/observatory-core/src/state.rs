@@ -107,6 +107,8 @@ CREATE TABLE IF NOT EXISTS records (record_id TEXT PRIMARY KEY, binding_id TEXT 
   record_type TEXT NOT NULL, semantic_key TEXT NOT NULL, content_hash TEXT NOT NULL, published_hash TEXT,
   rejected_reason TEXT, record TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS records_pending ON records(rejected_reason, published_hash);
+CREATE TABLE IF NOT EXISTS cursor_emitted (binding_id TEXT NOT NULL, record_id TEXT NOT NULL,
+  content_digest TEXT NOT NULL, emitted_at TEXT NOT NULL, PRIMARY KEY (binding_id, record_id));
 CREATE TABLE IF NOT EXISTS published (key TEXT PRIMARY KEY, hash TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS outbox (hash TEXT PRIMARY KEY, payload TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS receipts (hash TEXT PRIMARY KEY, received_at TEXT NOT NULL, receipt TEXT NOT NULL);
@@ -737,6 +739,40 @@ impl State {
         let rows =
             statement.query_map(params![binding, adapter, record_type], |row| row.get::<_, String>(0))?;
         Ok(rows.collect::<Result<HashSet<_>, _>>()?)
+    }
+
+    // --- cursor emission marks ----------------------------------------------
+
+    /// The content digest each Cursor request record of one binding was last
+    /// emitted with, keyed by record id. The Cursor reader has no event table
+    /// to stamp, so it remembers what it emitted per record instead and skips
+    /// a bubble whose record digests the same as last time.
+    pub fn cursor_emitted(&self, binding: &str) -> Result<HashMap<String, String>, StateError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT record_id, content_digest FROM cursor_emitted WHERE binding_id = ?1")?;
+        let rows = statement
+            .query_map(params![binding], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+        Ok(rows.collect::<Result<HashMap<_, _>, _>>()?)
+    }
+
+    /// Records that one record was emitted at the given digest; the run calls
+    /// this only once the record itself is persisted.
+    pub fn mark_cursor_emitted(
+        &self,
+        binding: &str,
+        record_id: &str,
+        content_digest: &str,
+        emitted_at: &str,
+    ) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT INTO cursor_emitted (binding_id, record_id, content_digest, emitted_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(binding_id, record_id) DO UPDATE SET content_digest = excluded.content_digest,
+                 emitted_at = excluded.emitted_at",
+            params![binding, record_id, content_digest, emitted_at],
+        )?;
+        Ok(())
     }
 
     // --- settings cache -----------------------------------------------------
