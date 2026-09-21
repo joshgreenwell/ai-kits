@@ -6,6 +6,8 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
 
 ## 2.1.0 — 2026-09-21
 
+- The state database now waits up to four minutes for its write lock instead of five seconds. Adapters run in parallel over one file, and a large re-emission held the lock long enough for the Claude adapters to fail with `state_error` on the first run after upgrading.
+
 - Cursor local requests are stable and incremental. Every `cursor_execution` record uploaded since
   2026-09-18 carried the run's clock as `observed_at` and `ended_at`: current Cursor builds write a
   bubble's `createdAt` as an ISO-8601 string, the reader parsed it as an integer, got nothing, and fell

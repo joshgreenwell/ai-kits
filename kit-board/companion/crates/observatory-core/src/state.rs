@@ -116,6 +116,11 @@ CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, started_at TEXT NOT NU
   summary TEXT NOT NULL);
 ";
 
+/// How long a connection waits for the write lock. Adapters run in parallel threads over one
+/// state file, and a large re-emission (a parser or emission-shape bump) can hold the lock for
+/// minutes, so a short wait made the other adapters fail with `state_error` instead of queueing.
+const STATE_BUSY_TIMEOUT: Duration = Duration::from_secs(240);
+
 /// The meta key holding the current change generation; see `advance_change_generation`.
 const CHANGE_GENERATION_KEY: &str = "change_generation";
 
@@ -479,7 +484,7 @@ impl State {
         }
         let conn = Connection::open(path)?;
         restrict_file(path)?;
-        conn.busy_timeout(Duration::from_secs(5))?;
+        conn.busy_timeout(STATE_BUSY_TIMEOUT)?;
         let _mode: String = conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.execute_batch(SCHEMA)?;
@@ -497,7 +502,7 @@ impl State {
             | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
             | rusqlite::OpenFlags::SQLITE_OPEN_URI;
         let conn = Connection::open_with_flags(path, flags)?;
-        conn.busy_timeout(Duration::from_secs(5))?;
+        conn.busy_timeout(STATE_BUSY_TIMEOUT)?;
         Ok(State { conn })
     }
 
