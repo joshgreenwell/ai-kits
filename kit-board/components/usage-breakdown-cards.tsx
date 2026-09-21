@@ -28,6 +28,11 @@ export function projectFilterValue(row: Pick<ProjectRow, 'state' | 'project_id'>
 }
 
 /** How an agent row is named wherever it appears: the recorded name first, then its class with a short key. */
+/** One row per agent, model, parent, and depth: the same agent key appears once per model it used, so the key alone collides. */
+export function agentRowId(row: Pick<AgentRow, 'agent_key' | 'class' | 'model' | 'parent_agent_key' | 'depth'>): string {
+  return `${row.agent_key ?? `unattributed:${row.class}`}:${row.model ?? ''}:${row.parent_agent_key ?? ''}:${row.depth ?? ''}`;
+}
+
 export function agentLabel(row: Pick<AgentRow, 'agent_key' | 'name' | 'class'>): string {
   if (row.name) return row.name;
   if (row.class === 'main') return row.agent_key ? `Main agent ${shortKey(row.agent_key)}` : 'Main agent';
@@ -141,8 +146,8 @@ function AgentCard({ result, filters, onFiltersChange }: { result: UsageQueryRes
             {classes.map(([cls, tokens]) => <dd key={cls} className="flex items-baseline gap-1"><span>{AGENT_CLASS_LABELS[cls] ?? cls}</span> <span className="font-mono tabular-nums">{exactTokens(tokens)}</span></dd>)}
           </dl>
         ) : null}
-        <DataTable columns={columns} rows={rows} getRowId={row => row.agent_key ?? `unattributed:${row.class}`} defaultSort={{ id: 'tokens', dir: 'desc' }}
-          selectedId={selected?.agent_key ?? undefined} onSelect={select} className="max-h-80 overflow-auto"
+        <DataTable columns={columns} rows={rows} getRowId={agentRowId} defaultSort={{ id: 'tokens', dir: 'desc' }}
+          selectedId={selected ? agentRowId(selected) : undefined} onSelect={select} className="max-h-80 overflow-auto"
           caption="Select an agent to filter the whole page to it; select it again, or remove the chip above, to go back. Unattributed rows cannot be selected."
           empty={<EmptyState title="No agent evidence in scope" description="Agent identity, parent, model, and depth arrive with request records and agent lifecycle events. Hourly buckets carry none of them, so this scope has nothing to divide." />} />
       </div>
