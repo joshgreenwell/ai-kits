@@ -915,6 +915,7 @@ dependencies = [
  "jiff",
  "observatory-contract",
  "observatory-core",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

@@ -3,6 +3,15 @@
 //! These are on-device counters, not billed usage. They become `activity.request`
 //! rows on channel `local_db` when `detail_level` is not `buckets_only`. They
 //! never produce hourly buckets and never invent a project from a timestamp.
+//!
+//! Every timestamp on a record comes from the store: the bubble's own
+//! `createdAt`, else the composer's `createdAt`. A bubble the store holds no
+//! time for is skipped and counted as malformed, never stamped with the run's
+//! clock, so a record's content is a pure function of the store and one run
+//! cannot revise what the previous run uploaded. A bubble whose counters are
+//! all zero (what current Cursor builds write for nearly every message) proves
+//! nothing about usage and is skipped as well; the hosted `cursor_account`
+//! reader is where Cursor token evidence comes from.
 
 use observatory_contract::settings::DetailLevel;
 use observatory_contract::stable_json::stable_json;
@@ -17,12 +26,27 @@ use observatory_core::adapter::{
 use observatory_core::cursor_store::{self, CursorComposerUsage};
 use serde_json::json;
 
-use crate::provider::{observed_now, parser_text, token_accounting, tokens_from_exclusive};
+use crate::provider::{parser_text, token_accounting, tokens_from_exclusive};
 
-const PARSER_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+cursor-local1");
+/// `+cursor-local2`: observation times come from the store (bubble, then
+/// composer) instead of the run clock, and zero-counter bubbles are skipped.
+const PARSER_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+cursor-local2");
 
 #[derive(Debug, Default)]
 pub struct CursorExecution;
+
+/// What one run saw across every Cursor binding.
+#[derive(Debug, Default)]
+struct Tally {
+    /// Bubbles with usage evidence and a store time.
+    requests: u64,
+    /// Of those, bubbles missing an input or output counter.
+    incomplete: u64,
+    /// Bubbles skipped because every counter was zero.
+    no_tokens: u64,
+    /// Bubbles skipped because neither they nor their composer carry a time.
+    no_time: u64,
+}
 
 impl Adapter for CursorExecution {
     fn id(&self) -> AdapterId {
@@ -50,9 +74,9 @@ impl Adapter for CursorExecution {
     ) -> Result<Outcome, AdapterError> {
         let mut outcome = Outcome::ok();
         outcome.cursor_state = CursorState::Complete;
-        let emit_requests = ctx.settings.execution.detail_level != DetailLevel::BucketsOnly;
-        let mut requests = 0u64;
-        let mut incomplete = 0u64;
+        let detail_level = ctx.settings.execution.detail_level;
+        let emit_requests = detail_level != DetailLevel::BucketsOnly;
+        let mut tally = Tally::default();
         for binding in ctx.bindings_for(Provider::Cursor).filter(|binding| binding.runnable()) {
             let Some(path) = binding.cursor_state_db.as_ref().filter(|path| path.is_file()) else { continue };
             outcome.stores_discovered += 1;
@@ -60,27 +84,40 @@ impl Adapter for CursorExecution {
             outcome.bytes_read += bytes;
             outcome.files += 1;
             for row in rows {
-                if !eligible(&row, ctx.since) {
+                if !row.has_token_evidence() {
+                    tally.no_tokens += 1;
+                    continue;
+                }
+                let Some(observed_at) = observed_at(&row) else {
+                    tally.no_time += 1;
+                    continue;
+                };
+                if !eligible(&observed_at, ctx.since) {
                     continue;
                 }
                 if !emit_requests {
                     continue;
                 }
-                match request_record(&binding.binding_id, &row, &observed_now(ctx)) {
-                    Some(record) => {
-                        if incomplete_tokens(&row) {
-                            incomplete += 1;
-                        }
-                        sink.emit(record, None);
-                        outcome.records_emitted += 1;
-                        requests += 1;
-                    }
-                    None => outcome.malformed += 1,
+                let Some(record) = request_record(&binding.binding_id, &row, &observed_at) else {
+                    outcome.malformed += 1;
+                    continue;
+                };
+                tally.requests += 1;
+                if incomplete_tokens(&row) {
+                    tally.incomplete += 1;
                 }
+                sink.emit(record, None);
+                outcome.records_emitted += 1;
             }
         }
-        outcome.capabilities =
-            Some(cursor_capabilities(ctx.settings.execution.detail_level, requests, incomplete));
+        if tally.no_time > 0 {
+            outcome.malformed += tally.no_time;
+            if outcome.state == CoverageState::Ok {
+                outcome.state = CoverageState::Partial;
+                outcome.detail = Some(DetailCode::ParseError);
+            }
+        }
+        outcome.capabilities = Some(cursor_capabilities(detail_level, &tally));
         if outcome.stores_discovered == 0 {
             outcome.state = CoverageState::PrerequisiteMissing;
             outcome.detail = Some(DetailCode::StoreMissing);
@@ -89,11 +126,13 @@ impl Adapter for CursorExecution {
     }
 }
 
-fn eligible(row: &CursorComposerUsage, since: f64) -> bool {
-    match row.created_at_ms {
-        Some(ms) => (ms as f64) / 1000.0 >= since,
-        None => true,
-    }
+/// The bubble's store time, never the run clock.
+fn observed_at(row: &CursorComposerUsage) -> Option<Stamp> {
+    row.observed_at_ms().and_then(|ms| Stamp::from_millis(ms).ok())
+}
+
+fn eligible(observed_at: &Stamp, since: f64) -> bool {
+    (observed_at.epoch_millis() as f64) / 1000.0 >= since
 }
 
 fn incomplete_tokens(row: &CursorComposerUsage) -> bool {
@@ -109,10 +148,8 @@ fn as_u64(value: Option<i64>) -> Option<u64> {
 fn request_record(
     binding: &observatory_contract::Uuid,
     row: &CursorComposerUsage,
-    fallback: &Stamp,
+    observed_at: &Stamp,
 ) -> Option<Record> {
-    let observed_at =
-        row.created_at_ms.and_then(|ms| Stamp::from_millis(ms).ok()).unwrap_or_else(|| fallback.clone());
     let bubble = row.bubble_id.as_deref().unwrap_or("");
     let semantic =
         Sha256Hex::digest(stable_json(&json!(["cursor", row.composer_id.as_str(), bubble])).as_bytes());
@@ -149,7 +186,7 @@ fn request_record(
         model_requested: Nullable::NULL,
         model_actual: Nullable(model),
         started_at: Nullable::NULL,
-        ended_at: Nullable::some(observed_at),
+        ended_at: Nullable::some(observed_at.clone()),
         tokens: tokens_from_exclusive(input, cached, cache_write, output),
         token_accounting: accounting,
         pricing: None,
@@ -176,11 +213,7 @@ fn capability(
     }
 }
 
-fn cursor_capabilities(
-    detail_level: DetailLevel,
-    requests: u64,
-    _incomplete: u64,
-) -> Vec<CapabilityCoverage> {
+fn cursor_capabilities(detail_level: DetailLevel, tally: &Tally) -> Vec<CapabilityCoverage> {
     if detail_level == DetailLevel::BucketsOnly {
         return [
             CapabilityDimension::Requests,
@@ -197,17 +230,29 @@ fn cursor_capabilities(
         })
         .collect();
     }
-    let request_state = if requests == 0 { CapabilityState::Unknown } else { CapabilityState::Complete };
     // Local counters are never billed totals, so composition is partial whenever any request exists,
-    // whether or not some of them were incomplete.
-    let token_state = if requests == 0 { CapabilityState::Unknown } else { CapabilityState::Partial };
+    // whether or not some of them were incomplete. A store whose bubbles all carry zero counters
+    // yields no request and no token evidence at all; the hosted reader is where Cursor tokens come from.
+    let (request_state, request_detail, token_state, token_detail) = if tally.requests > 0 {
+        (CapabilityState::Complete, None, CapabilityState::Partial, Some("local_counters_not_billed"))
+    } else if tally.no_tokens > 0 {
+        (
+            CapabilityState::Unknown,
+            Some("local_counters_zero"),
+            CapabilityState::Unsupported,
+            Some("local_counters_zero"),
+        )
+    } else {
+        (
+            CapabilityState::Unknown,
+            Some("no_request_evidence"),
+            CapabilityState::Unknown,
+            Some("no_request_evidence"),
+        )
+    };
     vec![
-        capability(
-            CapabilityDimension::Requests,
-            request_state,
-            (requests == 0).then_some("no_request_evidence"),
-        ),
-        capability(CapabilityDimension::TokenComposition, token_state, Some("local_counters_not_billed")),
+        capability(CapabilityDimension::Requests, request_state, request_detail),
+        capability(CapabilityDimension::TokenComposition, token_state, token_detail),
         capability(CapabilityDimension::Pricing, CapabilityState::Unsupported, Some("not_in_local_state")),
         capability(
             CapabilityDimension::Project,
@@ -222,32 +267,265 @@ fn cursor_capabilities(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use observatory_core::cursor_store::CursorComposerUsage;
+    use std::path::{Path, PathBuf};
+    use std::str::FromStr;
+    use std::time::Duration;
 
-    #[test]
-    fn local_counters_become_requests_never_buckets() {
-        let row = CursorComposerUsage {
+    use jiff::Timestamp;
+    use observatory_contract::{AccountId, CollectionSettings, Uuid};
+    use observatory_core::adapter::{BindingContext, IdentityState, MemorySink};
+    use observatory_core::cursor_store::CursorComposerUsage;
+    use observatory_core::privacy::PrivacyKey;
+    use rusqlite::Connection;
+    use serde_json::Value;
+
+    use super::*;
+
+    /// A run clock no store row could ever carry.
+    const RUN_NOW: &str = "2026-09-20T22:46:20.569Z";
+
+    fn stamp(text: &str) -> Stamp {
+        Stamp::parse(text).unwrap()
+    }
+
+    fn row(
+        bubble: &str,
+        created_at_ms: Option<i64>,
+        composer_created_at_ms: Option<i64>,
+    ) -> CursorComposerUsage {
+        CursorComposerUsage {
             composer_id: "comp-1".into(),
-            bubble_id: Some("bubble-1".into()),
+            bubble_id: Some(bubble.into()),
             input_tokens: Some(12),
             output_tokens: Some(4),
             cache_read_tokens: Some(3),
             cache_write_tokens: Some(1),
-            created_at_ms: Some(1_725_000_000_000),
+            created_at_ms,
+            composer_created_at_ms,
+            composer_updated_at_ms: None,
             model: Some("composer-1".into()),
-        };
-        let record = request_record(
-            &crate::provider::zero_uuid(),
-            &row,
-            &Stamp::parse("2026-09-01T00:00:00.000Z").unwrap(),
-        )
-        .unwrap();
+        }
+    }
+
+    #[test]
+    fn local_counters_become_requests_never_buckets() {
+        let row = row("bubble-1", Some(1_725_000_000_000), None);
+        let record =
+            request_record(&crate::provider::zero_uuid(), &row, &observed_at(&row).unwrap()).unwrap();
         let Record::ActivityRequest(request) = record else { panic!("request") };
         assert_eq!(request.channel, Channel::LocalDb);
         assert_eq!(request.product.as_str(), "cursor_ide");
+        assert_eq!(request.observed_at.as_str(), "2024-08-30T06:40:00.000Z");
+        assert_eq!(request.ended_at.0.as_ref().map(Stamp::as_str), Some("2024-08-30T06:40:00.000Z"));
+        assert_eq!(request.parser_version.as_str(), PARSER_VERSION);
+        assert!(request.parser_version.as_str().ends_with("+cursor-local2"));
         assert_eq!(request.tokens.input_fresh.as_ref().map(|v| v.get()), Some(12));
         assert_eq!(request.tokens.input_cached.as_ref().map(|v| v.get()), Some(3));
         assert!(request.project.is_none());
+    }
+
+    #[test]
+    fn observation_time_is_the_bubble_then_the_composer_then_nothing() {
+        let bubble = row("a", Some(1_767_139_800_500), Some(1_735_600_170_253));
+        assert_eq!(observed_at(&bubble).unwrap().as_str(), "2025-12-31T00:10:00.500Z");
+        let composer = row("b", None, Some(1_735_600_170_253));
+        assert_eq!(observed_at(&composer).unwrap().as_str(), "2024-12-30T23:09:30.253Z");
+        let neither = row("c", None, None);
+        assert!(observed_at(&neither).is_none(), "no clock stands in for a missing store time");
+        assert!(observed_at(&row("d", Some(i64::MAX), None)).is_none(), "an unrepresentable time is absent");
+    }
+
+    #[test]
+    fn eligibility_uses_the_stable_time_against_the_backfill_start() {
+        let since = observatory_core::pyjson::epoch_text("2025-01-01T00:00:00Z").unwrap();
+        assert!(eligible(&stamp("2025-01-01T00:00:00.000Z"), since));
+        assert!(!eligible(&stamp("2024-12-31T23:59:59.999Z"), since));
+    }
+
+    // --- collect against a synthetic store --------------------------------
+
+    fn open_store(path: &Path) -> Connection {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE, value BLOB);
+             CREATE TABLE IF NOT EXISTS cursorDiskKV (key TEXT UNIQUE, value BLOB);",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn put(conn: &Connection, key: &str, value: Value) {
+        conn.execute(
+            "INSERT INTO cursorDiskKV(key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [key, &value.to_string()],
+        )
+        .unwrap();
+    }
+
+    /// Four bubbles as a current Cursor build writes them: one with its own
+    /// time, one that needs the composer's, one with zero counters, and one
+    /// the store holds no time for.
+    fn synthetic_store(path: &Path) {
+        let conn = open_store(path);
+        put(
+            &conn,
+            "composerData:comp-1",
+            json!({"composerId": "comp-1", "text": "SECRET", "createdAt": 1_757_800_000_000i64}),
+        );
+        put(
+            &conn,
+            "bubbleId:comp-1:own-time",
+            json!({"type": 2, "text": "SECRET", "createdAt": "2025-09-14T10:00:00.250Z",
+                   "tokenCount": {"inputTokens": 5728, "outputTokens": 191}}),
+        );
+        put(
+            &conn,
+            "bubbleId:comp-1:composer-time",
+            json!({"type": 2, "text": "SECRET", "tokenCount": {"inputTokens": 15124, "outputTokens": 2436}}),
+        );
+        put(
+            &conn,
+            "bubbleId:comp-1:zero",
+            json!({"type": 2, "text": "SECRET", "createdAt": "2025-09-14T10:01:00.000Z",
+                   "tokenCount": {"inputTokens": 0, "outputTokens": 0}}),
+        );
+        put(
+            &conn,
+            "bubbleId:comp-orphan:no-time",
+            json!({"type": 2, "text": "SECRET", "tokenCount": {"inputTokens": 7, "outputTokens": 1}}),
+        );
+    }
+
+    fn binding(store: PathBuf) -> BindingContext {
+        BindingContext {
+            binding_id: Uuid::from_str("33333333-3333-4333-8333-333333333333").unwrap(),
+            account_id: AccountId::from_str("primary").unwrap(),
+            provider: Provider::Cursor,
+            enabled: true,
+            identity_hash: None,
+            identity: IdentityState::Confirmed,
+            identity_conflict: false,
+            roots: Vec::new(),
+            codex_home: None,
+            cursor_state_db: Some(store),
+        }
+    }
+
+    fn context(dir: &tempfile::TempDir, detail_level: DetailLevel) -> RunContext {
+        let mut settings = CollectionSettings::defaults();
+        settings.execution.detail_level = detail_level;
+        RunContext::new(
+            Timestamp::from_str(RUN_NOW).unwrap(),
+            "2025-01-01".to_owned(),
+            observatory_core::pyjson::epoch_text("2025-01-01T00:00:00Z").unwrap(),
+            settings,
+            3,
+            None,
+            vec![binding(dir.path().join("state.vscdb"))],
+            vec![],
+            dir.path().to_path_buf(),
+            dir.path().join("state.sqlite3"),
+            dir.path().join("statusline"),
+            true,
+            Duration::from_secs(60),
+            PrivacyKey::fixed_for_tests(),
+        )
+    }
+
+    fn collect(ctx: &RunContext) -> (Outcome, Vec<Value>) {
+        let mut sink = MemorySink::default();
+        let outcome = CursorExecution.collect(ctx, None, &mut sink).unwrap();
+        let records = sink.records.iter().map(|entry| serde_json::to_value(&entry.record).unwrap()).collect();
+        (outcome, records)
+    }
+
+    fn capability_of(outcome: &Outcome, dimension: CapabilityDimension) -> (CapabilityState, Option<String>) {
+        let row = outcome
+            .capabilities
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|capability| capability.dimension == dimension)
+            .unwrap();
+        (row.state, row.detail_code.0.as_ref().map(|code| code.as_str().to_owned()))
+    }
+
+    fn assert_never_the_run_clock(records: &[Value]) {
+        for record in records {
+            for field in ["observed_at", "ended_at", "started_at"] {
+                assert_ne!(record[field].as_str(), Some(RUN_NOW), "{field} carries the run clock: {record}");
+            }
+            assert_eq!(record["observed_at"], record["ended_at"], "ended_at is the same store time");
+        }
+    }
+
+    #[test]
+    fn records_carry_store_times_and_bubbles_without_one_are_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        synthetic_store(&dir.path().join("state.vscdb"));
+        let ctx = context(&dir, DetailLevel::Requests);
+        let (outcome, records) = collect(&ctx);
+        assert_eq!(records.len(), 2, "{records:?}");
+        assert_never_the_run_clock(&records);
+        let mut observed: Vec<&str> =
+            records.iter().map(|record| record["observed_at"].as_str().unwrap()).collect();
+        observed.sort_unstable();
+        assert_eq!(observed, ["2025-09-13T21:46:40.000Z", "2025-09-14T10:00:00.250Z"]);
+        assert!(
+            records
+                .iter()
+                .all(|record| record["parser_version"].as_str().unwrap().ends_with("+cursor-local2"))
+        );
+
+        assert_eq!(outcome.records_emitted, 2);
+        assert_eq!(outcome.malformed, 1, "the bubble with no store time is counted, not emitted");
+        assert_eq!((outcome.state, outcome.detail), (CoverageState::Partial, Some(DetailCode::ParseError)));
+        assert_eq!(capability_of(&outcome, CapabilityDimension::Requests), (CapabilityState::Complete, None));
+        assert_eq!(
+            capability_of(&outcome, CapabilityDimension::TokenComposition),
+            (CapabilityState::Partial, Some("local_counters_not_billed".into()))
+        );
+    }
+
+    #[test]
+    fn a_store_of_zero_counters_yields_no_records_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_store(&dir.path().join("state.vscdb"));
+        put(&conn, "composerData:comp-1", json!({"createdAt": 1_757_800_000_000i64}));
+        for bubble in ["a", "b", "c"] {
+            put(
+                &conn,
+                &format!("bubbleId:comp-1:{bubble}"),
+                json!({"type": 2, "text": "SECRET", "createdAt": "2025-09-14T10:00:00.000Z",
+                       "tokenCount": {"inputTokens": 0, "outputTokens": 0}}),
+            );
+        }
+        drop(conn);
+        let ctx = context(&dir, DetailLevel::Requests);
+        let (outcome, records) = collect(&ctx);
+        assert!(records.is_empty());
+        assert_eq!((outcome.state, outcome.detail, outcome.malformed), (CoverageState::Ok, None, 0));
+        assert_eq!(
+            capability_of(&outcome, CapabilityDimension::Requests),
+            (CapabilityState::Unknown, Some("local_counters_zero".into()))
+        );
+        assert_eq!(
+            capability_of(&outcome, CapabilityDimension::TokenComposition),
+            (CapabilityState::Unsupported, Some("local_counters_zero".into()))
+        );
+    }
+
+    #[test]
+    fn buckets_only_reads_nothing_into_the_sink() {
+        let dir = tempfile::tempdir().unwrap();
+        synthetic_store(&dir.path().join("state.vscdb"));
+        let ctx = context(&dir, DetailLevel::BucketsOnly);
+        let (outcome, records) = collect(&ctx);
+        assert!(records.is_empty());
+        assert_eq!(
+            capability_of(&outcome, CapabilityDimension::Requests),
+            (CapabilityState::DisabledBySetting, Some("detail_level_buckets_only".into()))
+        );
     }
 }

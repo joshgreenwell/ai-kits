@@ -2,8 +2,11 @@
 //! token are read only through the dedicated token helper; conversation bodies
 //! are never loaded — token fields are extracted in SQLite.
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::str::FromStr;
 
+use jiff::Timestamp;
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OpenFlags};
 use thiserror::Error;
@@ -25,7 +28,12 @@ pub struct CursorAuthIdentity {
     pub label: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// One bubble's counters plus the timestamps the store keeps for it. Every
+/// time here comes from the store itself (the bubble's `createdAt`, written as
+/// an ISO-8601 string or epoch milliseconds, and the owning composer's
+/// integer-millisecond `createdAt` / `lastUpdatedAt`), never from the clock of
+/// the run that read it.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CursorComposerUsage {
     pub composer_id: String,
     pub bubble_id: Option<String>,
@@ -33,8 +41,39 @@ pub struct CursorComposerUsage {
     pub output_tokens: Option<i64>,
     pub cache_read_tokens: Option<i64>,
     pub cache_write_tokens: Option<i64>,
+    /// The bubble's own `createdAt`, as epoch milliseconds.
     pub created_at_ms: Option<i64>,
+    /// The owning composer's `createdAt` (`composerData:<composer_id>`).
+    pub composer_created_at_ms: Option<i64>,
+    /// The owning composer's `lastUpdatedAt`, when the build stores one.
+    pub composer_updated_at_ms: Option<i64>,
     pub model: Option<String>,
+}
+
+impl CursorComposerUsage {
+    /// The stable observation time of this bubble: its own `createdAt`, else
+    /// the composer's `createdAt`. `None` means the store holds no time for
+    /// it at all; a caller must then skip it rather than substitute a clock.
+    pub fn observed_at_ms(&self) -> Option<i64> {
+        self.created_at_ms.or(self.composer_created_at_ms)
+    }
+
+    /// Whether any counter is a positive number. Current Cursor builds write
+    /// `tokenCount` with every field zero for most bubbles; those rows prove a
+    /// bubble exists and nothing about its usage.
+    pub fn has_token_evidence(&self) -> bool {
+        [self.input_tokens, self.output_tokens, self.cache_read_tokens, self.cache_write_tokens]
+            .into_iter()
+            .flatten()
+            .any(|count| count > 0)
+    }
+}
+
+/// A composer's own timestamps, read from `composerData:<composer_id>`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ComposerTimes {
+    created_at_ms: Option<i64>,
+    updated_at_ms: Option<i64>,
 }
 
 fn open_read_only(path: &Path) -> Result<Connection, CursorStoreError> {
@@ -150,6 +189,7 @@ pub fn cursor_local_usage(path: &Path) -> Result<(u64, Vec<CursorComposerUsage>)
             row.get::<_, i64>(0)
         })
         .unwrap_or(0);
+    let composers = composer_times(&conn)?;
     let mut rows = Vec::new();
     let mut statement = conn
         .prepare(
@@ -174,6 +214,7 @@ pub fn cursor_local_usage(path: &Path) -> Result<(u64, Vec<CursorComposerUsage>)
         if input.is_none() && output.is_none() && cache_read.is_none() && cache_write.is_none() {
             continue;
         }
+        let composer = composers.get(&composer_id).copied().unwrap_or_default();
         rows.push(CursorComposerUsage {
             composer_id,
             bubble_id: Some(bubble_id),
@@ -181,11 +222,40 @@ pub fn cursor_local_usage(path: &Path) -> Result<(u64, Vec<CursorComposerUsage>)
             output_tokens: output,
             cache_read_tokens: cache_read,
             cache_write_tokens: cache_write,
-            created_at_ms: cell_i64(row, 5)?,
+            created_at_ms: cell_timestamp_ms(row, 5)?,
+            composer_created_at_ms: composer.created_at_ms,
+            composer_updated_at_ms: composer.updated_at_ms,
             model: cell_text(row, 6)?,
         });
     }
     Ok((u64::try_from(bytes.max(0)).unwrap_or(0), rows))
+}
+
+/// Each composer's `createdAt` and `lastUpdatedAt`, extracted in SQLite so the
+/// conversation body under the same key is never loaded.
+fn composer_times(conn: &Connection) -> Result<HashMap<String, ComposerTimes>, CursorStoreError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT key, json_extract(value, '$.createdAt'), json_extract(value, '$.lastUpdatedAt')
+             FROM cursorDiskKV WHERE key LIKE 'composerData:%'",
+        )
+        .map_err(|_| CursorStoreError::Read)?;
+    let mut query = statement.query([]).map_err(|_| CursorStoreError::Read)?;
+    let mut composers = HashMap::new();
+    while let Some(row) = query.next().map_err(|_| CursorStoreError::Read)? {
+        let key: String = row.get(0).map_err(|_| CursorStoreError::Read)?;
+        let Some(composer_id) = key.strip_prefix("composerData:").filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        let times = ComposerTimes {
+            created_at_ms: cell_timestamp_ms(row, 1)?,
+            updated_at_ms: cell_timestamp_ms(row, 2)?,
+        };
+        if times != ComposerTimes::default() {
+            composers.insert(composer_id.to_owned(), times);
+        }
+    }
+    Ok(composers)
 }
 
 fn bubble_parts(key: &str) -> Option<(String, String)> {
@@ -205,6 +275,31 @@ fn cell_i64(row: &rusqlite::Row<'_>, idx: usize) -> Result<Option<i64>, CursorSt
         ValueRef::Text(bytes) => Ok(std::str::from_utf8(bytes).ok().and_then(|text| text.parse().ok())),
         _ => Ok(None),
     }
+}
+
+/// A store timestamp as epoch milliseconds. Cursor writes a bubble's
+/// `createdAt` as an ISO-8601 string in current builds and as epoch
+/// milliseconds in older ones; composer times are integer milliseconds. Text
+/// that is neither an integer nor a parseable timestamp reads as absent.
+fn cell_timestamp_ms(row: &rusqlite::Row<'_>, idx: usize) -> Result<Option<i64>, CursorStoreError> {
+    match row.get_ref(idx).map_err(|_| CursorStoreError::Read)? {
+        ValueRef::Null => Ok(None),
+        ValueRef::Integer(n) => Ok(Some(n)),
+        ValueRef::Real(n) if n.is_finite() => Ok(Some(n.trunc() as i64)),
+        ValueRef::Text(bytes) => Ok(std::str::from_utf8(bytes).ok().and_then(timestamp_text_ms)),
+        _ => Ok(None),
+    }
+}
+
+fn timestamp_text_ms(text: &str) -> Option<i64> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(millis) = trimmed.parse::<i64>() {
+        return Some(millis);
+    }
+    Timestamp::from_str(trimmed).ok().map(|at| at.as_millisecond())
 }
 
 fn cell_text(row: &rusqlite::Row<'_>, idx: usize) -> Result<Option<String>, CursorStoreError> {
@@ -260,6 +355,59 @@ mod tests {
         (dir, path)
     }
 
+    /// The shape current Cursor builds write: bubble `createdAt` as an ISO-8601
+    /// string or absent, `tokenCount` present with zero fields, and the
+    /// composer's own integer-millisecond `createdAt` / `lastUpdatedAt`.
+    fn current_build_fixture() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.vscdb");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE ItemTable (key TEXT UNIQUE, value BLOB);
+             CREATE TABLE cursorDiskKV (key TEXT UNIQUE, value BLOB);",
+        )
+        .unwrap();
+        let rows = [
+            (
+                "composerData:comp-1",
+                json!({"composerId": "comp-1", "text": "SECRET-COMPOSER", "createdAt": 1_735_600_170_253i64,
+                       "lastUpdatedAt": 1_735_600_999_000i64, "usageData": {"auto": {"amount": 2, "costInCents": 0}}}),
+            ),
+            (
+                "bubbleId:comp-1:iso",
+                json!({"type": 2, "text": "SECRET-PROMPT", "createdAt": "2025-12-31T00:10:00.500Z",
+                       "tokenCount": {"inputTokens": 5728, "outputTokens": 191}}),
+            ),
+            (
+                "bubbleId:comp-1:no-created-at",
+                json!({"type": 2, "text": "SECRET-PROMPT", "tokenCount": {"inputTokens": 15124, "outputTokens": 2436}}),
+            ),
+            (
+                "bubbleId:comp-1:zero",
+                json!({"type": 2, "text": "SECRET-PROMPT", "createdAt": "2025-12-31T00:11:00.000Z",
+                       "tokenCount": {"inputTokens": 0, "outputTokens": 0}}),
+            ),
+            (
+                "bubbleId:comp-1:no-token-count",
+                json!({"type": 1, "text": "SECRET-PROMPT", "createdAt": "2025-12-31T00:12:00.000Z"}),
+            ),
+            (
+                "bubbleId:comp-orphan:no-time",
+                json!({"type": 2, "text": "SECRET-PROMPT", "tokenCount": {"inputTokens": 7, "outputTokens": 1}}),
+            ),
+            (
+                "bubbleId:comp-orphan:epoch",
+                json!({"type": 2, "text": "SECRET-PROMPT", "createdAt": 1_725_000_000_000i64,
+                       "tokenCount": {"inputTokens": 3, "outputTokens": 1}}),
+            ),
+        ];
+        for (key, value) in rows {
+            conn.execute("INSERT INTO cursorDiskKV(key, value) VALUES (?1, ?2)", [key, &value.to_string()])
+                .unwrap();
+        }
+        (dir, path)
+    }
+
     fn split_key_fixture() -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.vscdb");
@@ -293,6 +441,54 @@ mod tests {
         assert_eq!(bubble.cache_read_tokens, Some(3));
         assert!(format!("{usage:?}").contains("comp-1"));
         assert!(!format!("{usage:?}").contains("SECRET-PROMPT"));
+    }
+
+    #[test]
+    fn bubble_times_come_from_the_store_and_fall_back_to_the_composer() {
+        let (_dir, path) = current_build_fixture();
+        let (_bytes, usage) = cursor_local_usage(&path).unwrap();
+        let row = |bubble: &str| usage.iter().find(|row| row.bubble_id.as_deref() == Some(bubble)).unwrap();
+        assert!(!format!("{usage:?}").contains("SECRET"), "no body or composer text is retained");
+        assert!(
+            usage.iter().all(|row| row.bubble_id.as_deref() != Some("no-token-count")),
+            "a bubble without any counter is not a usage row"
+        );
+
+        // An ISO-8601 bubble `createdAt` is the observation time.
+        let iso = row("iso");
+        assert_eq!(iso.created_at_ms, Some(1_767_139_800_500));
+        assert_eq!(iso.composer_created_at_ms, Some(1_735_600_170_253));
+        assert_eq!(iso.composer_updated_at_ms, Some(1_735_600_999_000));
+        assert_eq!(iso.observed_at_ms(), Some(1_767_139_800_500));
+        assert!(iso.has_token_evidence());
+
+        // Without a bubble time the composer's own `createdAt` stands in.
+        let composer_time = row("no-created-at");
+        assert_eq!(composer_time.created_at_ms, None);
+        assert_eq!(composer_time.observed_at_ms(), Some(1_735_600_170_253));
+
+        // All-zero counters are a bubble without usage evidence.
+        let zero = row("zero");
+        assert_eq!(zero.observed_at_ms(), Some(1_767_139_860_000));
+        assert!(!zero.has_token_evidence());
+
+        // Neither time: the store holds nothing to observe it at.
+        let orphan = row("no-time");
+        assert_eq!(orphan.composer_created_at_ms, None);
+        assert_eq!(orphan.observed_at_ms(), None);
+
+        // Older builds wrote epoch milliseconds.
+        assert_eq!(row("epoch").observed_at_ms(), Some(1_725_000_000_000));
+    }
+
+    #[test]
+    fn timestamp_text_accepts_millis_and_rfc3339_only() {
+        assert_eq!(timestamp_text_ms("1725000000000"), Some(1_725_000_000_000));
+        assert_eq!(timestamp_text_ms(" 2024-08-30T07:06:40Z "), Some(1_725_001_600_000));
+        assert_eq!(timestamp_text_ms("2024-08-30T07:06:40.250+00:00"), Some(1_725_001_600_250));
+        assert_eq!(timestamp_text_ms(""), None);
+        assert_eq!(timestamp_text_ms("yesterday"), None);
+        assert_eq!(timestamp_text_ms("2024-08-30"), None, "a bare date has no instant");
     }
 
     #[test]
