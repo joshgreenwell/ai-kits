@@ -87,6 +87,8 @@ const CHANNEL_RANK = "CASE channel WHEN 'provider_api' THEN 0 WHEN 'app_server' 
  * 20260921090000). The generated columns are listed because `to_jsonb` of a stored row carries them.
  */
 const REQUEST_SIGHTING_COLUMNS = ['id', 'observed_at', 'ended_at', 'activity_at', 'received_at', 'content_hash', 'total_tokens', 'observed_total_tokens'];
+/** The one request producer that stamped the run clock into its records (cursor / local_db); see ingestUsage. */
+const RUN_CLOCK_PARSER_VERSION = '2.0.0+cursor-local1';
 /** Ledger evidence counts are bounded to this window (the dashboard's), so each count is an index range scan per account. */
 const LEDGER_EVIDENCE_WINDOW = '35 days';
 const IDENTITY_RANK = "CASE session_identity WHEN 'provider' THEN 0 WHEN 'derived' THEN 1 ELSE 2 END";
@@ -526,12 +528,15 @@ export function createUsageStore(getDatabase?: () => Sql) {
         acceptedRecords += inserted.length; duplicates += rows.length - inserted.length;
         count(type, 'accepted', inserted.length); count(type, 'duplicate', rows.length - inserted.length);
       };
-      // A request revision is content, never a sighting. The revision key (account, semantic key, channel,
-      // content hash) already stores an exact replay once, but a hash covers the observation time, so a
-      // record re-read with the same facts under a new run timestamp (the Cursor local_db replay that
-      // grew the ledger by ~130k rows a day) would be stored again. Such a row counts as a duplicate:
-      // the earliest sighting of each distinct content stays, and the receipt tells the companion so.
-      // Timestamp-only differences are the same set 20260921090000 collapses; anything else is a revision.
+      // The revision key (account, semantic key, channel, content hash) stores an exact replay once. One
+      // producer defeated it: the Cursor local_db reader of parser 2.0.0+cursor-local1 stamped a bubble
+      // without createdAt with the run clock as observed_at and ended_at, so every hourly run re-emitted
+      // the same facts under a new hash (~130k rows a day; 20260921090000 collapses the stored ones).
+      // Only rows from that producer are compared by content minus the sighting columns and counted as
+      // duplicates when already stored; the earliest sighting stays and the receipt says so. The scope
+      // is deliberately that narrow: for the Claude and Codex adapters a revision that moves only
+      // ended_at is real information (a request first seen running, then seen finished), and the fixed
+      // reader (2.0.0+cursor-local2) uses stable store timestamps, so both insert exactly as before.
       const insertRequests = async (rows: Row[]) => {
         if (!rows.length) return;
         const columns = Object.keys(rows[0]);
@@ -539,8 +544,11 @@ export function createUsageStore(getDatabase?: () => Sql) {
         await tx`INSERT INTO _incoming_requests ${tx(rows)}`;
         const inserted = await tx`INSERT INTO personal_hub.activity_requests (${tx(columns)})
           SELECT DISTINCT ON (account_id, semantic_key, record_id, content) ${tx(columns)}
-          FROM (SELECT i.*, to_jsonb(i) - ${REQUEST_SIGHTING_COLUMNS}::text[] AS content FROM _incoming_requests i) candidate
-          WHERE NOT EXISTS (SELECT 1 FROM personal_hub.activity_requests o
+          FROM (SELECT i.*, run_clock,
+              CASE WHEN run_clock THEN to_jsonb(i) - ${REQUEST_SIGHTING_COLUMNS}::text[] ELSE to_jsonb(i) END AS content
+            FROM _incoming_requests i,
+              LATERAL (SELECT i.provider = 'cursor' AND i.channel = 'local_db' AND i.parser_version = ${RUN_CLOCK_PARSER_VERSION} AS run_clock) producer) candidate
+          WHERE NOT run_clock OR NOT EXISTS (SELECT 1 FROM personal_hub.activity_requests o
             WHERE o.account_id = candidate.account_id AND o.semantic_key = candidate.semantic_key AND o.record_id = candidate.record_id
               AND to_jsonb(o) - ${REQUEST_SIGHTING_COLUMNS}::text[] = candidate.content)
           ORDER BY account_id, semantic_key, record_id, content, observed_at, id

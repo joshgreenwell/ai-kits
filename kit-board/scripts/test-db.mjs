@@ -233,7 +233,10 @@ try {
   await db.end({ timeout: 1 });
   console.log(`Applied ${migrations.length} migrations.`);
   const tests = (await readdir(join(root, 'tests'))).filter(file => file.endsWith('.integration.test.ts') || file.endsWith('-contract.test.ts')).sort().map(file => `tests/${file}`);
-  await command(process.execPath, ['--import', 'tsx', '--test', ...tests], { env: {
+  // One file at a time: the files share one database and its global settings version, so a
+  // browser-collector pause running beside the store test made the store's version and ETag
+  // assertions race.
+  await command(process.execPath, ['--import', 'tsx', '--test', '--test-concurrency=1', ...tests], { env: {
     ...process.env, ...env,
     ROUTING_TEST_DATABASE_URL: env.TEST_DATABASE_URL, ...(env.TEST_DATABASE_HOST ? { ROUTING_TEST_DATABASE_HOST: env.TEST_DATABASE_HOST, ROUTING_TEST_DATABASE_PORT: env.TEST_DATABASE_PORT } : {}),
   }, stdio: 'inherit' });

@@ -114,17 +114,14 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.deepEqual(r1.accepted, { buckets: 1, records: 2 }); assert.equal(r1.duplicates, 0); assert.deepEqual(r1.rejected, []);
     const r2 = await store.ingestUsage(current, one);
     assert.deepEqual(r2.accepted, { buckets: 0, records: 0 }); assert.equal(r2.duplicates, 3);
-    // A request re-read with the same facts under a new run timestamp (Cursor's local_db replay: observed_at and
-    // ended_at move, so the content hash moves) is a duplicate sighting, never a revision; changed facts still are one.
+    // For the Claude adapter a revision that moves only ended_at is information (first seen running, then seen
+    // finished): it is stored through the revision key, as before. Only the run-clock Cursor producer is different (below).
     const firstRequest = one.records[0] as Extract<UsageEnvelope['records'][number], { record_type: 'activity.request' }>;
-    const replayed = envelope({ records: [{ ...firstRequest, observed_at: '2026-09-02T04:20:00.000Z', ended_at: '2026-09-02T04:20:00.000Z' }] });
-    const r3 = await store.ingestUsage(current, replayed);
-    assert.deepEqual([r3.accepted.records, r3.duplicates], [0, 1], 'a timestamp-only replay of a request is a duplicate');
-    assert.deepEqual((await sql`SELECT accepted_by_type FROM personal_hub.companion_runs WHERE run_id = ${replayed.run.run_id}`)[0].accepted_by_type,
-      { 'activity.request': { accepted: 0, duplicate: 1, rejected: 0 } });
-    assert.equal(Number((await sql`SELECT count(*) FROM personal_hub.activity_requests WHERE record_id = ${firstRequest.record_id}`)[0].count), 1);
-    const revisedRequest = envelope({ records: [{ ...firstRequest, ended_at: '2026-09-02T04:20:00.000Z', tokens: { ...firstRequest.tokens, output: 51 } }] });
-    assert.equal((await store.ingestUsage(current, revisedRequest)).accepted.records, 1, 'changed facts under a new timestamp are a revision');
+    const finished = envelope({ records: [{ ...firstRequest, observed_at: '2026-09-02T04:20:00.000Z', ended_at: '2026-09-02T04:20:00.000Z' }] });
+    const r3 = await store.ingestUsage(current, finished);
+    assert.deepEqual([r3.accepted.records, r3.duplicates], [1, 0], 'a claude request replayed with only ended_at changed is a new revision');
+    assert.equal(Number((await sql`SELECT count(*) FROM personal_hub.activity_requests WHERE record_id = ${firstRequest.record_id}`)[0].count), 2);
+    assert.equal((await store.ingestUsage(current, finished)).duplicates, 1, 'and its exact replay is a duplicate through the revision key');
     const [runRow] = await sql`SELECT accepted_buckets, accepted_records, jsonb_array_length(coverage) AS entries FROM personal_hub.companion_runs WHERE run_id = ${one.run.run_id}`;
     assert.equal(Number(runRow.accepted_buckets), 1, 'envelopes of one run accumulate on run_id');
     assert.equal(Number(runRow.entries), 2);
@@ -212,6 +209,23 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     const secondEnvelope = envelope({ records: [secondShared, secondSameFolder, secondInvocation, secondAccess] });
     assert.equal((await store.ingestUsage(secondInstall, secondEnvelope)).accepted.records, 4);
     assert.equal((await store.ingestUsage(secondInstall, secondEnvelope)).duplicates, 4, 'duplicate replay leaves identities idempotent');
+
+    // The run-clock Cursor producer (parser 2.0.0+cursor-local1, local_db) stamped observed_at and ended_at with the run
+    // clock, so its re-read of the same facts moves the content hash: that, and only that, counts as a duplicate sighting.
+    const cursorAccount = `cursor-${randomUUID().slice(0, 8)}`;
+    const cursorId = (await store.createBinding(secondInstall, { account_id: cursorAccount, provider: 'cursor', account_label: 'Cursor test', identity_hash: null })).binding.binding_id;
+    const bubble = { ...request(cursorId, 'cursor_execution', 'cursor-bubble', 'local_db'), parser_version: '2.0.0+cursor-local1', ended_at: '2026-09-02T03:20:00.000Z' };
+    assert.equal((await store.ingestUsage(secondInstall, envelope({ records: [bubble] }))).accepted.records, 1);
+    const bubbleAgain = envelope({ records: [{ ...bubble, observed_at: '2026-09-02T04:20:00.000Z', ended_at: '2026-09-02T04:20:00.000Z' }] });
+    const cursorReplay = await store.ingestUsage(secondInstall, bubbleAgain);
+    assert.deepEqual([cursorReplay.accepted.records, cursorReplay.duplicates], [0, 1], 'the run-clock replay of a Cursor bubble is a duplicate, not a revision');
+    assert.deepEqual((await sql`SELECT accepted_by_type FROM personal_hub.companion_runs WHERE run_id = ${bubbleAgain.run.run_id}`)[0].accepted_by_type,
+      { 'activity.request': { accepted: 0, duplicate: 1, rejected: 0 } });
+    assert.equal(Number((await sql`SELECT count(*) FROM personal_hub.activity_requests WHERE record_id = ${bubble.record_id}`)[0].count), 1, 'the earliest sighting stays');
+    assert.equal((await store.ingestUsage(secondInstall, envelope({ records: [{ ...bubble, ended_at: '2026-09-02T04:20:00.000Z', outcome: 'failed' }] }))).accepted.records, 1,
+      'changed facts from that producer are still a revision');
+    assert.equal((await store.ingestUsage(secondInstall, envelope({ records: [{ ...bubble, parser_version: '2.0.0+cursor-local2', ended_at: '2026-09-02T05:20:00.000Z' }] }))).accepted.records, 1,
+      'the fixed reader inserts through the revision key alone');
 
     const registryBefore = await store.listProjects();
     const identity = (key: string, installId: string | null, basis = 'working_directory') => registryBefore.identities.find(item =>
@@ -476,7 +490,8 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
 
     // Each binding reports the newest evidence in its ledgers separately from collector contact.
     const claudeBinding = mine.bindings.find(b => b.id === bindingId)!, codexBinding = mine.bindings.find(b => b.id === codexId)!;
-    assert.deepEqual(claudeBinding.last_observation, { allowance: null, requests: '2026-09-02T03:20:00.000Z' });
+    // The newest request observation is the finished revision of the first request, ingested above.
+    assert.deepEqual(claudeBinding.last_observation, { allowance: null, requests: '2026-09-02T04:20:00.000Z' });
     assert.deepEqual(claudeBinding.last_received, { allowance: null });
     assert.deepEqual(codexBinding.last_observation, { allowance: { observed_at: '2026-09-02T03:20:00.000Z', resets_at: '2026-09-02T05:00:00.000Z', reader: 'embedded' }, requests: null });
     assert.ok(codexBinding.last_received.allowance, 'the newest receipt of a reading is reported beside its observation');
