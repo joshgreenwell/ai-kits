@@ -146,7 +146,9 @@ function priceInto(target: PricingRow, row: PricingInputRow, catalog: PricingCat
   const period = pricingPeriod(found.config, row.rate_date ?? '0000-01-01');
   if (!period) { unpriced('no_rate_for_event_date', total); return; }
   const { tier, assumed } = normalizeTier(row.service_tier);
-  const fastRequested = found.key === 'anthropic' && (row.speed ?? '').toLowerCase() === 'fast' && period.rates.fast;
+  // Fast is chosen from the recorded speed where a catalog prices it per model: Anthropic's Opus 5.5, Opus 5
+  // and Opus 4.8, and xAI's Grok 4.7 Fast. OpenAI reaches its fast tier through the priority alias instead.
+  const fastRequested = (found.key === 'anthropic' || found.key === 'xai') && (row.speed ?? '').toLowerCase() === 'fast' && period.rates.fast;
   const pricingTier = fastRequested ? 'fast' : (period.service_tier_aliases?.[tier] ?? tier);
   if (found.key === 'anthropic' && tier === 'priority') target.priority_at_standard_calls += row.calls;
   const band = row.context_band ?? 'short';
@@ -206,14 +208,15 @@ const OPENAI_ASSUMPTIONS = [
   'Per-request long-context rates apply when logged input exceeds 272K tokens.',
 ];
 const XAI_ASSUMPTIONS = [
-  'xAI rates are the public list prices read on September 17, 2026 and are applied to a request of any date; price changes before that date are not modeled.',
+  'xAI rates are the public list prices read on September 17, 2026, with Grok 4.7 added from them on September 22, 2026, and are applied to a request of any date; price changes before that date are not modeled.',
   'Per-request long-context rates apply when logged input reaches 200K tokens.',
   'Priority is priced at 2x standard list rates as published; batch, regional, and server-side tool-invocation surcharges are excluded.',
+  'Grok 4.7 Fast, sold only through Cursor and Grok Build, prices from its own published table when a request records fast speed; Cursor does not record speed for Grok today, so such requests price at standard.',
 ];
 const ANTHROPIC_ASSUMPTIONS = [
-  'Anthropic rates are the public list prices read on September 14, 2026 and are applied to a request of any date; price changes before that date are not modeled.',
+  'Anthropic rates are the public list prices read on September 14, 2026 and re-verified on September 22, 2026, when Opus 5.5 was added, and are applied to a request of any date; price changes before that date are not modeled.',
   'Cache reads use each model’s cache-hit rate; cache writes use the 5-minute (1.25x) or 1-hour (2x) rate as recorded, and an unrecorded TTL is assumed 5-minute and counted.',
-  'Batch is priced at 50% with cache multipliers stacked; priority is priced at standard list rates and flagged; flex is left unpriced; fast applies to Opus 5 and Opus 4.8 from the recorded speed.',
+  'Batch is priced at 50% with cache multipliers stacked; priority is priced at standard list rates and flagged; flex is left unpriced; fast applies to Opus 5.5, Opus 5, and Opus 4.8 from the recorded speed.',
   'Claude 4.6 and later bill the full context window at standard rates, so their requests over 200K input price at the same rates; the long-context premium of earlier models is not modeled and their requests over 200K input stay unpriced.',
   'Dated Claude model ids (a trailing -YYYYMMDD) price as their undated model.',
 ];

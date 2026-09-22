@@ -23,7 +23,7 @@ test('the catalog is the analyzer’s, with the Anthropic list prices beside it'
       else assert.equal(bands.long, undefined, `${name} ${tier} has no long band`);
       if (tier === 'batch') assert.deepEqual(bands.short, { input: period.rates.standard.short.input / 2, cached_input: period.rates.standard.short.cached_input / 2, output: period.rates.standard.short.output / 2 }, `${name} batch is half of standard`);
     }
-    assert.equal(!!config.periods[0].rates.fast, name === 'claude-opus-5' || name === 'claude-opus-4-8', `${name} fast tier only on Opus 5 and Opus 4.8`);
+    assert.equal(!!config.periods[0].rates.fast, ['claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8'].includes(name), `${name} fast tier only on Opus 5.5, Opus 5 and Opus 4.8`);
   }
 });
 
@@ -131,7 +131,7 @@ test('aggregations reconcile to the dimension rows and the catalog provenance tr
   ], 'the graph series keeps source price dates and reconciles model rows within each day');
   assert.equal(total(estimate.series), estimate.estimated_cost_usd);
   assert.equal(estimate.by_model.find(m => m.model === 'gpt-5.6-sol')?.calls, 2);
-  assert.deepEqual(estimate.pricing_catalog.versions, { openai: '2026-09-22', anthropic: '2026-09-14', xai: '2026-09-17' });
+  assert.deepEqual(estimate.pricing_catalog.versions, { openai: '2026-09-22', anthropic: '2026-09-22', xai: '2026-09-22' });
   assert.ok(estimate.pricing_catalog.sources.length >= 8 && estimate.pricing_catalog.provenance.openai?.includes('verbatim'));
 });
 
@@ -171,4 +171,37 @@ test('GPT-6 Sol and Luna price from their published rates, and only from their r
   // priced at a rate that did not exist yet.
   const early = priceUsage([row({ model: 'gpt-6-sol', rate_date: '2026-09-21', service_tier: 'standard' })]);
   assert.deepEqual([early.estimated_cost_usd, early.unpriced_reasons], [0, { no_rate_for_event_date: 1_100_000 }]);
+});
+
+test('Claude Opus 5.5 prices from its published rates, including the two rules it does not share with Opus 5', () => {
+  // Pricing page, 2026-09-22: $4 input, $20 output, cache hits at 0.05x base input ($0.20), fast $8 / $40.
+  // The row helper sends 1,000,000 fresh input and 100,000 output.
+  const at = (extra: Partial<PricingInputRow> = {}) =>
+    priceUsage([row({ provider: 'claude', model: 'claude-opus-5-5', service_tier: 'standard', reasoning: 0, ...extra })]).estimated_cost_usd;
+  assert.equal(at(), 4 + 2, 'standard');
+  assert.equal(at({ speed: 'fast' }), 8 + 4, 'fast is its own $8 / $40 rate, not the $10 / $50 of Opus 5');
+  assert.equal(at({ service_tier: 'batch' }), 2 + 1, 'batch is half of standard');
+  assert.equal(at({ context_band: 'long' }), 4 + 2, 'Claude 4.6 and later bill the full window at standard rates');
+  // Cache hits at 0.05x, where Opus 5 is 0.1x: this is the rule most likely to be copied wrongly.
+  assert.equal(at({ input_fresh: 0, input_cached: 1_000_000, output: 0, total_tokens: 1_000_000 }), 0.2);
+  assert.equal(at({ input_fresh: 0, input_cache_write: 1_000_000, output: 0, total_tokens: 1_000_000, cache_write_ttl: '5m' }), 5, '5-minute write at 1.25x');
+  assert.equal(at({ input_fresh: 0, input_cache_write: 1_000_000, output: 0, total_tokens: 1_000_000, cache_write_ttl: '1h' }), 8, '1-hour write at 2x');
+  assert.equal(at({ model: 'claude-opus-5-5-20260901' }), 6, 'a dated id prices as its undated model');
+  // Fast plus a cache hit: caching multipliers apply on top of fast, so 0.05 x $8.
+  assert.equal(at({ speed: 'fast', input_fresh: 0, input_cached: 1_000_000, output: 0, total_tokens: 1_000_000 }), 0.4);
+});
+
+test('Grok 4.7 prices from the xAI table, and its Fast tier from its own table rather than a derived one', () => {
+  const at = (extra: Partial<PricingInputRow> = {}) =>
+    priceUsage([row({ provider: 'cursor', model: 'grok-4.7', service_tier: 'standard', reasoning: 0, ...extra })]).estimated_cost_usd;
+  assert.equal(at(), 2 + 0.6, 'standard: $2 input, $6 output');
+  assert.equal(at({ model: 'grok-4-7' }), 2.6, 'the hyphenated id is an alias');
+  assert.equal(at({ context_band: 'long' }), 4 + 1.2, 'at or above 200K: $4 / $12');
+  assert.equal(at({ service_tier: 'priority' }), 4 + 1.2, 'priority is 2x standard');
+  // Cursor records no speed for Grok today, so this is the price its requests actually get.
+  assert.equal(at({ speed: null }), 2.6);
+  // Grok 4.7 Fast, sold only through Cursor and Grok Build. The page calls it twice the standard rates,
+  // but its above-200K row is $6 / $18, which is 1.5x the long band. Deriving it as 2x would give 9.6.
+  assert.equal(at({ speed: 'fast' }), 4 + 1.2, 'fast below 200K: $4 / $12');
+  assert.equal(at({ speed: 'fast', context_band: 'long' }), 6 + 1.8, 'fast above 200K is $6 / $18, as published');
 });
