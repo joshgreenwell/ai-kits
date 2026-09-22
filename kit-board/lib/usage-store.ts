@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import type postgres from 'postgres';
 import { RequestError, stableJson } from './contracts';
-import { canonicalRequestsUpsert } from './usage-canonical';
+import { canonicalRequestsUpsert, canonicalToolUpsert } from './usage-canonical';
 import { readCache } from './read-cache';
 import { clearUsageQueryCache } from './usage-query';
 import { collectionSettingsSchema, installOverrideSchema, mergeSettings, type CollectionSettings, type InstallOverride } from './companion-settings';
@@ -595,6 +595,20 @@ export function createUsageStore(getDatabase?: () => Sql) {
       await insertRequests(requests); await insert('account_usage_buckets', 'account.usage_bucket', usage);
       await insert('allowance_readings', 'allowance.reading', readings); await insert('money_entries', 'money.entry', money);
       await insert('agent_events', 'agent.event', agentEvents); await insert('tool_events', 'tool.event', toolEvents);
+      // TOOL PROJECTION MAINTENANCE, on the same terms as the request projection above: keyed on every
+      // invocation THIS ENVELOPE CARRIED, invocation or result, not on the rows it inserted, because a
+      // replay inserts nothing and a result can arrive in a different envelope from its invocation.
+      // One statement locks each key once, in the sorted order its own ORDER BY gives, and recomputes both
+      // registers from the ledger under independent guards, so arrival order never matters. The
+      // transaction's lock_timeout is the backstop.
+      if (toolEvents.length) {
+        const touchedKeys = [...new Map(toolEvents.map(row => [JSON.stringify([row.account_id, row.invocation_key]), row])).values()]
+          .sort((a, b) => String(a.account_id).localeCompare(String(b.account_id)) || String(a.invocation_key).localeCompare(String(b.invocation_key)));
+        const touched = 'WITH touched AS (SELECT * FROM unnest($1::text[], $2::text[]) AS k(account_id, invocation_key))';
+        const keysJoin = 'JOIN touched k ON k.account_id = t.account_id AND k.invocation_key = t.invocation_key';
+        await tx.unsafe(canonicalToolUpsert(keysJoin, touched),
+          [touchedKeys.map(row => row.account_id as string), touchedKeys.map(row => row.invocation_key as string)]);
+      }
       await insert('resource_accesses', 'resource.access', resourceAccesses);
 
       // The bodies of one run accumulate: counters add up, per-type counts merge key-wise, and coverage

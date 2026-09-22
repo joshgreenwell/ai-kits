@@ -413,8 +413,8 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // here unchanged, against the same column names the window functions used to produce.
     //
     // REVISION_WINDOW_MS is no longer referenced here: the write-time recompute ranks a key's whole
-    // history with no window at all. The constant stays because the tools and knowledge sections still
-    // widen for their own DISTINCT ON over tool_events.
+    // history with no window at all. The constant stays because the knowledge section still widens for its
+    // own DISTINCT ON over tool_events; the tools section reads canonical_tool_invocations instead.
     const withProject = opts.project ?? true;
     const columns = opts.columns ?? `r.revision_id AS id, r.account_id, r.provider, r.semantic_key, r.session_hash, r.model_actual,
         r.activity_at, r.observed_at, r.surface, r.reasoning_effort, r.service_tier, r.speed,
@@ -660,43 +660,39 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       };
     }) : emptyDetail;
 
-    // Tools materialize their invocation set and their caller requests before joining them, the way the
-    // knowledge card already does. As one chained statement the planner estimated the invocation CTE at a
-    // single row and joined it to the ranked request set as a nested loop with a join filter, which is
-    // ~50,000 x ~64,000 comparisons: measured over 127 s on production, past both the section budget and
-    // Supabase's own gateway. Materialising gives it real counts and an index on each join key instead.
+    // Tools read two write-time projections and join them. The invocation set is a range scan on
+    // canonical_tool_invocations (account_id, inv_observed_at DESC), which already carries each
+    // invocation's canonical revision AND its latest result, so there is no DISTINCT ON over tool_events
+    // and no per-invocation lookup for the result. That lookup alone was 64,745 index descents for a
+    // month and 34-46 s of the card's 56-72 s, measured on production 2026-09-22. The caller requests are
+    // a range scan on canonical_requests. Both are materialised with real statistics, because as one
+    // chained statement the planner once estimated the invocation set at a single row and nested-looped
+    // it against the requests, which ran past 127 s.
+    //
+    // What this changes, measured and accepted. The old read ranked both kinds only within
+    // REVISION_WINDOW_MS of the range; the projection ranks each invocation's whole history. So an
+    // invocation whose newer revision was observed more than a day outside the range now counts where that
+    // newer revision falls, and a result observed more than a day from the range still supplies its
+    // invocation's outcome. Production has zero observed_at spread across all 85,949 invocation keys, so
+    // neither case exists today. The knowledge card still ranks invocations within the window, so for
+    // such an invocation the two cards could disagree; moving it onto this projection too would close that.
     const toolRows = accounts.length && wantTools ? await db.begin(async tx => {
       await prepareRead(tx);
       const ip = new Params();
       await tx.unsafe(`CREATE TEMP TABLE _usage_invocations ON COMMIT DROP AS
-        WITH in_range_invocations AS (
-          SELECT DISTINCT t.account_id, t.invocation_key
-          FROM personal_hub.tool_events t
-          WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${ip.add(accounts)}::text[])
-            AND t.observed_at >= ${ip.add(rangeStartIso)}::timestamptz AND t.observed_at < ${ip.add(rangeEndIso)}::timestamptz
-        ), canonical_invocations AS (
-          SELECT DISTINCT ON (t.account_id, t.invocation_key)
-            t.account_id, t.invocation_key, t.tool_name, t.tool_class, t.tool_namespace, t.caller_agent_key, t.caller_request_key, t.outcome, t.session_hash, t.observed_at, b.source_id
-          FROM personal_hub.tool_events t
-          JOIN in_range_invocations k ON k.account_id = t.account_id AND k.invocation_key = t.invocation_key
-          JOIN personal_hub.companion_bindings b ON b.id = t.binding_id
-          WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${ip.add(accounts)}::text[])
-            AND t.observed_at >= ${ip.add(widenStartIso)}::timestamptz AND t.observed_at < ${ip.add(widenEndIso)}::timestamptz
-          ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
-        )
-        SELECT * FROM canonical_invocations
-        WHERE observed_at >= ${ip.add(rangeStartIso)}::timestamptz AND observed_at < ${ip.add(rangeEndIso)}::timestamptz
-          ${q.machines.length ? `AND source_id = ANY(${ip.add(q.machines)}::uuid[])` : ''}
-          ${q.agents.length ? `AND caller_agent_key = ANY(${ip.add(q.agents)}::text[])` : ''}`, ip.values);
-      await tx.unsafe(`CREATE INDEX _usage_invocations_key ON _usage_invocations (account_id, invocation_key)`);
+        SELECT i.account_id, i.invocation_key, i.tool_name, i.tool_class, i.tool_namespace, i.caller_agent_key, i.caller_request_key,
+          i.outcome, coalesce(i.res_outcome, i.outcome) AS final_outcome, i.session_hash, i.inv_observed_at AS observed_at, i.source_id
+        FROM personal_hub.canonical_tool_invocations i
+        WHERE i.account_id = ANY(${ip.add(accounts)}::text[])
+          AND i.inv_observed_at >= ${ip.add(rangeStartIso)}::timestamptz AND i.inv_observed_at < ${ip.add(rangeEndIso)}::timestamptz
+          ${q.machines.length ? `AND i.source_id = ANY(${ip.add(q.machines)}::uuid[])` : ''}
+          ${q.agents.length ? `AND i.caller_agent_key = ANY(${ip.add(q.agents)}::text[])` : ''}`, ip.values);
       await tx.unsafe(`CREATE INDEX _usage_invocations_caller ON _usage_invocations (account_id, caller_request_key)`);
       await tx.unsafe(`ANALYZE _usage_invocations`);
 
       // Callers are discovered the same way the requests section discovers its keys, by activity in range,
       // not by reading the invocation table for caller keys. Both produce the same set, because a caller
-      // outside the range is filtered out either way, but the key set drawn from a temp table forces the
-      // ledger join into a merge over the whole index: measured 38-42 s against 11-30 s for the identical
-      // work driven by the in-range discovery, in the same throttle window.
+      // outside the range is filtered out either way.
       const tp = new Params();
       const callers = requestCte(tp, q, accounts, range, undefined, { columns: CALLER_COLUMNS, project: q.projects.length > 0 });
       await tx.unsafe(`CREATE TEMP TABLE _usage_tool_callers ON COMMIT DROP AS
@@ -705,21 +701,13 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       await tx.unsafe(`CREATE INDEX _usage_tool_callers_key ON _usage_tool_callers (account_id, semantic_key)`);
       await tx.unsafe(`ANALYZE _usage_tool_callers`);
 
-      const rp = new Params();
       return tx.unsafe(`WITH joined AS (
-          SELECT i.*, coalesce(res.outcome, i.outcome) AS final_outcome, r.model_actual AS caller_model, r.agent_name AS caller_name, r.agent_class AS caller_class, r.matches
+          SELECT i.*, r.model_actual AS caller_model, r.agent_name AS caller_name, r.agent_class AS caller_class, r.matches
           FROM _usage_invocations i
-          LEFT JOIN LATERAL (
-            SELECT t.outcome
-            FROM personal_hub.tool_events t
-            WHERE t.account_id = i.account_id AND t.event_kind = 'result' AND t.invocation_key = i.invocation_key
-              AND t.observed_at >= ${rp.add(widenStartIso)}::timestamptz AND t.observed_at < ${rp.add(widenEndIso)}::timestamptz
-            ORDER BY t.observed_at DESC, t.received_at DESC, t.id DESC
-            LIMIT 1) res ON true
           LEFT JOIN _usage_tool_callers r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key)
         SELECT tool_name, tool_class, tool_namespace, caller_agent_key, caller_name, caller_class, caller_model, final_outcome AS outcome,
           (caller_request_key IS NOT NULL) AS has_caller_request, count(*)::int AS invocations
-        FROM joined ${useRequests ? 'WHERE matches' : ''} GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9`, rp.values);
+        FROM joined ${useRequests ? 'WHERE matches' : ''} GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9`);
     }) : [];
 
     const knowledgeDetail = accounts.length && wantKnowledge ? await db.begin(async tx => {

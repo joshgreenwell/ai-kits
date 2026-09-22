@@ -884,3 +884,100 @@ maybe('the projection carries the canonical revision the ledger ranking would ch
       'recomputing every key a second time changed a row, so the upsert guard is not idempotent');
   } finally { await sql.end({ timeout: 1 }); }
 });
+
+maybe('the tool projection carries each invocation and its latest result as the ledger would rank them', async () => {
+  const { toolRankBy, TOOL_INVOCATION_COLUMNS, TOOL_RESULT_COLUMNS, refreshCanonicalToolInvocations } = await import('../lib/usage-canonical');
+  const sql = postgres(url!, options);
+  try {
+    // 1. The backfill migration must rank with the recency order the application exports.
+    const { readFileSync } = await import('node:fs');
+    const migration = readFileSync('supabase/migrations/20260922150000_canonical_tool_invocations_backfill.sql', 'utf8').replace(/\s+/g, ' ');
+    assert.ok(migration.includes(toolRankBy('t')), 'the tool backfill must rank with toolRankBy; regenerate it with scripts/generate-canonical-backfill.mjs');
+
+    // 2. Nothing but the key and the timestamp may be NOT NULL. A register can be empty, and a stricter
+    //    column would let this derived table refuse an envelope the ledger accepted.
+    const strict = await sql`SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'personal_hub' AND table_name = 'canonical_tool_invocations' AND is_nullable = 'NO' ORDER BY 1`;
+    assert.deepEqual(strict.map(r => r.column_name), ['account_id', 'invocation_key', 'updated_at']);
+
+    // 3. Arrival orders are driven deliberately, on their own install, by the test that follows this one.
+
+    // 4. Every register must agree with ranking the ledger, checked against the ledger rather than
+    //    against the projection's own code. Refresh first so raw-SQL fixtures from other tests are in.
+    await refreshCanonicalToolInvocations(sql);
+    const drift = await sql.unsafe(`
+      WITH ranked AS (
+        SELECT t.account_id, t.invocation_key, t.event_kind, t.id,
+          row_number() OVER (PARTITION BY t.account_id, t.invocation_key, t.event_kind ORDER BY ${toolRankBy('t')}) AS rank
+        FROM personal_hub.tool_events t),
+      expected AS (
+        SELECT account_id, invocation_key,
+          max(id::text) FILTER (WHERE event_kind = 'invocation' AND rank = 1) AS inv,
+          max(id::text) FILTER (WHERE event_kind = 'result' AND rank = 1) AS res
+        FROM ranked GROUP BY 1, 2)
+      SELECT coalesce(e.invocation_key, c.invocation_key) AS invocation_key
+      FROM expected e FULL OUTER JOIN personal_hub.canonical_tool_invocations c
+        ON c.account_id = e.account_id AND c.invocation_key = e.invocation_key
+      WHERE e.inv IS DISTINCT FROM c.inv_revision_id::text OR e.res IS DISTINCT FROM c.res_revision_id::text`);
+    assert.deepEqual(drift.map(r => r.invocation_key), [], 'a register disagrees with the ledger, or a key is missing or orphaned');
+
+    // 5. A replay writes nothing: both guards reject a candidate equal to what is stored.
+    const columns = ['account_id', 'invocation_key', ...TOOL_INVOCATION_COLUMNS, ...TOOL_RESULT_COLUMNS, 'updated_at'].join(', ');
+    const before = await sql.unsafe(`SELECT ${columns} FROM personal_hub.canonical_tool_invocations ORDER BY 1, 2`);
+    await refreshCanonicalToolInvocations(sql);
+    const after = await sql.unsafe(`SELECT ${columns} FROM personal_hub.canonical_tool_invocations ORDER BY 1, 2`);
+    assert.deepEqual(JSON.parse(JSON.stringify(after)), JSON.parse(JSON.stringify(before)), 'recomputing twice changed a row');
+  } finally { await sql.end({ timeout: 1 }); }
+});
+
+maybe('tool projection maintenance converges under every arrival order an upload can produce', async () => {
+  // Self-contained: its own install, binding and account, so it passes run alone or in any order.
+  const { createUsageStore } = await import('../lib/usage-store');
+  const sql = postgres(url!, options);
+  const store = createUsageStore(() => sql);
+  const account = `claude-${randomUUID().slice(0, 8)}`, suffix = randomUUID().slice(0, 8);
+  try {
+    const issued = await store.issuePairingCode({ machine_label: 'tool-order' });
+    const paired = await store.pairInstall({ code: issued.code, machine_label: 'tool-order', kind: 'companion', platform: 'darwin', arch: 'arm64' }, '203.0.113.9');
+    const install = await store.companionInstall(bearer(paired.key));
+    const binding = (await store.createBinding(install, { account_id: account, provider: 'claude', account_label: 'Tool order', identity_hash: null })).binding.binding_id;
+    const at = (event: Record<string, unknown>, observed_at: string) => ({ ...event, record_id: randomUUID(), observed_at });
+    const ingest = (records: unknown[]) => store.ingestUsage(install, envelope({ records, coverage: [coverage('claude_execution')] }));
+    const early = `early-${suffix}`, late = `late-${suffix}`;
+    const earlyKey = sha(`tool:${early}`), lateKey = sha(`tool:${late}`);
+    const state = async (key: string) => {
+      const [row] = await sql`SELECT inv_revision_id IS NOT NULL AS has_invocation, res_outcome, coalesce(res_outcome, outcome) AS final_outcome, updated_at
+        FROM personal_hub.canonical_tool_invocations WHERE account_id = ${account} AND invocation_key = ${key}`;
+      return row;
+    };
+    const shape = (row: Record<string, unknown> | undefined) => row && [row.has_invocation, row.res_outcome, row.final_outcome];
+
+    // 1. A result arrives BEFORE its invocation. The row holds a result register and an empty invocation
+    //    register, and the tools read leaves it out until the invocation lands.
+    await ingest([at(toolEvent(binding, `${early}-r1`, early, 'result', 'failed'), '2026-09-02T03:21:00.000Z'),
+      at(toolEvent(binding, late, late), '2026-09-02T03:20:00.000Z')]);
+    assert.deepEqual(shape(await state(earlyKey)), [false, 'failed', 'failed'], 'a result can arrive before its invocation');
+
+    // 2. The invocation arrives in a later envelope. Writing its register must not erase the stored result.
+    const earlyInvocation = at(toolEvent(binding, early, early), '2026-09-02T03:20:00.000Z');
+    await ingest([earlyInvocation]);
+    assert.deepEqual(shape(await state(earlyKey)), [true, 'failed', 'failed'], 'the late invocation keeps the result already stored');
+
+    // 3. A newer result displaces the stored one.
+    await ingest([at(toolEvent(binding, `${early}-r2`, early, 'result', 'succeeded'), '2026-09-02T03:25:00.000Z')]);
+    assert.deepEqual(shape(await state(earlyKey)), [true, 'succeeded', 'succeeded'], 'a newer result wins');
+
+    // 4. An OLDER result that arrives later does not.
+    await ingest([at(toolEvent(binding, `${early}-r0`, early, 'result', 'failed'), '2026-09-02T03:19:00.000Z')]);
+    assert.deepEqual(shape(await state(earlyKey)), [true, 'succeeded', 'succeeded'], 'an older result arriving later does not win');
+
+    // 5. A replay inserts no ledger row and writes nothing: both guards see what is already stored.
+    const before = (await state(earlyKey))!.updated_at as Date;
+    const replay = await ingest([earlyInvocation]);
+    assert.equal(replay.duplicates, 1, 'the replay is a ledger duplicate');
+    assert.equal(((await state(earlyKey))!.updated_at as Date).getTime(), before.getTime(), 'and the projection is untouched');
+
+    // 6. An invocation with no result falls back to its own outcome, exactly as the read's coalesce did.
+    assert.deepEqual(shape(await state(lateKey)), [true, null, 'unknown']);
+  } finally { await sql.end({ timeout: 1 }); }
+});
