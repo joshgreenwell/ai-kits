@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import type postgres from 'postgres';
 import { RequestError, stableJson } from './contracts';
+import { canonicalRequestsUpsert } from './usage-canonical';
 import { readCache } from './read-cache';
 import { clearUsageQueryCache } from './usage-query';
 import { collectionSettingsSchema, installOverrideSchema, mergeSettings, type CollectionSettings, type InstallOverride } from './companion-settings';
@@ -344,6 +345,15 @@ export function createUsageStore(getDatabase?: () => Sql) {
     const db = await sql();
     const receipt = await db.begin(async transaction => {
       const tx = transaction as unknown as Sql;
+      // Bounds every lock wait in this transaction, including the projection upsert's row locks and
+      // the ledger INSERT's speculative wait on a concurrent duplicate inserter, which can otherwise
+      // block without limit. A collision fails fast and the companion retries from its outbox.
+      // `statement_timeout` is deliberately NOT set: there is none on ingest today and adding one
+      // would be a new way to refuse a valid envelope with no measured benefit. `transaction_timeout`
+      // must NEVER be set here: on Postgres 17 it terminates the connection rather than cancelling
+      // the statement, so it would take the whole envelope down. Reads set it on purpose, because
+      // there a killed connection is an acceptable 504.
+      await tx.unsafe(`SELECT set_config('lock_timeout', '3s', true)`);
       const bindingRows = await tx`SELECT id, account_id, provider, source_id, enabled, identity_hash, identity_reset_at
         FROM personal_hub.companion_bindings WHERE install_id = ${install.id}`;
       const bindings = new Map<string, BindingRow>();
@@ -542,6 +552,11 @@ export function createUsageStore(getDatabase?: () => Sql) {
         const columns = Object.keys(rows[0]);
         await tx`CREATE TEMP TABLE _incoming_requests ON COMMIT DROP AS SELECT ${tx(columns)} FROM personal_hub.activity_requests WITH NO DATA`;
         await tx`INSERT INTO _incoming_requests ${tx(rows)}`;
+        // A temp table created WITH NO DATA carries no statistics, so the recompute's join below
+        // would be planned at a guessed row count and could become a hash over the whole ledger
+        // instead of a few hundred index descents, inside the ingest transaction, on a throttled
+        // shared vCPU. One ANALYZE of a few thousand narrow rows is microseconds.
+        await tx`ANALYZE _incoming_requests`;
         const inserted = await tx`INSERT INTO personal_hub.activity_requests (${tx(columns)})
           SELECT DISTINCT ON (account_id, semantic_key, record_id, content) ${tx(columns)}
           FROM (SELECT i.*, run_clock,
@@ -555,6 +570,27 @@ export function createUsageStore(getDatabase?: () => Sql) {
           ON CONFLICT DO NOTHING RETURNING id`;
         acceptedRecords += inserted.length; duplicates += rows.length - inserted.length;
         count('activity.request', 'accepted', inserted.length); count('activity.request', 'duplicate', rows.length - inserted.length);
+        // PROJECTION MAINTENANCE. Keyed on every (account_id, semantic_key) THIS ENVELOPE CARRIED,
+        // not on the rows it inserted. Ingest is idempotent against activity_requests_revision, the
+        // companion retries from a local outbox, and it replays retained transcripts after a settings
+        // change, so the same envelope arrives many times and a replay inserts ZERO rows. Maintenance
+        // driven off `RETURNING id` would be a no-op on exactly the runs that exist to repair things.
+        // The content-dedup path above also drops rows without inserting them, and _incoming_requests
+        // still holds those keys, so they are recomputed too.
+        //
+        // It recomputes from the ledger over each key's WHOLE history, with no time window, which is
+        // what makes a late-arriving revision correct in both directions with no reasoning about
+        // arrival order: a higher-ranked revision displaces the stored winner, and a lower-ranked one
+        // produces a candidate the guard rejects.
+        //
+        // ORDER BY (account_id, semantic_key) is the lock-acquisition order. ON CONFLICT DO UPDATE
+        // takes the row lock even when its WHERE suppresses the write, so two envelopes touching the
+        // same keys in opposite orders could deadlock. The ORDER BY makes the common plan consistent;
+        // it is a mitigation, not a guarantee, because Postgres does not promise the executor
+        // preserves it. The guarantee is the lock_timeout set at the top of this transaction.
+        await tx.unsafe(canonicalRequestsUpsert(
+          'JOIN touched t ON t.account_id = r.account_id AND t.semantic_key = r.semantic_key',
+          'WITH touched AS (SELECT DISTINCT account_id, semantic_key FROM _incoming_requests)'));
       };
       await insertRequests(requests); await insert('account_usage_buckets', 'account.usage_bucket', usage);
       await insert('allowance_readings', 'allowance.reading', readings); await insert('money_entries', 'money.entry', money);

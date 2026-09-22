@@ -813,3 +813,74 @@ maybe('revision times stay well inside the window the detail reads rank over', a
     }
   } finally { await sql.end({ timeout: 1 }); }
 });
+
+maybe('the projection carries the canonical revision the ledger ranking would choose', async () => {
+  const { rankBy, projectOrderBy, PROJECTION_COLUMNS, canonicalRequestsUpsert } = await import('../lib/usage-canonical');
+  const sql = postgres(url!, options);
+  try {
+    // 1. The backfill migration must rank with the expression the application exports. If these drift
+    //    nothing fails at runtime: the projection is simply built in a different order from the one the
+    //    reading code believes, and the read serves a different revision. This is the only thing
+    //    standing between that and production.
+    const { readFileSync } = await import('node:fs');
+    const migration = readFileSync('supabase/migrations/20260922120000_canonical_requests_backfill.sql', 'utf8').replace(/\s+/g, ' ');
+    for (const fragment of [rankBy('r'), projectOrderBy('r')]) {
+      assert.ok(migration.includes(fragment.replace(/\s+/g, ' ')),
+        'the backfill must rank revisions with the expression lib/usage-canonical.ts defines; regenerate it with scripts/generate-canonical-backfill.mjs');
+    }
+
+    // 2. Every projection column must be exactly as nullable as its ledger source. This is what makes
+    //    the maintenance upsert unable to reject a row the ledger accepted, which is why ingest needs
+    //    no savepoint around it. Declaring model_actual and activity_at NOT NULL here did refuse a
+    //    valid envelope with SQLSTATE 23502 while this was being written, which is why it is asserted.
+    const nullability = await sql`
+      SELECT p.column_name, p.is_nullable AS projection, s.is_nullable AS source
+      FROM information_schema.columns p
+      JOIN information_schema.columns s ON s.table_schema = 'personal_hub'
+        AND s.table_name = 'activity_requests' AND s.column_name = p.column_name
+      WHERE p.table_schema = 'personal_hub' AND p.table_name = 'canonical_requests'
+        AND p.is_nullable <> s.is_nullable`;
+    assert.deepEqual(nullability.map(r => `${r.column_name}: projection ${r.projection}, ledger ${r.source}`), [],
+      'a projection column is more strictly nullable than its ledger source, so maintenance could refuse a valid envelope');
+
+    // 3. Maintenance fires on ingest. These keys reached the ledger through `ingestUsage`, not through
+    //    a fixture INSERT, so their presence is the evidence that the upsert runs inside the envelope
+    //    transaction. Other tests in this run insert ledger rows directly with SQL and never touch the
+    //    projection, which is why this names keys rather than counting them.
+    const ingested = [sha('native-project-request'), sha('zero-request'), sha('msg')];
+    const present = await sql`SELECT semantic_key FROM personal_hub.canonical_requests
+      WHERE semantic_key = ANY(${ingested})`;
+    assert.deepEqual(present.map(r => r.semantic_key).sort(), [...ingested].sort(),
+      'a request ingested through the store is missing from the projection, so write-time maintenance did not fire');
+
+    // 4. Whatever the projection holds must agree with ranking the ledger, and must not name a key the
+    //    ledger does not have. This is the equivalence the design rests on, asserted against the ledger
+    //    rather than against the projection's own code.
+    const drift = await sql.unsafe(`
+      WITH expected AS (
+        SELECT r.account_id, r.semantic_key, r.id AS revision_id,
+          row_number() OVER (PARTITION BY r.account_id, r.semantic_key ORDER BY ${rankBy('r')}) AS rank
+        FROM personal_hub.activity_requests r)
+      SELECT c.semantic_key, e.revision_id AS ledger_says, c.revision_id AS projection_says
+      FROM personal_hub.canonical_requests c
+      LEFT JOIN expected e ON e.account_id = c.account_id AND e.semantic_key = c.semantic_key AND e.rank = 1
+      WHERE e.revision_id IS DISTINCT FROM c.revision_id`);
+    assert.deepEqual(drift.map(r => `${r.semantic_key}: ledger ${r.ledger_says}, projection ${r.projection_says}`), [],
+      'the projection disagrees with ranking the ledger, or holds a key the ledger does not');
+
+    // 5. The recompute covers every ledger key and is idempotent. Running it brings in the keys other
+    //    tests inserted with raw SQL, which proves the backfill is complete; running it a second time
+    //    must write nothing, which proves the guard rejects a candidate identical to what is stored.
+    await sql.unsafe(canonicalRequestsUpsert(''));
+    const missing = await sql`SELECT DISTINCT r.semantic_key FROM personal_hub.activity_requests r
+      LEFT JOIN personal_hub.canonical_requests c ON c.account_id = r.account_id AND c.semantic_key = r.semantic_key
+      WHERE c.semantic_key IS NULL`;
+    assert.deepEqual(missing.map(r => r.semantic_key), [], 'the recompute left ledger keys out of the projection');
+    const columns = PROJECTION_COLUMNS.join(', ');
+    const before = await sql.unsafe(`SELECT account_id, semantic_key, ${columns}, updated_at FROM personal_hub.canonical_requests ORDER BY 1, 2`);
+    await sql.unsafe(canonicalRequestsUpsert(''));
+    const after = await sql.unsafe(`SELECT account_id, semantic_key, ${columns}, updated_at FROM personal_hub.canonical_requests ORDER BY 1, 2`);
+    assert.deepEqual(JSON.parse(JSON.stringify(after)), JSON.parse(JSON.stringify(before)),
+      'recomputing every key a second time changed a row, so the upsert guard is not idempotent');
+  } finally { await sql.end({ timeout: 1 }); }
+});

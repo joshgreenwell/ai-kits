@@ -14,6 +14,7 @@ const SEPTEMBER = { preset: 'custom' as const, start: '2026-09-01T05:00:00Z', en
 
 maybe('the filtered usage query reconciles every breakdown to one selected scope', async () => {
   const { createUsageQuery, parseUsageQuery } = await import('../lib/usage-query');
+  const { refreshCanonicalRequests } = await import('../lib/usage-canonical');
   const sql = postgres(url!, options);
   const layer = createUsageQuery(() => sql);
   const suffix = randomUUID().slice(0, 8);
@@ -113,6 +114,10 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     const subjects = await layer.listReportSubjects();
     assert.deepEqual(subjects.subjects.filter(s => s.subject_key === subject).map(s => [s.account_id, s.source_timezone, s.revisions, s.first_month, s.last_month]), [[claude, 'America/Chicago', 3, '2026-07', '2026-09']]);
 
+    // These fixtures write personal_hub.activity_requests directly rather than through `ingestUsage`,
+    // so nothing has maintained the canonical projection the reads now use. Refreshing it here is the
+    // same rule production follows: any path that writes the ledger outside ingest rebuilds after it.
+    await refreshCanonicalRequests(sql);
     const query = (extra: Record<string, unknown> = {}) => layer.usageQuery(parseUsageQuery(new URLSearchParams(Object.entries({ ...SEPTEMBER, accounts: `${claude},${codex}`, ...extra }).map(([k, v]) => [k, String(v)]))), { now: NOW });
 
     // 1. Unfiltered: buckets are the headline; request detail, projects, agents, tools, and knowledge describe their covered subset.
@@ -274,6 +279,7 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
 
 maybe('provider account usage is the Tokens headline for Cursor and Admin API accounts and is not added to local hours', async () => {
   const { createUsageQuery, parseUsageQuery } = await import('../lib/usage-query');
+  const { refreshCanonicalRequests } = await import('../lib/usage-canonical');
   const sql = postgres(url!, options);
   const layer = createUsageQuery(() => sql);
   const suffix = randomUUID().slice(0, 8);
@@ -328,6 +334,7 @@ maybe('provider account usage is the Tokens headline for Cursor and Admin API ac
 
 maybe('knowledge accesses and spawn evidence follow the machine, agent, and detail filters the tools area applies', async () => {
   const { createUsageQuery, parseUsageQuery } = await import('../lib/usage-query');
+  const { refreshCanonicalRequests } = await import('../lib/usage-canonical');
   const sql = postgres(url!, options);
   const layer = createUsageQuery(() => sql);
   const suffix = randomUUID().slice(0, 8);
@@ -377,6 +384,10 @@ maybe('knowledge accesses and spawn evidence follow the machine, agent, and deta
     await spawn(bindingA, 'spawn-a', childKey, '2026-09-02T14:11:00Z');
     await spawn(bindingB, 'spawn-b', otherChildKey, '2026-09-03T14:11:00Z');
 
+    // These fixtures write personal_hub.activity_requests directly rather than through `ingestUsage`,
+    // so nothing has maintained the canonical projection the reads now use. Refreshing it here is the
+    // same rule production follows: any path that writes the ledger outside ingest rebuilds after it.
+    await refreshCanonicalRequests(sql);
     const query = (extra: Record<string, unknown> = {}) => layer.usageQuery(parseUsageQuery(new URLSearchParams(Object.entries({ ...SEPTEMBER, accounts: account, ...extra }).map(([k, v]) => [k, String(v)]))), { now: NOW });
     const vault = (result: Awaited<ReturnType<typeof query>>) => result.knowledge.rows.map(r => [r.label, r.accesses, r.distinct_invocations, r.distinct_sessions, r.distinct_agents, r.by_access_kind.read, r.by_access_kind.search]);
 

@@ -394,65 +394,50 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       if (states.length) parts.push(`r.project_state = ANY(${p.add(states)}::text[])`);
       detail.push(`(${parts.join(' OR ')})`);
     }
-    // Revisions of one logical request are ranked over a window widened around the range, so the canonical
-    // row is chosen among all its revisions before the exact range, model, and machine filters apply.
-    // `activity_at` is generated from the request's own clock, not the run clock, so it is constant across
-    // the revisions of a key and a day absorbs any ordering a late upload can produce. That constancy is a
-    // property of today's readers rather than of the contract -- a reader that emitted a request once while
-    // running and again once finished would move `ended_at` and so `activity_at` -- so the ledger contract
-    // test asserts it, and such a reader trips that test rather than silently changing which revision wins.
-    const widen = REVISION_WINDOW_MS;
-    const keySource = keysCte ?? 'in_range_keys';
-    const discover = keysCte ? '' : `in_range_keys AS (
-      SELECT DISTINCT r.account_id, r.semantic_key
-      FROM personal_hub.activity_requests r
-      WHERE r.account_id = ANY(${p.add(accounts)}::text[])
-        AND r.activity_at >= ${p.add(new Date(range.start).toISOString())}::timestamptz
-        AND r.activity_at < ${p.add(new Date(range.end).toISOString())}::timestamptz
-    ), `;
-    const post = [
+    // Canonical requests come from personal_hub.canonical_requests, which already holds one row per
+    // (account_id, semantic_key), chosen at write time in the order lib/usage-canonical.ts defines:
+    // exactly the order this function used to apply on every read.
+    //
+    // GONE, relative to the shape this replaces: the in-range key discovery, the widened re-scan of
+    // every revision, the row_number() ranking, the four first_value() project windows, the WINDOW
+    // clause, and the join to companion_bindings. What is left is a range scan on
+    // canonical_requests_activity (account_id, activity_at DESC), where BOTH range bounds are index
+    // boundary conditions, so the scan size is the SELECTED RANGE. The shape this replaces walked
+    // every entry of activity_requests_semantic_activity (account_id, semantic_key, activity_at) for
+    // any range, because activity_at sat third in it and was only an in-index filter. That is why a
+    // one-day read used to cost nearly what a one-month read cost.
+    //
+    // Project resolution deliberately STAYS at read time. The projection carries only the evidence of
+    // the project-preferred revision, never a resolved id or label, because naming a working directory
+    // in Settings must still relabel past requests. The identity joins and the state expression run
+    // here unchanged, against the same column names the window functions used to produce.
+    //
+    // REVISION_WINDOW_MS is no longer referenced here: the write-time recompute ranks a key's whole
+    // history with no window at all. The constant stays because the tools and knowledge sections still
+    // widen for their own DISTINCT ON over tool_events.
+    const withProject = opts.project ?? true;
+    const columns = opts.columns ?? `r.revision_id AS id, r.account_id, r.provider, r.semantic_key, r.session_hash, r.model_actual,
+        r.activity_at, r.observed_at, r.surface, r.reasoning_effort, r.service_tier, r.speed,
+        r.context_window_tokens, r.cache_write_ttl, r.token_state, r.outcome,
+        r.input_fresh_tokens, r.input_cached_tokens, r.input_cache_write_tokens, r.output_tokens,
+        r.reasoning_tokens, r.unclassified_tokens, r.observed_total_tokens,
+        r.agent_key, r.agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.agent_identity_basis`;
+    const where = [
+      `r.account_id = ANY(${p.add(accounts)}::text[])`,
       `r.activity_at >= ${p.add(new Date(range.start).toISOString())}::timestamptz`,
       `r.activity_at < ${p.add(new Date(range.end).toISOString())}::timestamptz`,
       ...(model ? [model] : []),
+      // source_id is denormalised onto the projection, so the machine filter no longer joins bindings.
       ...(q.machines.length ? [`r.source_id = ANY(${p.add(q.machines)}::uuid[])`] : []),
     ];
-    // One pass over the key set carries both rankings. Canonical choice and project choice partition by the
-    // same key over the same rows and differ only in their leading ORDER BY term, so ranking them together
-    // touches the ledger heap once instead of twice. They stay separate columns: collapsing them would let a
-    // sibling revision's project evidence decide the canonical row's project, which is the "unknown values
-    // stay unknown" promise breaking in reverse.
-    const ledgerColumns = opts.columns ?? `r.id, r.account_id, r.provider, r.semantic_key, r.session_hash, r.model_actual, r.activity_at, r.observed_at, r.surface, r.reasoning_effort, r.service_tier, r.speed,
-        r.context_window_tokens, r.cache_write_ttl, r.token_state, r.outcome,
-        r.input_fresh_tokens, r.input_cached_tokens, r.input_cache_write_tokens, r.output_tokens, r.reasoning_tokens, r.unclassified_tokens, r.observed_total_tokens,
-        r.agent_key, r.agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.agent_identity_basis`;
-    // Project resolution is the identity joins and the second window ordering. A caller lookup only needs it
-    // when a project filter has to be evaluated through the calling request; otherwise it is pure waste, and
-    // dropping it also drops one of the two sorts the pass would otherwise perform.
-    const withProject = opts.project ?? true;
-    const text = `${discover}scanned AS (
-      SELECT ${ledgerColumns},
-        b.source_id,
-        ${withProject ? `first_value(${projectBasis('r')}) OVER project_order AS effective_project_basis,
-        first_value(${projectKey('r')}) OVER project_order AS effective_project_key,
-        first_value(r.provider) OVER project_order AS project_provider,
-        first_value(b.install_id) OVER project_order AS project_install_id,` : ''}
-        row_number() OVER (PARTITION BY r.account_id, r.semantic_key ORDER BY ${rankBy('r')}) AS rank
-      FROM personal_hub.activity_requests r
-      JOIN ${keySource} k ON k.account_id = r.account_id AND k.semantic_key = r.semantic_key
-      JOIN personal_hub.companion_bindings b ON b.id = r.binding_id
-      WHERE r.account_id = ANY(${p.add(accounts)}::text[])
-        AND r.activity_at >= ${p.add(new Date(range.start - widen).toISOString())}::timestamptz
-        AND r.activity_at < ${p.add(new Date(range.end + widen).toISOString())}::timestamptz
-      ${withProject ? `WINDOW project_order AS (PARTITION BY r.account_id, r.semantic_key ORDER BY
-        CASE (${projectBasis('r')}) WHEN 'native' THEN 0 WHEN 'working_directory' THEN 1 WHEN 'none' THEN 2 ELSE 3 END,
-        ${rankBy('r')})` : ''}
-    ), resolved AS (
-      SELECT ${ledgerColumns}, r.source_id,
+    const text = `resolved AS (
+      SELECT ${columns}, r.source_id,
         ${withProject ? `${projectState} AS project_state, m.project_id, proj.label AS project_label`
           : `NULL::text AS project_state, NULL::uuid AS project_id, NULL::text AS project_label`}
-      FROM scanned r
+      FROM personal_hub.canonical_requests r
+      ${keysCte ? `JOIN ${keysCte} k ON k.account_id = r.account_id AND k.semantic_key = r.semantic_key` : ''}
       ${withProject ? projectJoins : ''}
-      WHERE r.rank = 1 AND ${post.join(' AND ')}
+      WHERE ${where.join(' AND ')}
     ), requests AS (
       SELECT r.*, ${detail.length ? `(${detail.join(' AND ')})` : 'true'} AS matches FROM resolved r
     )`;
