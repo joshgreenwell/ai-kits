@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type postgres from 'postgres';
 import { RequestError, stableJson } from './contracts';
+import { readCache } from './read-cache';
 import { DATABASE_JOB_BUDGET_INTERVAL } from './database-budget';
 import {
   DISPLAY_TIMEZONE, HOUR, PRESETS, RESOLUTIONS, isSupportedTimeZone, localMonthKey, monthBounds, monthsWithin,
@@ -268,6 +269,10 @@ function pricingInputFromRow(row: PricingRowOut): PricingInputRow {
 
 export function createUsageQuery(getDatabase?: () => Sql) {
   const sql = async () => getDatabase?.() ?? (await import('./db')).database();
+  // Accounts, sources and coverage bounds move on the hourly ingest cycle, and `meta` is three queries,
+  // one of them with four correlated subqueries. A page asks for four sections, so uncached that is twelve
+  // serialised round trips through a pool of one for an answer that cannot have changed between them.
+  const metaCache = readCache(30_000, async () => meta(await sql()));
 
   async function meta(db: Sql): Promise<Meta> {
     const accounts = await db`SELECT id, provider, label FROM personal_hub.usage_accounts ORDER BY created_at, id`;
@@ -435,7 +440,8 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       FROM personal_hub.activity_requests r
       JOIN ${keySource} k ON k.account_id = r.account_id AND k.semantic_key = r.semantic_key
       JOIN personal_hub.companion_bindings b ON b.id = r.binding_id
-      WHERE r.activity_at >= ${p.add(new Date(range.start - widen).toISOString())}::timestamptz
+      WHERE r.account_id = ANY(${p.add(accounts)}::text[])
+        AND r.activity_at >= ${p.add(new Date(range.start - widen).toISOString())}::timestamptz
         AND r.activity_at < ${p.add(new Date(range.end + widen).toISOString())}::timestamptz
       ${withProject ? `WINDOW project_order AS (PARTITION BY r.account_id, r.semantic_key ORDER BY
         CASE (${projectBasis('r')}) WHEN 'native' THEN 0 WHEN 'working_directory' THEN 1 WHEN 'none' THEN 2 ELSE 3 END,
@@ -466,7 +472,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const range = resolveRange({ preset: q.preset, start: q.start, end: q.end, timezone: q.timezone, now });
     const periods = periodsWithin(range, q.resolution, q.timezone);
     const db = await sql();
-    const m = await meta(db);
+    const m = await metaCache.get();
     const byId = new Map(m.accounts.map(a => [a.id, a]));
     for (const id of q.accounts) if (!byId.has(id)) throw new RequestError('Unknown account', 404);
     for (const id of q.machines) if (!m.sources.some(s => s.id === id)) throw new RequestError('Unknown machine', 404);
@@ -689,7 +695,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           FROM personal_hub.tool_events t
           JOIN in_range_invocations k ON k.account_id = t.account_id AND k.invocation_key = t.invocation_key
           JOIN personal_hub.companion_bindings b ON b.id = t.binding_id
-          WHERE t.event_kind = 'invocation'
+          WHERE t.event_kind = 'invocation' AND t.account_id = ANY(${ip.add(accounts)}::text[])
             AND t.observed_at >= ${ip.add(widenStartIso)}::timestamptz AND t.observed_at < ${ip.add(widenEndIso)}::timestamptz
           ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
         )
@@ -715,17 +721,16 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       await tx.unsafe(`ANALYZE _usage_tool_callers`);
 
       const rp = new Params();
-      return tx.unsafe(`WITH results AS (
-          SELECT DISTINCT ON (t.account_id, t.invocation_key) t.account_id, t.invocation_key, t.outcome
-          FROM personal_hub.tool_events t
-          JOIN _usage_invocations i ON i.account_id = t.account_id AND i.invocation_key = t.invocation_key
-          WHERE t.event_kind = 'result'
-            AND t.observed_at >= ${rp.add(widenStartIso)}::timestamptz AND t.observed_at < ${rp.add(widenEndIso)}::timestamptz
-          ORDER BY t.account_id, t.invocation_key, t.observed_at DESC, t.received_at DESC, t.id DESC
-        ), joined AS (
+      return tx.unsafe(`WITH joined AS (
           SELECT i.*, coalesce(res.outcome, i.outcome) AS final_outcome, r.model_actual AS caller_model, r.agent_name AS caller_name, r.agent_class AS caller_class, r.matches
           FROM _usage_invocations i
-          LEFT JOIN results res ON res.account_id = i.account_id AND res.invocation_key = i.invocation_key
+          LEFT JOIN LATERAL (
+            SELECT t.outcome
+            FROM personal_hub.tool_events t
+            WHERE t.account_id = i.account_id AND t.event_kind = 'result' AND t.invocation_key = i.invocation_key
+              AND t.observed_at >= ${rp.add(widenStartIso)}::timestamptz AND t.observed_at < ${rp.add(widenEndIso)}::timestamptz
+            ORDER BY t.observed_at DESC, t.received_at DESC, t.id DESC
+            LIMIT 1) res ON true
           LEFT JOIN _usage_tool_callers r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key)
         SELECT tool_name, tool_class, tool_namespace, caller_agent_key, caller_name, caller_class, caller_model, final_outcome AS outcome,
           (caller_request_key IS NOT NULL) AS has_caller_request, count(*)::int AS invocations
