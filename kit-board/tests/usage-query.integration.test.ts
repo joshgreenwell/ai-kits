@@ -150,7 +150,7 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
       'hourly buckets price without waiting for request-level tier or effort');
     assert.deepEqual([all.pricing_inputs.coverage.eligible, all.pricing_inputs.coverage.classified], [615, 615]);
     assert.deepEqual(all.environmental_inputs.cohorts.map(c => [c.account_id, c.month, c.selected.calls, c.selected.raw_tokens, c.population.calls, c.basis, c.month_closed]).sort(), [[claude, '2026-09', 5, 215, 5, 'buckets', false], [codex, '2026-09', 4, 400, 4, 'buckets', false]]);
-    assert.deepEqual([all.cost.unpriced_reasons, all.cost.estimated_cost_usd, all.cost.pricing_catalog.versions.openai], [{ model_not_in_catalog: 615 }, 0, '2026-09-13'], 'fixture models are unpriced with their reason, never free');
+    assert.deepEqual([all.cost.unpriced_reasons, all.cost.estimated_cost_usd, all.cost.pricing_catalog.versions.openai], [{ model_not_in_catalog: 615 }, 0, '2026-09-22'], 'fixture models are unpriced with their reason, never free');
     assert.deepEqual([all.environment.basis.model_calls, all.environment.energy_kwh.planning, all.environment.coverage.calls_headline, all.environment.methodology_versions], [9, 0.00306, 9, ['2026-08-20.1']]);
     assert.deepEqual(all.historical.snapshots.map(s => [s.subject_key, s.month, s.status, s.merged, s.reason]), [[subject, '2026-09', 'partial', 'none', 'hourly_ledger_covers_month']]);
 

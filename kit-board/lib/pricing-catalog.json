@@ -1,6 +1,6 @@
 {
   "openai": {
-    "catalog_version": "2026-09-13",
+    "catalog_version": "2026-09-22",
     "currency": "USD",
     "unit_tokens": 1000000,
     "long_context_threshold_tokens": 272000,
@@ -28,6 +28,18 @@
       {
         "label": "GPT-5.6 launch and July 30 price change",
         "url": "https://openai.com/index/advancing-the-price-performance-frontier-with-gpt-5-6/"
+      },
+      {
+        "label": "GPT-6 Sol model pricing",
+        "url": "https://developers.openai.com/api/docs/models/gpt-6-sol"
+      },
+      {
+        "label": "GPT-6 Luna model pricing",
+        "url": "https://developers.openai.com/api/docs/models/gpt-6-luna"
+      },
+      {
+        "label": "GPT-6 Sol and GPT-6 Luna release, 2026-09-22",
+        "url": "https://developers.openai.com/api/docs/changelog"
       },
       {
         "label": "GPT-6 Astra model pricing",
@@ -342,9 +354,135 @@
             }
           }
         ]
+      },
+      "gpt-6-sol": {
+        "aliases": [],
+        "cache_write_input_multiplier": 1.25,
+        "periods": [
+          {
+            "effective_from": "2026-09-22",
+            "rate_version": "gpt-6-sol-2026-09-22",
+            "rates": {
+              "standard": {
+                "short": {
+                  "input": 2.0,
+                  "cached_input": 0.2,
+                  "output": 10.0
+                },
+                "long": {
+                  "input": 4.0,
+                  "cached_input": 0.4,
+                  "output": 15.0
+                }
+              },
+              "fast": {
+                "short": {
+                  "input": 4.0,
+                  "cached_input": 0.4,
+                  "output": 20.0
+                },
+                "long": {
+                  "input": 8.0,
+                  "cached_input": 0.8,
+                  "output": 30.0
+                }
+              },
+              "flex": {
+                "short": {
+                  "input": 1.0,
+                  "cached_input": 0.1,
+                  "output": 5.0
+                },
+                "long": {
+                  "input": 2.0,
+                  "cached_input": 0.2,
+                  "output": 7.5
+                }
+              },
+              "batch": {
+                "short": {
+                  "input": 1.0,
+                  "cached_input": 0.1,
+                  "output": 5.0
+                },
+                "long": {
+                  "input": 2.0,
+                  "cached_input": 0.2,
+                  "output": 7.5
+                }
+              }
+            },
+            "service_tier_aliases": {
+              "priority": "fast"
+            }
+          }
+        ]
+      },
+      "gpt-6-luna": {
+        "aliases": [],
+        "cache_write_input_multiplier": 1.25,
+        "periods": [
+          {
+            "effective_from": "2026-09-22",
+            "rate_version": "gpt-6-luna-2026-09-22",
+            "rates": {
+              "standard": {
+                "short": {
+                  "input": 0.1,
+                  "cached_input": 0.01,
+                  "output": 0.5
+                },
+                "long": {
+                  "input": 0.2,
+                  "cached_input": 0.02,
+                  "output": 0.75
+                }
+              },
+              "fast": {
+                "short": {
+                  "input": 0.2,
+                  "cached_input": 0.02,
+                  "output": 1.0
+                },
+                "long": {
+                  "input": 0.4,
+                  "cached_input": 0.04,
+                  "output": 1.5
+                }
+              },
+              "flex": {
+                "short": {
+                  "input": 0.05,
+                  "cached_input": 0.005,
+                  "output": 0.25
+                },
+                "long": {
+                  "input": 0.1,
+                  "cached_input": 0.01,
+                  "output": 0.375
+                }
+              },
+              "batch": {
+                "short": {
+                  "input": 0.05,
+                  "cached_input": 0.005,
+                  "output": 0.25
+                },
+                "long": {
+                  "input": 0.1,
+                  "cached_input": 0.01,
+                  "output": 0.375
+                }
+              }
+            },
+            "service_tier_aliases": {
+              "priority": "fast"
+            }
+          }
+        ]
       }
     },
-    "provenance": "Copied verbatim from the Codex monthly analyzer’s assets/api-pricing.json (catalog_version 2026-09-13) that produces the stored monthly reports."
+    "provenance": "The GPT-5.x and gpt-6-astra entries are copied verbatim from the Codex monthly analyzer’s assets/api-pricing.json (catalog_version 2026-09-13) that produces the stored monthly reports. gpt-6-sol and gpt-6-luna were added on 2026-09-22 from the OpenAI model pages and the API changelog entry for their release that day, which state the standard short-band rates; their long, fast, flex and batch bands are derived with the multipliers those pages document (2x input and cache and 1.5x output above 272K, Fast 2x the applicable rate, Batch and Flex 50% of Standard), which is the formula the analyzer applied to gpt-6-astra."
   },
   "anthropic": {
     "catalog_version": "2026-09-14",

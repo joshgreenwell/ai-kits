@@ -8,7 +8,7 @@ const row = (overrides: Partial<PricingInputRow>): PricingInputRow => ({
 });
 
 test('the catalog is the analyzer’s, with the Anthropic list prices beside it', () => {
-  assert.equal(pricingCatalog.openai.catalog_version, '2026-09-13');
+  assert.equal(pricingCatalog.openai.catalog_version, '2026-09-22');
   assert.deepEqual(catalogThresholds(), { openai: 272000, anthropic: 200000, xai: 200000 });
   // The band follows the catalog the model prices under, not the provider that observed it.
   const between = { openai: false, anthropic: true, xai: false };   // logged input between 200,001 and 272,000
@@ -131,7 +131,7 @@ test('aggregations reconcile to the dimension rows and the catalog provenance tr
   ], 'the graph series keeps source price dates and reconciles model rows within each day');
   assert.equal(total(estimate.series), estimate.estimated_cost_usd);
   assert.equal(estimate.by_model.find(m => m.model === 'gpt-5.6-sol')?.calls, 2);
-  assert.deepEqual(estimate.pricing_catalog.versions, { openai: '2026-09-13', anthropic: '2026-09-14', xai: '2026-09-17' });
+  assert.deepEqual(estimate.pricing_catalog.versions, { openai: '2026-09-22', anthropic: '2026-09-14', xai: '2026-09-17' });
   assert.ok(estimate.pricing_catalog.sources.length >= 8 && estimate.pricing_catalog.provenance.openai?.includes('verbatim'));
 });
 
@@ -144,4 +144,31 @@ test('Cursor-reported Grok 4.6 prices from the xAI catalog; unknown models keep 
   const unknown = priceUsage([row({ provider: 'cursor', model: 'composer-1', service_tier: 'standard', input_fresh: 800, input_cached: 200, output: 100, reasoning: 40, total_tokens: 1_100 })]).by_model[0];
   assert.deepEqual([unknown.input_tokens, unknown.cached_input_tokens, unknown.output_tokens, unknown.total_tokens, unknown.unpriced_tokens, unknown.estimated_cost_usd, unknown.unpriced_reasons],
     [1_000, 200, 100, 1_100, 1_100, 0, { model_not_in_catalog: 1_100 }]);
+});
+
+test('GPT-6 Sol and Luna price from their published rates, and only from their release date', () => {
+  // Published 2026-09-22 on the model pages and the API changelog: Sol $2 input, $0.20 cached, $10
+  // output; Luna $0.10 input, $0.01 cached, $0.50 output, per 1M standard short-band tokens. The row
+  // helper sends 1,000,000 fresh input and 100,000 output, with reasoning inside output, not added.
+  const at = (model: string, extra: Partial<PricingInputRow> = {}) =>
+    priceUsage([row({ model, rate_date: '2026-09-22', service_tier: 'standard', ...extra })]).by_model_effort_service_tier[0];
+  assert.deepEqual([at('gpt-6-sol').estimated_cost_usd, at('gpt-6-luna').estimated_cost_usd], [3, 0.15],
+    'standard short: input at the list rate plus output at the list rate');
+  assert.deepEqual([at('gpt-6-sol').rate_versions, at('gpt-6-luna').rate_versions],
+    [['gpt-6-sol-2026-09-22'], ['gpt-6-luna-2026-09-22']]);
+
+  // The three derived bands, each from a multiplier the model pages state. If someone re-derives these
+  // by hand and gets the formula wrong, this is where it shows.
+  assert.equal(at('gpt-6-sol', { context_band: 'long' }).estimated_cost_usd, 4 + 1.5, 'above 272K: 2x input, 1.5x output');
+  assert.equal(at('gpt-6-sol', { service_tier: 'priority' }).estimated_cost_usd, 4 + 2, 'priority is Fast, 2x the applicable rate');
+  assert.equal(at('gpt-6-sol', { service_tier: 'batch' }).estimated_cost_usd, 1 + 0.5, 'Batch and Flex are half of Standard');
+  assert.equal(at('gpt-6-luna', { context_band: 'long' }).estimated_cost_usd, 0.2 + 0.075);
+
+  // Cache writes bill at 1.25x the uncached input rate, as both pages state.
+  assert.equal(at('gpt-6-sol', { input_fresh: 0, input_cache_write: 1_000_000, output: 0, reasoning: 0, total_tokens: 1_000_000 }).estimated_cost_usd, 2.5);
+
+  // Before release there is no period, so the tokens stay visible and unpriced rather than being
+  // priced at a rate that did not exist yet.
+  const early = priceUsage([row({ model: 'gpt-6-sol', rate_date: '2026-09-21', service_tier: 'standard' })]);
+  assert.deepEqual([early.estimated_cost_usd, early.unpriced_reasons], [0, { no_rate_for_event_date: 1_100_000 }]);
 });
