@@ -39,9 +39,10 @@ function inline(markdown) {
     const href = safeUrl(url);
     return href ? token(`<a href="${escapeHtml(href)}" target="_blank" rel="noreferrer noopener">${inline(label)}</a>`) : label;
   });
-  value = value.replace(/`([^`]+)`/g, '<code>$1</code>');
-  value = value.replace(/\*([^*]+)\*/g, '<strong>$1</strong>');
-  value = value.replace(/_([^_]+)_/g, '<em>$1</em>');
+  value = value.replace(/`([^`]+)`/g, (_match, code) => token(`<code>${code}</code>`));
+  value = value.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  value = value.replace(/(^|[^\w*])\*([^*\s][^*]*)\*(?![\w*])/g, '$1<em>$2</em>');
+  value = value.replace(/(^|\W)_([^_]+)_(?!\w)/g, '$1<em>$2</em>');
   return value.replace(/\u0000(\d+)\u0000/g, (_match, index) => tokenized[Number(index)]);
 }
 
@@ -59,8 +60,9 @@ function headingId(title, used) {
 
 function splitSections(markdown) {
   const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
-  const title = lines.find(line => line.trim())?.trim() ?? 'Daily readings';
-  const start = lines.findIndex(line => line.trim() === title) + 1;
+  const first = lines.find(line => line.trim())?.trim();
+  const title = first?.replace(/^#{1,6}\s+/, '') || 'Daily readings';
+  const start = lines.findIndex(line => line.trim() === first) + 1;
   const source = lines.slice(start);
   const used = new Map();
   const sections = [];
@@ -83,7 +85,7 @@ function renderLines(lines) {
   let paragraph = [];
   let bullets = [];
   const flushParagraph = () => {
-    if (paragraph.length) rendered.push(`<p>${inline(paragraph.join(' '))}</p>`);
+    if (paragraph.length) rendered.push(`<p>${paragraph.map(inline).join('<br>')}</p>`);
     paragraph = [];
   };
   const flushBullets = () => {

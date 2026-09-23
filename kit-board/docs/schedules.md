@@ -10,9 +10,21 @@ The canonical usage process inventory is [Usage: how the system actually works](
 - Work and Personal Claude browser sources are enabled v1 producers. V2 browser settings/pairing do not control or replace them.
 - Checked-in Vercel cron entries: reset feeds 13:15 UTC, companion release lookup 13:45 UTC, old-site usage sync 18:00 UTC. The v2 companion has no hourly feed-refresh path. Deployment/last cron executions were not checked here.
 
+## Current daily reports — September 23 update
+
+| Report | Scheduler | Schedule | Publishing |
+| --- | --- | --- | --- |
+| Daily personal assistant, with the standup | Codex `daily-personal-assistant` | Daily, 9:00 AM; standup on weekdays | Publishes the merged briefing and, on weekdays, the exact final standup text. `/tasks` shows each day's standup above its briefing; `/standup` redirects there |
+| Daily tech intel snapshot | Claude Desktop scheduled task `daily-tech-intel-snapshot`; needs Mac and the Claude app | Daily, 9:00 AM (the app runs it at 9:08 AM) | Publishes readings directly with the `claude-readings` producer; no Slack delivery |
+
+- The separate Codex `daily-standup-update` job is retired; the standup is produced inside the daily personal assistant.
+- The Claude cloud routine for the tech intel snapshot is disabled, not deleted. Its prompt still posts to Slack, so do not re-enable it alongside the Mac task.
+- The Codex readings publication relay is retired: paused, then archived outside Codex under this Mac's `.local/backups/codex-automations/`.
+- The Mac task keeps each edition under `.local/readings/` and its last successful run in `.local/readings/state.json`, which sets the next coverage window. A failed publish keeps the publisher's outbox copy for retry. If the app is closed at the scheduled time, the task runs on next launch.
+
 ## Historical registry — September 8–13
 
-The remainder is dated operational evidence, not current installation guidance or permission to recreate old jobs. Where it conflicts with the current usage audit, the audit takes precedence. Human-facing times use America/Chicago. Supabase is the shared published report store; each producer retains its existing scheduler and local artifacts.
+The remainder is dated operational evidence, not current installation guidance or permission to recreate old jobs. Where it conflicts with the current usage audit or the September 23 daily-report update, those take precedence. Human-facing times use America/Chicago. Supabase is the shared published report store; each producer retains its existing scheduler and local artifacts.
 
 | Report / step | Scheduler | Schedule | Publishing |
 | --- | --- | --- | --- |

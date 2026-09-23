@@ -112,7 +112,7 @@ Existing monthly/daily responsibilities:
 - Claude monthly `run.sh`: 2nd–5th at 09:15 local with its private exporter config. Its `codex_upload_config` key points to the chosen usage upload config; retain the existing override for the Observatory.
 - Claude schedule labels: `com.apiphani.claude-token-observatory` and `com.apiphani.claude-token-observatory-harvest`; local `install.sh` owns installation. Review it and the restored config before installing, to avoid duplicate schedules or its older endpoint defaults.
 
-These schedules are documented from prior maintained operating notes and installed script documentation, not newly enabled by this migration. [Schedules](schedules.md) also records task, standup, readings relay and audit responsibilities. Restore those external jobs with their original source permissions and publication contracts; this source move does not recreate cloud/Codex tasks.
+These schedules are documented from prior maintained operating notes and installed script documentation, not newly enabled by this migration. [Schedules](schedules.md) also records task, standup, readings and audit responsibilities. Restore those external jobs with their original source permissions and publication contracts; this source move does not recreate cloud/Codex tasks.
 
 ### Back up and restore the analyzer dependency
 

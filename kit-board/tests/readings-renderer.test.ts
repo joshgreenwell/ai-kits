@@ -22,3 +22,18 @@ test('readings renderer preserves sections and only makes HTTPS links clickable'
   assert.doesNotMatch(html, /href="http:\/\/unsafe/);
   assert.match(html, /&lt;http:\/\/unsafe\.example\|unsafe link&gt;/);
 });
+
+test('readings renderer reads the standard markdown that the Mac task publishes', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'personal-hub-readings-'));
+  const input = join(directory, 'source.json');
+  const output = join(directory, 'report.html');
+  writeFileSync(input, JSON.stringify({
+    markdown: '# Daily Tech / AI / Crypto Snapshot — 2026-09-23\nEmail checked: Yes\nWeb checked: Yes\n## Worth Looking At\n**[AI] A release — Lab**\nLink: [Notes](https://example.com/notes)\nSummary: Uses *care*, `a_b_c`, and snake_case_name.\n',
+  }));
+  execFileSync(process.execPath, ['scripts/render-readings.mjs', '--file', input, '--output', output], { cwd: process.cwd() });
+  const html = readFileSync(output, 'utf8');
+  assert.match(html, /<h1>Daily Tech \/ AI \/ Crypto Snapshot — 2026-09-23<\/h1>/);
+  assert.match(html, /Email checked: Yes<br>Web checked: Yes/);
+  assert.match(html, /<p><strong>\[AI\] A release — Lab<\/strong><br>Link: <a href="https:\/\/example\.com\/notes"/);
+  assert.match(html, /Uses <em>care<\/em>, <code>a_b_c<\/code>, and snake_case_name\./);
+});

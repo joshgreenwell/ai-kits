@@ -10,6 +10,6 @@ export const sectionPath = (kind: ReportKind) => sections.find(section => sectio
 export const schedules: { name: string; kind: ReportKind; owner: string; cadence: string; source: string; connected: boolean }[] = [
   { name: 'Monthly AI usage', kind: 'usage', owner: 'Codex + Claude · each computer', cadence: 'Codex: 1st · 9:00 AM. Claude catch-up: 2nd–5th · 9:15 AM', source: 'monthly-ai-usage', connected: true },
   { name: 'Daily personal assistant', kind: 'tasks', owner: 'Codex + Claude contributions', cadence: 'Every day · 9:00 AM. Standup: weekdays', source: 'daily-personal-assistant', connected: true },
-  { name: 'Daily readings', kind: 'readings', owner: 'Claude cloud · copied by Codex', cadence: 'Every day · 10:00 AM. Publication checks: 12:15, 3:15, 6:15 PM', source: 'publish-claude-readings-to-personal-observatory', connected: true },
+  { name: 'Daily readings', kind: 'readings', owner: 'Claude · this Mac', cadence: 'Every day · 9:00 AM', source: 'daily-tech-intel-snapshot', connected: true },
   { name: 'Luumen AI audit', kind: 'audit', owner: 'Codex', cadence: 'Tuesdays · 9:00 AM', source: 'weekly-luumen-ai-audit', connected: true },
 ];

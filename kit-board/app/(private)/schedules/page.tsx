@@ -41,7 +41,7 @@ export default async function Schedules() {
         <CardHeader className="p-4">
           <CardTitle className="text-base">Report schedules</CardTitle>
           <CardDescription>
-            The readings relay and other local jobs need this Mac available.
+            The readings task and other local jobs need this Mac available.
           </CardDescription>
         </CardHeader>
         <Table>
