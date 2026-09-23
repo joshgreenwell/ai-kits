@@ -10,7 +10,7 @@ import type { Composition, SeriesPoint, UsageQueryResult } from './usage-query';
  */
 export const PROVIDER_OPTIONS = ['codex', 'claude', 'cursor', 'anthropic_api', 'openai_api'] as const;
 export const SURFACE_OPTIONS = ['cli', 'ide', 'desktop', 'sdk', 'ci', 'cloud', 'unknown'] as const;
-export const PROJECT_STATES = ['no_project', 'unknown', 'unassigned'] as const;
+export const PROJECT_STATES = ['no_project', 'projectless', 'unknown', 'unassigned', 'not_reported'] as const;
 export const AGENT_SCOPES = ['all', 'main', 'subagent'] as const;
 
 export type TokensFilters = {
@@ -27,7 +27,10 @@ export type ListFilterKey = typeof LIST_FILTER_KEYS[number];
 export const PRESET_LABELS: Record<Preset, string> = {
   today: 'Today', last_7_days: 'Last 7 days', last_30_days: 'Last 30 days', month_to_date: 'Month to date', previous_month: 'Previous month', custom: 'Custom range',
 };
-export const PROJECT_STATE_LABELS: Record<typeof PROJECT_STATES[number], string> = { no_project: 'No project', unknown: 'Unknown project', unassigned: 'Unassigned project' };
+/** A state row's name when the row carries no label of its own (the read labels projectless chats and not-reported machines itself). */
+export const PROJECT_STATE_LABELS: Record<typeof PROJECT_STATES[number], string> = { no_project: 'No project', projectless: 'Chats / no project', unknown: 'Unknown', unassigned: 'Unassigned', not_reported: 'Companion update needed' };
+/** Provider names as the agent and tool rows show them. */
+export const PROVIDER_LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', anthropic_api: 'Anthropic API', openai_api: 'OpenAI API' };
 
 const isIso = (value: string) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value));
 /** Lists are canonical: deduplicated and sorted, so the same selection always yields the same URL and cache key. */
@@ -123,8 +126,10 @@ export function activeFilterChips(filters: TokensFilters, labels: FilterLabels =
   const chips: FilterChip[] = [];
   const name = (key: ListFilterKey, value: string) => {
     if (key === 'projects' && (PROJECT_STATES as readonly string[]).includes(value)) return PROJECT_STATE_LABELS[value as typeof PROJECT_STATES[number]];
+    // One machine's "companion update needed" row: named from the result's own rows when present.
+    if (key === 'projects' && value.startsWith('not_reported:')) return labels.projects?.[value] ?? 'Companion update needed (one machine)';
     const table = key === 'accounts' ? labels.accounts : key === 'projects' ? labels.projects : key === 'machines' ? labels.machines : key === 'agents' ? labels.agents : undefined;
-    const short = key === 'agents' ? `agent ${value.slice(0, 8)}` : value;
+    const short = key === 'agents' ? `agent group ${value.slice(0, 8)}` : value;
     return table?.[value] ?? short;
   };
   const singular: Record<ListFilterKey, string> = { accounts: 'Account', providers: 'Provider', models: 'Model', efforts: 'Effort', machines: 'Machine', surfaces: 'Surface', projects: 'Project', agents: 'Agent' };

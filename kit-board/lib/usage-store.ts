@@ -3,15 +3,18 @@ import type postgres from 'postgres';
 import { RequestError, stableJson } from './contracts';
 import { canonicalRequestsUpsert, canonicalToolUpsert } from './usage-canonical';
 import { readCache } from './read-cache';
+import { DATABASE_JOB_BUDGET_INTERVAL } from './database-budget';
+import { PROJECT_REASONS, projectMapCtes, type ProjectReason } from './usage-project-map';
 import { clearUsageQueryCache } from './usage-query';
 import { collectionSettingsSchema, installOverrideSchema, mergeSettings, type CollectionSettings, type InstallOverride } from './companion-settings';
 import { companionCapabilitiesSchema, type CompanionCapabilities } from './companion-capabilities';
 import { readingFreshness } from './allowance-freshness';
-import { projectRegistryMutationSchema } from './project-registry';
+import { applySideRecords, type Tx as SavepointSql } from './usage-side-records';
 import { knowledgeSourceMutationSchema } from './knowledge-source-registry';
 import {
-  adapterProvider, bindingRequestSchema, contentSubject, identityRequestSchema, isBrowserAdapter, issuePairingCodeSchema,
-  normalizePairingCode, pairRequestSchema, PAIRING_ALPHABET, type AdapterCoverage, type InvalidUsageRecord, type RejectionReason, type UsageEnvelope, type UsageRecord,
+  adapterProvider, bindingRequestSchema, contentSubject, identityRequestSchema, isBrowserAdapter, isSideRecord, issuePairingCodeSchema,
+  normalizePairingCode, pairRequestSchema, PAIRING_ALPHABET, sideRecordTypes, type AdapterCoverage, type InvalidUsageRecord, type LedgerRecord,
+  type RejectionReason, type SideRecord, type UsageEnvelope, type UsageRecord,
 } from './usage-contract';
 
 type Sql = ReturnType<typeof postgres>;
@@ -77,6 +80,12 @@ export type InstallSummary = { id: string; machine_label: string; kind: 'compani
   bindings: BindingSummary[]; applied_settings_version: number | null; update_available: boolean;
   cadence_minutes: CollectionSettings['cadence_minutes']; last_run_at: string | null; accepted_by_type: AcceptedByType;
   capabilities: CapabilitiesSummary; schedule: ScheduleSummary; health: HealthSummary;
+  /**
+   * Readable names and app projects (companion 2.2.0 side records): `sent` when the current capability
+   * report says the build sends them, else `needs_update`; and how many side records the server had to
+   * defer in the last eight days (normally 0).
+   */
+  names: { labels: 'sent' | 'needs_update' | 'not_applicable'; deferrals_8d: number };
   latest_run: { run_id: string; started_at: string; finished_at: string; companion_version: string; settings_version: number; coverage: AdapterCoverage[];
     accepted_buckets: number; accepted_records: number; rejected_records: number; accepted_by_type: AcceptedByType; received_at: string } | null };
 export type InstallsSummary = { installs: InstallSummary[]; settings: CollectionSettings; settings_version: number; latest_companion_version: string | null; settings_updated_at: string };
@@ -160,8 +169,9 @@ function healthSummary({ kind, bindings, run, capabilities, schedule, effective,
   const records: HealthSummary['records'] = newestAllowance
     ? (readingFreshness({ observedAt: newestAllowance.observed_at, resetsAt: newestAllowance.resets_at, now, cadenceMinutes: schedule.effective_cadence_minutes }).stale ? 'stale' : 'fresh')
     : newestRequest ? 'observed' : 'none';
+  // Side records (names, app projects) are display data, not usage: a run that only refreshed them is still coverage-only.
   const coverageOnly = !!run && Number(run.accepted_buckets) === 0
-    && Object.values(run.accepted_by_type ?? {}).every(counts => Number(counts.accepted ?? 0) === 0);
+    && Object.entries(run.accepted_by_type ?? {}).every(([type, counts]) => (sideRecordTypes as readonly string[]).includes(type) || Number(counts.accepted ?? 0) === 0);
   const contacts = [lastSeenAt, capabilities.reported_at].filter((value): value is string => !!value).map(Date.parse);
   const lastContact = contacts.length ? new Date(Math.max(...contacts)).toISOString() : null;
   const overdue = lastContact !== null
@@ -320,7 +330,18 @@ export function createUsageStore(getDatabase?: () => Sql) {
     });
   }
 
-  function rejection(install: CompanionInstallRow, binding: BindingRow | undefined, record: UsageRecord): RejectionReason | null {
+  /**
+   * A side record is refused only for a permanent reason: a binding this install does not own, or a
+   * browser install. Binding state (disabled, identity reset) and the adapter's provider do not apply:
+   * a name or a project describes keys the ledger already holds, so losing it helps no one (spec 5.2).
+   */
+  function sideRejection(install: CompanionInstallRow, binding: BindingRow | undefined): RejectionReason | null {
+    if (!binding) return 'binding_not_owned';
+    if (install.kind === 'browser') return 'record_type_not_allowed_for_install';
+    return null;
+  }
+
+  function rejection(install: CompanionInstallRow, binding: BindingRow | undefined, record: LedgerRecord): RejectionReason | null {
     if (!binding) return 'binding_not_owned';
     if (!binding.enabled) return 'binding_not_enabled';
     if (binding.identity_hash === null && binding.identity_reset_at !== null) return 'identity_changed';
@@ -343,6 +364,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
   /** One transaction: buckets into v1, records into the seven v2 ledgers, coverage into the run record. */
   async function ingestUsage(install: CompanionInstallRow, envelope: UsageEnvelope, invalid: InvalidUsageRecord[] = []) {
     const db = await sql();
+    let sideChanged = false;
     const receipt = await db.begin(async transaction => {
       const tx = transaction as unknown as Sql;
       // Bounds every lock wait in this transaction, including the projection upsert's row locks and
@@ -434,8 +456,15 @@ export function createUsageStore(getDatabase?: () => Sql) {
           configuration_version: record.configuration_version, first_seen: record.observed_at, last_seen: record.observed_at,
         });
       };
+      const sideRecords: SideRecord[] = [];
       for (const record of envelope.records) {
         const binding = bindings.get(record.binding_id);
+        if (isSideRecord(record)) {
+          const sideReason = sideRejection(install, binding);
+          if (sideReason) { rejected.push({ record_id: record.record_id, reason: sideReason }); count(record.record_type, 'rejected', 1); count(record.record_type, `rejected:${sideReason}`, 1); continue; }
+          sideRecords.push(record);
+          continue;
+        }
         const reason = rejection(install, binding, record);
         if (reason) { rejected.push({ record_id: record.record_id, reason }); count(record.record_type, 'rejected', 1); count(record.record_type, `rejected:${reason}`, 1); continue; }
         const base = { id: randomUUID(), account_id: binding!.account_id, binding_id: record.binding_id, provider: binding!.provider,
@@ -611,6 +640,25 @@ export function createUsageStore(getDatabase?: () => Sql) {
       }
       await insert('resource_accesses', 'resource.access', resourceAccesses);
 
+      // SIDE RECORDS, after every ledger insert and inside one more savepoint and a try/catch, so that
+      // nothing about a name or an app project can refuse this envelope (lib/usage-side-records.ts).
+      // Whatever fails is deferred, never rejected.
+      let deferred: string[] = [];
+      if (sideRecords.length) {
+        // Counts are buffered and merged only once the savepoint commits, so a rolled-back attempt is never counted twice.
+        const tallies: [string, string, number][] = [];
+        try {
+          const outcome = await (transaction as unknown as SavepointSql).savepoint(sp =>
+            applySideRecords(sp, install.id, sideRecords, (type, outcomeKind, n) => { tallies.push([type, outcomeKind, n]); }));
+          deferred = outcome.deferred; sideChanged = outcome.changed;
+          for (const [type, outcomeKind, n] of tallies) count(type, outcomeKind, n);
+        } catch (error) {
+          console.warn('Side records deferred', { reason: error instanceof Error ? error.message.slice(0, 200) : 'unknown' });
+          deferred = sideRecords.map(record => record.record_id);
+          for (const record of sideRecords) count(record.record_type, 'deferred', 1);
+        }
+      }
+
       // The bodies of one run accumulate: counters add up, per-type counts merge key-wise, and coverage
       // is replaced only by a body that carries some.
       await tx`INSERT INTO personal_hub.companion_runs (id, install_id, run_id, started_at, finished_at, companion_version, settings_version, coverage,
@@ -646,10 +694,15 @@ export function createUsageStore(getDatabase?: () => Sql) {
             WHERE id = ${binding.source_id}`;
         }
       }
-      return { ok: true, schema_version: 2, run_id: envelope.run.run_id, accepted: { buckets: acceptedBuckets, records: acceptedRecords }, duplicates, rejected };
+      // deferred_record_ids only when non-empty: the companion's response type denies unknown fields and
+      // an older build must keep receiving the exact response it always did.
+      return { ok: true as const, schema_version: 2 as const, run_id: envelope.run.run_id, accepted: { buckets: acceptedBuckets, records: acceptedRecords }, duplicates, rejected,
+        ...(deferred.length ? { deferred_record_ids: deferred } : {}) };
     });
     // New rows change every registry's evidence and the ledger counts, whether or not a record was accepted.
     projectsCache.invalidate(); knowledgeSourcesCache.invalidate(); ledgerCountsCache.invalidate(); dashboardCache.invalidate();
+    // A changed name, app project, or membership relabels what every cached Tokens read resolves.
+    if (sideChanged) { projectStatsCache.invalidate(); clearUsageQueryCache(); }
     return receipt;
   }
 
@@ -686,89 +739,79 @@ export function createUsageStore(getDatabase?: () => Sql) {
     CROSS JOIN LATERAL (SELECT count(*) AS rows FROM personal_hub.${db(table)} l
       WHERE l.account_id = a.id AND l.observed_at >= now() - ${LEDGER_EVIDENCE_WINDOW}::interval) recent`;
 
-  /** Privacy-safe project registry plus distinct collection and mapping coverage. Cached a minute; every write invalidates. */
+  /**
+   * The project list the Tokens filter reads: one `{id, label}` per usage_projects row that at least one
+   * active app project points at. Projects come from the apps (companion 2.2.0 `project.catalog`), so there
+   * is nothing to create, rename or map here. Cached a minute; every upload invalidates it.
+   */
   const projectsCache = readCache(60_000, loadProjects);
   const listProjects = () => projectsCache.get();
   async function loadProjects() {
     const db = await sql();
-    const projects = await db`SELECT id, label, created_at, updated_at
-      FROM personal_hub.usage_projects ORDER BY lower(label), created_at, id`;
-    const identities = await db`SELECT i.id, i.basis, i.evidence_key, i.first_seen, i.last_seen,
-        i.install_id, ci.machine_label, i.account_id, ua.label AS account_label, i.provider,
-        current_mapping.project_id, project.label AS project_label
-      FROM personal_hub.usage_project_identities i
-      LEFT JOIN personal_hub.companion_installs ci ON ci.id = i.install_id
-      LEFT JOIN personal_hub.usage_accounts ua ON ua.id = i.account_id
-      LEFT JOIN LATERAL (
-        SELECT revision.project_id FROM personal_hub.usage_project_mapping_revisions revision
-        WHERE revision.identity_id = i.id
-        ORDER BY revision.revision_order DESC LIMIT 1
-      ) current_mapping ON true
-      LEFT JOIN personal_hub.usage_projects project ON project.id = current_mapping.project_id
-      ORDER BY i.last_seen DESC, i.id`;
-    // Raw observations of the evidence window, bounded like the dashboard ledgers (see recentRows).
-    const [observations = {}] = await recentRows(db, 'activity_requests');
-    const [evidence = {}] = await db`SELECT
-        count(*)::int AS canonical_requests,
-        count(*) FILTER (WHERE project_basis IN ('native','working_directory') AND project_key IS NOT NULL)::int AS with_identity,
-        count(*) FILTER (WHERE project_basis = 'none')::int AS no_project,
-        count(*) FILTER (WHERE project_basis = 'unknown')::int AS unknown
-      FROM personal_hub.activity_request_project_resolution`;
-    const resolved = { project: 0, unassigned: 0, no_project: 0, unknown: 0 };
-    for (const row of await db`SELECT project_state, count(*)::int AS requests
-      FROM personal_hub.activity_request_project_resolution GROUP BY project_state`) {
-      resolved[row.project_state as keyof typeof resolved] = Number(row.requests);
-    }
-    const mapped = identities.filter(identity => identity.project_id !== null).length;
-    return clone({ projects, identities, coverage: {
-      evidence: {
-        request_observations: Number(observations.rows ?? 0),
-        canonical_requests: Number(evidence.canonical_requests ?? 0),
-        with_identity: Number(evidence.with_identity ?? 0),
-        no_project: Number(evidence.no_project ?? 0),
-        unknown: Number(evidence.unknown ?? 0),
-      },
-      mapping: { identities: identities.length, mapped, unassigned: identities.length - mapped },
-      resolved_requests: resolved,
-    } });
+    const projects = await db`SELECT DISTINCT ON (a.project_id) a.project_id AS id, a.name AS label
+      FROM personal_hub.usage_app_projects a
+      WHERE a.state = 'active'
+      ORDER BY a.project_id, a.observed_at DESC, a.name`;
+    return clone({ projects: [...projects].sort((a, b) => String(a.label).localeCompare(String(b.label)) || String(a.id).localeCompare(String(b.id))) }) as
+      { projects: { id: string; label: string }[] };
   }
 
-  /** Appends mapping revisions so historical resolution changes without raw fact edits. */
-  async function updateProjects(input: unknown) {
-    const data = projectRegistryMutationSchema.parse(input);
+  /**
+   * Settings > Projects (read-only): every app project with its apps, machines, folders, sessions,
+   * all-time requests and last activity, removed projects apart, and the requests in no project by
+   * reason. Aggregate first: canonical_requests is grouped to its distinct evidence tuples, and only those
+   * are resolved (lib/usage-project-map.ts), exactly as the Tokens read resolves them. Old-salt identities
+   * are never listed: nothing here reads usage_project_identities. Cached a minute; uploads invalidate.
+   */
+  const projectStatsCache = readCache(60_000, loadProjectStats);
+  const listProjectStats = () => projectStatsCache.get();
+  async function loadProjectStats() {
     const db = await sql();
-    const result = await db.begin(async transaction => {
+    return db.begin(async transaction => {
       const tx = transaction as unknown as Sql;
-      if (data.action === 'create') {
-        const id = randomUUID();
-        await tx`INSERT INTO personal_hub.usage_projects (id, label) VALUES (${id}, ${data.label})`;
-        return { ok: true, action: data.action, project_id: id, label: data.label };
+      await tx.unsafe(`SELECT set_config('statement_timeout', $1, true)`, [DATABASE_JOB_BUDGET_INTERVAL]);
+      const resolved = await tx.unsafe(`WITH ${projectMapCtes(`SELECT r.project_install_id, r.session_hash, r.effective_project_basis, r.effective_project_key,
+            count(*)::int AS requests, max(r.activity_at) AS last_seen
+          FROM personal_hub.canonical_requests r GROUP BY 1, 2, 3, 4`)}
+        SELECT project_state, project_reason, project_id,
+          sum(requests)::int AS requests, max(last_seen) AS last_seen,
+          count(DISTINCT session_hash)::int AS sessions,
+          count(DISTINCT effective_project_key) FILTER (WHERE effective_project_basis = 'working_directory')::int AS folders,
+          coalesce(array_agg(DISTINCT machine_label) FILTER (WHERE machine_label IS NOT NULL), '{}') AS machines
+        FROM project_map GROUP BY 1, 2, 3`);
+      const catalog = await tx`SELECT a.project_id, a.app, a.state, a.name, a.observed_at, ci.machine_label
+        FROM personal_hub.usage_app_projects a JOIN personal_hub.companion_installs ci ON ci.id = a.install_id
+        ORDER BY a.project_id, (a.state = 'active') DESC, a.observed_at DESC`;
+      type Entry = { id: string; name: string; apps: string[]; machines: string[]; folders: number; sessions: number; requests: number; last_seen: string | null; active: boolean };
+      const entries = new Map<string, Entry>();
+      for (const row of catalog) {
+        const id = row.project_id as string;
+        const entry = entries.get(id) ?? { id, name: row.name as string, apps: [], machines: [], folders: 0, sessions: 0, requests: 0, last_seen: null, active: false };
+        if (!entry.apps.includes(row.app as string)) entry.apps.push(row.app as string);
+        if (!entry.machines.includes(row.machine_label as string)) entry.machines.push(row.machine_label as string);
+        if (row.state === 'active') entry.active = true;
+        entries.set(id, entry);
       }
-      if (data.action === 'rename') {
-        const changed = await tx`UPDATE personal_hub.usage_projects
-          SET label = ${data.label}, updated_at = now() WHERE id = ${data.project_id} RETURNING id`;
-        if (!changed.length) throw new RequestError('Unknown project', 404);
-        return { ok: true, action: data.action, project_id: data.project_id, label: data.label };
+      const reasons = Object.fromEntries(PROJECT_REASONS.map(reason => [reason, 0])) as Record<ProjectReason, number>;
+      for (const row of resolved) {
+        if (row.project_state === 'project' && row.project_id) {
+          const entry = entries.get(row.project_id as string);
+          if (!entry) continue;
+          entry.requests += Number(row.requests); entry.sessions += Number(row.sessions); entry.folders += Number(row.folders);
+          for (const machine of row.machines as string[]) if (!entry.machines.includes(machine)) entry.machines.push(machine);
+          const last = row.last_seen ? new Date(row.last_seen as string).toISOString() : null;
+          if (last && (!entry.last_seen || last > entry.last_seen)) entry.last_seen = last;
+        } else if ((PROJECT_REASONS as readonly string[]).includes(row.project_reason as string)) {
+          reasons[row.project_reason as ProjectReason] += Number(row.requests);
+        }
       }
-      if (data.action === 'map') {
-        const project = await tx`SELECT id FROM personal_hub.usage_projects WHERE id = ${data.project_id}`;
-        if (!project.length) throw new RequestError('Unknown project', 404);
-      }
-      const identityIds = [...data.identity_ids].sort();
-      for (const identityId of identityIds) {
-        const identity = await tx`SELECT id FROM personal_hub.usage_project_identities WHERE id = ${identityId} FOR UPDATE`;
-        if (!identity.length) throw new RequestError('Unknown project identity', 404);
-      }
-      for (const identityId of identityIds) {
-        await tx`INSERT INTO personal_hub.usage_project_mapping_revisions (id, identity_id, project_id, changed_at)
-          VALUES (${randomUUID()}, ${identityId}, ${data.action === 'map' ? data.project_id : null}, DEFAULT)`;
-      }
-      return { ok: true, action: data.action, identities: data.identity_ids.length,
-        project_id: data.action === 'map' ? data.project_id : null };
+      const list = [...entries.values()].map(entry => ({ ...entry, apps: entry.apps.sort(), machines: entry.machines.sort() }))
+        .sort((a, b) => b.requests - a.requests || a.name.localeCompare(b.name));
+      const shape = ({ active: _active, ...entry }: Entry) => entry;
+      return clone({ projects: list.filter(entry => entry.active).map(shape),
+        removed: list.filter(entry => !entry.active).map(entry => ({ ...shape(entry), name: `${entry.name} (removed)` })),
+        not_in_project: reasons, as_of: new Date().toISOString() });
     });
-    // A label or mapping changes what every cached Tokens read resolves, in this process, at once.
-    projectsCache.invalidate(); dashboardCache.invalidate(); clearUsageQueryCache();
-    return result;
   }
 
   /** Privacy-safe knowledge-source registry: install-scoped resource keys, labels, and counts that disclose overlap. Cached a minute; every write invalidates. */
@@ -989,7 +1032,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
   async function listInstalls() {
     const db = await sql();
     const global = await globalSettings(db);
-    const [installs, bindings, runs, activeV1] = await Promise.all([
+    const [installs, bindings, runs, activeV1, deferrals] = await Promise.all([
       db`SELECT id, machine_label, kind, platform, arch, settings, paused, disabled, companion_version, created_at, last_seen_at, last_config_fetch_at,
           capabilities, capabilities_digest, capabilities_previous_digest, capabilities_reported_at, capabilities_changed_at
         FROM personal_hub.companion_installs ORDER BY created_at, id`,
@@ -1011,6 +1054,12 @@ export function createUsageStore(getDatabase?: () => Sql) {
         FROM personal_hub.companion_runs ORDER BY install_id, finished_at DESC, received_at DESC`,
       db`SELECT id, account_id, machine_label, last_seen_at FROM personal_hub.telemetry_sources
         WHERE mode = 'local' AND NOT disabled AND last_seen_at > now() - interval '2 hours'`,
+      // Before 20260923090100 is applied (SQLSTATE 42P01) nothing has been deferred.
+      db`SELECT install_id, count(*)::int AS deferrals FROM personal_hub.usage_side_record_deferrals
+        WHERE last_at > now() - interval '8 days' GROUP BY install_id`.catch(error => {
+        if ((error as { code?: string }).code === '42P01') return [] as Row[];
+        throw error;
+      }),
     ]);
     const now = Date.now();
     const result = installs.map(({ capabilities: rawCapabilities, capabilities_digest, capabilities_previous_digest, capabilities_reported_at, capabilities_changed_at, ...install }) => {
@@ -1033,6 +1082,8 @@ export function createUsageStore(getDatabase?: () => Sql) {
         cadence_minutes: effective.cadence_minutes,
         last_run_at: run?.finished_at ?? null, accepted_by_type: run?.accepted_by_type ?? {},
         capabilities, schedule, health,
+        names: { labels: install.kind === 'browser' ? 'not_applicable' as const : capabilities.current && capabilities.document?.features.labels === true ? 'sent' as const : 'needs_update' as const,
+          deferrals_8d: Number(deferrals.find(row => row.install_id === install.id)?.deferrals ?? 0) },
         update_available: install.kind === 'companion' && behind(install.companion_version as string | null, global.latest_companion_version) };
     });
     return clone({ installs: result, settings: mergeSettings(global.stored), settings_version: global.settings_version,
@@ -1211,7 +1262,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
   }
 
   return { issuePairingCode, pairInstall, companionInstall, companionConfig, createBinding, updateInstallSettings, confirmIdentity, ingestUsage,
-    collectionSettings, updateCollectionSettings, reportCapabilities, listProjects, updateProjects, listKnowledgeSources, updateKnowledgeSources, listInstalls, updateInstall,
+    collectionSettings, updateCollectionSettings, reportCapabilities, listProjects, listProjectStats, listKnowledgeSources, updateKnowledgeSources, listInstalls, updateInstall,
     usageDashboard, reconcile, syncCompanionRelease };
 }
 

@@ -4,9 +4,9 @@ import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { DataTable, EmptyState, Stat, StatGroup, type Column } from '@/components/kit';
+import { DataTable, Disclosure, EmptyState, Stat, StatGroup, type Column } from '@/components/kit';
 import type { UsageQueryResult } from '@/lib/usage-query';
-import { PROJECT_STATE_LABELS, compactTokens, exactTokens, percent, unsupportedFilterLabel, type TokensFilters } from '@/lib/usage-view';
+import { PROJECT_STATE_LABELS, PROVIDER_LABELS, compactTokens, exactTokens, percent, unsupportedFilterLabel, type TokensFilters } from '@/lib/usage-view';
 
 type ProjectRow = UsageQueryResult['projects']['rows'][number];
 type AgentRow = UsageQueryResult['agents']['rows'][number];
@@ -15,32 +15,32 @@ type CallerRow = UsageQueryResult['tools']['by_caller'][number];
 type KnowledgeRow = UsageQueryResult['knowledge']['rows'][number];
 type Coverage = UsageQueryResult['projects']['coverage'];
 
-const shortKey = (key: string) => key.slice(0, 8);
 const coveragePercent = (coverage: Coverage) => percent(coverage.headline ? coverage.applicable * coverage.complete : null);
 const count = (value: number, singular: string, plural = `${singular}s`) => `${exactTokens(value)} ${value === 1 ? singular : plural}`;
-/** The row's display name: the registry label for a named project, the agreed state label otherwise. */
-const projectName = (row: Pick<ProjectRow, 'state' | 'label'>) => row.state === 'project' ? row.label ?? 'Unnamed project' : PROJECT_STATE_LABELS[row.state];
+/**
+ * The row's display name: the app project's name for a project; otherwise the label the read gave the
+ * row ("Chats / no project", "<machine>: companion update needed") or the state's own name.
+ */
+const projectName = (row: Pick<ProjectRow, 'state' | 'label'>) => row.state === 'project' ? row.label ?? 'Unnamed project' : row.label ?? PROJECT_STATE_LABELS[row.state];
+const projectRowId = (row: Pick<ProjectRow, 'state' | 'filter_value' | 'label'>) => `${row.state}:${row.filter_value}:${row.label ?? ''}`;
 
-/** The filter value a project row applies: the registry id for a named project, the state code otherwise. */
-export function projectFilterValue(row: Pick<ProjectRow, 'state' | 'project_id'>): string | null {
-  if (row.state === 'project') return row.project_id;
-  return row.state;
+/**
+ * The filter value a project row applies, as the read gives it: the project id for a named project,
+ * `projectless` for Chats / no project, `not_reported:<install>` for one machine's update row, and the
+ * state code otherwise. Every row's value is its own, so selecting a row never widens to its neighbours.
+ */
+export function projectFilterValue(row: Pick<ProjectRow, 'filter_value'>): string | null {
+  return row.filter_value || null;
 }
 
-/** How an agent row is named wherever it appears: the recorded name first, then its class with a short key. */
-/** One row per agent, model, parent, and depth: the same agent key appears once per model it used, so the key alone collides. */
-export function agentRowId(row: Pick<AgentRow, 'agent_key' | 'class' | 'model' | 'parent_agent_key' | 'depth'>): string {
-  return `${row.agent_key ?? `unattributed:${row.class}`}:${row.model ?? ''}:${row.parent_agent_key ?? ''}:${row.depth ?? ''}`;
+/** How an agent group is named wherever it appears: its provider, then the name the labels or the ledger give it. */
+export function agentLabel(row: Pick<AgentRow, 'name' | 'provider'>): string {
+  const name = row.name === 'main' ? 'main agent' : row.name;
+  return `${PROVIDER_LABELS[row.provider] ?? row.provider} · ${name}`;
 }
 
-export function agentLabel(row: Pick<AgentRow, 'agent_key' | 'name' | 'class'>): string {
-  if (row.name) return row.name;
-  if (row.class === 'main') return row.agent_key ? `Main agent ${shortKey(row.agent_key)}` : 'Main agent';
-  if (!row.agent_key) return 'Unattributed';
-  return `${AGENT_CLASS_LABELS[row.class] ?? row.class} agent ${shortKey(row.agent_key)}`;
-}
-
-export const AGENT_CLASS_LABELS: Record<string, string> = { main: 'Main', builtin: 'Built-in', custom: 'Custom', unknown: 'Unknown role' };
+export const AGENT_CLASS_LABELS: Record<string, string> = { main: 'Main', builtin: 'Built-in', custom: 'Custom', unattributed: 'Unattributed', unknown: 'Unknown role' };
+const ROLE_LABELS: Record<string, string> = { main: 'Main', subagent: 'Subagent', unattributed: 'Unattributed' };
 const TOOL_CLASS_LABELS: Record<string, string> = { builtin: 'built-in', mcp: 'MCP', function: 'function', custom: 'custom', unknown: 'unknown' };
 const KNOWLEDGE_STATE_LABELS: Record<string, string> = { source: 'Configured source', unassigned: 'Unassigned identity', unknown: 'Unknown source' };
 const ACCESS_KINDS = ['read', 'search', 'write', 'unknown'] as const;
@@ -78,16 +78,16 @@ function ProjectCard({ result, filters, onFiltersChange }: { result: UsageQueryR
       <StatGroup className="border-border border-y">
         <Stat label="Named projects" value={String(named.length)} caption={`${count(rows.filter(r => r.state !== 'project').length, 'state bucket')} kept inside the total`} />
         <Stat label="Attribution coverage" value={coveragePercent(coverage)} caption={`${exactTokens(coverage.classified)} of ${exactTokens(coverage.headline)} headline tokens carry a project`} />
-        <Stat label="Registry mapping" value={percent(registry.eligible ? registry.complete : null)} caption={`${exactTokens(registry.classified)} of ${exactTokens(registry.eligible)} attributed tokens map to a named project`} />
+        <Stat label="In an app project" value={percent(registry.eligible ? registry.complete : null)} caption={`${exactTokens(registry.classified)} of ${exactTokens(registry.eligible)} placed tokens land in a project an app defines`} />
       </StatGroup>
       <div className="grid gap-3 p-4">
-        <DataTable columns={columns} rows={rows} getRowId={row => `${row.state}:${row.project_id ?? ''}`} defaultSort={{ id: 'tokens', dir: 'desc' }}
-          selectedId={selected ? `${selected.state}:${selected.project_id ?? ''}` : undefined} onSelect={select} className="max-h-80 overflow-auto"
+        <DataTable columns={columns} rows={rows} getRowId={projectRowId} defaultSort={{ id: 'tokens', dir: 'desc' }}
+          selectedId={selected ? projectRowId(selected) : undefined} onSelect={select} className="max-h-80 overflow-auto"
           caption="Select a row to filter the whole page to that project; select it again, or remove the chip above, to go back."
-          empty={<EmptyState title="No project evidence in scope" description="Projects are read from request records. Nothing here means the selected scope carries only hourly buckets, which name no project; raise the collection detail level to requests or requests_with_tools and map working directories under Settings." actions={<Button size="sm" variant="outline" asChild><Link href="/settings/projects">Open project settings</Link></Button>} />} />
+          empty={<EmptyState title="No project evidence in scope" description="Projects are read from request records. Nothing here means the selected scope carries only hourly buckets, which name no project; raise the collection detail level to requests or requests_with_tools. Projects are the groups you create in your apps, reported by companion 2.2.0." actions={<Button size="sm" variant="outline" asChild><Link href="/settings/projects">Open project settings</Link></Button>} />} />
       </div>
       <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed" data-testid="projects-footnote">
-        No project and Unknown project are separate rows and both stay inside the headline total. {coverage.note} {registry.note}
+        No project, Chats / no project, Unassigned and Unknown are separate rows and all stay inside the headline total. A machine whose companion predates 2.2.0 shows as “companion update needed” until it reports its projects. {coverage.note} {registry.note}
       </p>
     </Card>
   );
@@ -98,26 +98,25 @@ function AgentCard({ result, filters, onFiltersChange }: { result: UsageQueryRes
   const attributed = summary.main_tokens + summary.subagent_tokens;
   const total = attributed + summary.unattributed_tokens;
   const share = (tokens: number) => percent(total ? tokens / total : null);
-  const names = new Map(rows.filter(row => row.agent_key).map(row => [row.agent_key as string, agentLabel(row)]));
-  const selected = rows.find(row => row.agent_key && filters.agents.includes(row.agent_key));
+  const selected = rows.find(row => filters.agents.includes(row.group_id));
   const columns: Column<AgentRow>[] = [
     { id: 'agent', header: 'Agent', sortValue: row => agentLabel(row), cell: row => (
-      <span className="grid gap-0.5 text-xs">
-        <span className={row.agent_key ? 'font-medium' : 'text-muted-foreground'}>{agentLabel(row)}</span>
-        {row.agent_key ? <span className="text-muted-foreground font-mono text-[10.5px]">{shortKey(row.agent_key)}</span> : null}
+      <span className="flex flex-wrap items-center gap-1.5 text-xs">
+        <Badge variant="outline">{PROVIDER_LABELS[row.provider] ?? row.provider}</Badge>
+        <span className={row.role === 'unattributed' ? 'text-muted-foreground' : 'font-medium'}>{row.name === 'main' ? 'main agent' : row.name}</span>
+        {row.builtin ? <Badge variant="soft">built-in</Badge> : null}
       </span>
     ) },
-    { id: 'class', header: 'Role', sortValue: row => row.class, cell: row => <Badge variant={row.class === 'unknown' ? 'outline' : 'soft'}>{AGENT_CLASS_LABELS[row.class] ?? row.class}</Badge> },
-    { id: 'parent', header: 'Parent', sortValue: row => row.parent_agent_key ?? '', cell: row => row.parent_agent_key ? <span className="text-xs">{names.get(row.parent_agent_key) ?? `agent ${shortKey(row.parent_agent_key)}`}</span> : <span className="text-muted-foreground text-xs">{row.class === 'main' ? 'session root' : 'not recorded'}</span> },
-    { id: 'model', header: 'Model', sortValue: row => row.model ?? '', cell: row => <span className="font-mono text-xs">{row.model ?? <span className="text-muted-foreground font-sans">not recorded</span>}</span> },
-    { id: 'depth', header: 'Depth', numeric: true, sortValue: row => row.depth ?? -1, cell: row => row.depth === null ? '—' : String(row.depth) },
+    { id: 'role', header: 'Role', sortValue: row => row.role, cell: row => <Badge variant={row.role === 'unattributed' ? 'outline' : 'soft'}>{ROLE_LABELS[row.role] ?? row.role}</Badge> },
+    { id: 'instances', header: 'Instances', numeric: true, sortValue: row => row.instances, cell: row => exactTokens(row.instances) },
+    { id: 'sessions', header: 'Sessions', numeric: true, sortValue: row => row.sessions, cell: row => exactTokens(row.sessions) },
     { id: 'tokens', header: 'Tokens', numeric: true, sortValue: row => row.total_tokens, cell: row => exactTokens(row.total_tokens) },
     { id: 'share', header: 'Share', numeric: true, sortValue: row => row.share ?? -1, cell: row => percent(row.share) },
     { id: 'calls', header: 'Calls', numeric: true, sortValue: row => row.calls, cell: row => exactTokens(row.calls) },
   ];
   const select = (row: AgentRow) => {
-    if (!row.agent_key) return;
-    const key = row.agent_key;
+    if (!row.group_id) return;
+    const key = row.group_id;
     onFiltersChange({ ...filters, agents: filters.agents.includes(key) ? filters.agents.filter(v => v !== key) : [key] });
   };
   const scope = (next: TokensFilters['agent_scope']) => onFiltersChange({ ...filters, agent_scope: filters.agent_scope === next ? 'all' : next });
@@ -126,7 +125,7 @@ function AgentCard({ result, filters, onFiltersChange }: { result: UsageQueryRes
     <Card className="gap-0 overflow-hidden py-0" aria-label="Agents">
       <CardHeader className="p-4">
         <CardTitle className="text-base">Agents</CardTitle>
-        <CardDescription>How the same tokens divide between the main agent and its observed subagents.</CardDescription>
+        <CardDescription>How the same tokens divide between each provider&apos;s main agent and its subagents, by name.</CardDescription>
         <CardAction className="flex flex-wrap justify-end gap-1.5">
           {selected ? <Badge variant="soft">filtering: {agentLabel(selected)}</Badge> : null}
           <Button type="button" size="xs" variant={filters.agent_scope === 'main' ? 'default' : 'outline'} aria-pressed={filters.agent_scope === 'main'} onClick={() => scope('main')}>Main agent only</Button>
@@ -146,13 +145,13 @@ function AgentCard({ result, filters, onFiltersChange }: { result: UsageQueryRes
             {classes.map(([cls, tokens]) => <dd key={cls} className="flex items-baseline gap-1"><span>{AGENT_CLASS_LABELS[cls] ?? cls}</span> <span className="font-mono tabular-nums">{exactTokens(tokens)}</span></dd>)}
           </dl>
         ) : null}
-        <DataTable columns={columns} rows={rows} getRowId={agentRowId} defaultSort={{ id: 'tokens', dir: 'desc' }}
-          selectedId={selected ? agentRowId(selected) : undefined} onSelect={select} className="max-h-80 overflow-auto"
-          caption="Select an agent to filter the whole page to it; select it again, or remove the chip above, to go back. Unattributed rows cannot be selected."
+        <DataTable columns={columns} rows={rows} getRowId={row => row.group_id || `${row.provider}:${row.role}:${row.name}`} defaultSort={{ id: 'tokens', dir: 'desc' }}
+          selectedId={selected?.group_id} onSelect={select} className="max-h-80 overflow-auto"
+          caption="Select an agent to filter the whole page to it; select it again, or remove the chip above, to go back."
           empty={<EmptyState title="No agent evidence in scope" description="Agent identity, parent, model, and depth arrive with request records and agent lifecycle events. Hourly buckets carry none of them, so this scope has nothing to divide." />} />
       </div>
       <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed" data-testid="agents-footnote">
-        Agent tokens divide the headline above; they are never added to it, and missing identity stays unattributed rather than counted as the main agent. A role class describes the child, not who started it: a custom role can be launched by another model, and the collected logs do not say whether a user or a model asked for the delegation. {coverage.note}
+        Agent tokens divide the headline above; they are never added to it, and missing identity stays unattributed rather than counted as the main agent. One row is every agent of a provider with the same role and name; instances counts the distinct agents behind it. Forked Codex subagent rollouts record their parent session and agent, so their tokens count under Codex main. A role describes the child, not who started it: a custom role can be launched by another model, and the collected logs do not say whether a user or a model asked for the delegation. {coverage.note}
       </p>
     </Card>
   );
@@ -242,21 +241,40 @@ export function ToolKnowledgeCard({ result, loading, knowledgeLoading }: { resul
   const toolColumns: Column<ToolRow>[] = [
     { id: 'tool', header: 'Tool', sortValue: row => row.name ?? '', cell: row => (
       <span className="grid gap-0.5 text-xs">
-        <span className={row.name ? 'font-mono' : 'text-muted-foreground'}>{row.name ?? 'Unnamed tool'}</span>
-        <span className="text-muted-foreground text-[10.5px]">{TOOL_CLASS_LABELS[row.class] ?? row.class}{row.namespace ? ` · ${row.namespace}` : ''}</span>
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className={row.name && !row.synthetic ? 'font-mono' : 'text-muted-foreground'}>{row.name ?? 'Unnamed tool'}</span>
+          {row.builtin ? <Badge variant="soft">built-in</Badge> : null}
+        </span>
+        <span className="text-muted-foreground text-[10.5px]">{TOOL_CLASS_LABELS[row.class] ?? row.class}{row.namespace ? ` · ${row.namespace}` : ''}{row.machine ? ` · unnamed on ${row.machine}` : ''}</span>
+        {row.children.length ? (
+          <Disclosure title={`${count(row.children.reduce((n, child) => n + child.invocations, 0), 'nested call')} · ${count(row.children.length, 'tool')}`}>
+            <ul className="grid gap-1" data-testid="tool-children">
+              {row.children.map(child => (
+                <li key={`${child.namespace ?? ''}:${child.name ?? ''}`} className="flex flex-wrap items-baseline gap-1.5">
+                  <span className="font-mono">{child.namespace ? `${child.namespace} · ` : ''}{child.name ?? 'Unnamed tool'}</span>
+                  <span className="font-mono tabular-nums">{exactTokens(child.invocations)}</span>
+                  <span className="text-muted-foreground">{Object.entries(child.outcomes).map(([outcome, n]) => `${outcome.replaceAll('_', ' ')} ${exactTokens(n)}`).join(' · ')}</span>
+                </li>
+              ))}
+            </ul>
+          </Disclosure>
+        ) : null}
       </span>
     ) },
     { id: 'invocations', header: 'Invocations', numeric: true, sortValue: row => row.invocations, cell: row => exactTokens(row.invocations) },
     { id: 'share', header: 'Share', numeric: true, sortValue: row => row.share ?? -1, cell: row => percent(row.share) },
   ];
+  const callerName = (row: CallerRow) => row.state === 'group' || row.state === 'label'
+    ? agentLabel({ provider: row.provider ?? 'unknown', name: row.name ?? 'unattributed' })
+    : row.state === 'outside_range' ? 'Caller outside range' : 'No caller recorded';
   const callerColumns: Column<CallerRow>[] = [
-    { id: 'caller', header: 'Caller', sortValue: row => row.agent_name ?? row.agent_class ?? '', cell: row => (
-      <span className="grid gap-0.5 text-xs">
-        <span className={row.agent_key ? 'font-medium' : 'text-muted-foreground'}>{row.agent_key ? agentLabel({ agent_key: row.agent_key, name: row.agent_name, class: row.agent_class ?? 'unknown' }) : 'No caller recorded'}</span>
-        {row.agent_key ? <span className="text-muted-foreground font-mono text-[10.5px]">{shortKey(row.agent_key)}</span> : null}
+    { id: 'caller', header: 'Caller', sortValue: callerName, cell: row => (
+      <span className="flex flex-wrap items-center gap-1.5 text-xs">
+        <span className={row.state === 'group' || row.state === 'label' ? 'font-medium' : 'text-muted-foreground'}>{callerName(row)}</span>
+        {row.builtin ? <Badge variant="soft">built-in</Badge> : null}
       </span>
     ) },
-    { id: 'model', header: 'Model', sortValue: row => row.model ?? '', cell: row => row.model ? <span className="font-mono text-xs">{row.model}</span> : <span className="text-muted-foreground text-xs">not recorded</span> },
+    { id: 'role', header: 'Role', sortValue: row => row.role ?? '', cell: row => row.role ? <Badge variant="soft">{ROLE_LABELS[row.role] ?? row.role}</Badge> : <span className="text-muted-foreground text-xs">not recorded</span> },
     { id: 'invocations', header: 'Invocations', numeric: true, sortValue: row => row.invocations, cell: row => exactTokens(row.invocations) },
   ];
   return (
@@ -285,12 +303,12 @@ export function ToolKnowledgeCard({ result, loading, knowledgeLoading }: { resul
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="grid gap-2">
             <h3 className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Top tools</h3>
-            <DataTable columns={toolColumns} rows={tools.by_tool} getRowId={row => `${row.class}:${row.namespace ?? ''}:${row.name ?? ''}`} defaultSort={{ id: 'invocations', dir: 'desc' }} className="max-h-80 overflow-auto"
+            <DataTable columns={toolColumns} rows={tools.by_tool} getRowId={row => `${row.synthetic ? 'synthetic' : row.class}:${row.namespace ?? ''}:${row.name ?? ''}:${row.machine ?? ''}`} defaultSort={{ id: 'invocations', dir: 'desc' }} className="max-h-80 overflow-auto"
               empty={<EmptyState title="No tool invocations in scope" description="Tool events arrive at the requests_with_tools detail level. Hourly buckets and plain request records carry none." actions={<Button size="sm" variant="outline" asChild><Link href="/settings/collection">Open collection settings</Link></Button>} />} />
           </div>
           <div className="grid gap-2">
             <h3 className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Top callers</h3>
-            <DataTable columns={callerColumns} rows={tools.by_caller} getRowId={row => `${row.agent_key ?? 'none'}:${row.model ?? ''}`} defaultSort={{ id: 'invocations', dir: 'desc' }} className="max-h-80 overflow-auto"
+            <DataTable columns={callerColumns} rows={tools.by_caller} getRowId={row => `${row.state}:${row.group_id ?? ''}:${row.provider ?? ''}:${row.role ?? ''}:${row.name ?? ''}`} defaultSort={{ id: 'invocations', dir: 'desc' }} className="max-h-80 overflow-auto"
               empty={<EmptyState title="No caller attribution" description="Callers are named only where an invocation carries its agent or request; none in scope does." />} />
           </div>
         </div>

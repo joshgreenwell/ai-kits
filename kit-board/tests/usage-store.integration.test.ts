@@ -227,81 +227,29 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.equal((await store.ingestUsage(secondInstall, envelope({ records: [{ ...bubble, parser_version: '2.0.0+cursor-local2', ended_at: '2026-09-02T05:20:00.000Z' }] }))).accepted.records, 1,
       'the fixed reader inserts through the revision key alone');
 
-    const registryBefore = await store.listProjects();
-    const identity = (key: string, installId: string | null, basis = 'working_directory') => registryBefore.identities.find(item =>
+    // Ingest still records scoped project identities (the evidence manual mapping used to read), but
+    // nothing maps them any more: projects come from the apps, and the registry read lists only app projects.
+    const identities = await sql`SELECT id, basis, evidence_key, install_id FROM personal_hub.usage_project_identities
+      WHERE install_id IN (${install.id}, ${secondInstall.id}) OR (basis = 'native' AND account_id = ${account})`;
+    const identity = (key: string, installId: string | null, basis = 'working_directory') => identities.find(item =>
       item.evidence_key === key && item.install_id === installId && item.basis === basis)!;
     const firstSharedIdentity = identity(projectKey, install.id);
     const secondSharedIdentity = identity(projectKey, secondInstall.id);
-    const worktreeIdentity = identity(worktreeKey, install.id);
-    const firstSameFolderIdentity = identity(sameFolderKey, install.id);
-    const secondSameFolderIdentity = identity(sameFolderKey, secondInstall.id);
-    const nativeIdentity = identity(nativeProjectKey, null, 'native');
-    const legacyIdentity = identity(legacyProjectKey, install.id);
-    const revisionIdentity = identity(revisionProjectKey, install.id);
     assert.ok(firstSharedIdentity && secondSharedIdentity && firstSharedIdentity.id !== secondSharedIdentity.id,
       'matching hashes on two machines remain separately scoped identities');
-    assert.ok(firstSameFolderIdentity.id !== secondSameFolderIdentity.id,
+    assert.ok(identity(sameFolderKey, install.id).id !== identity(sameFolderKey, secondInstall.id).id,
       'matching folder hashes never imply one logical project');
-
-    const sharedProject = await store.updateProjects({ action: 'create', label: 'Shared observatory project' });
-    const folderProjectA = await store.updateProjects({ action: 'create', label: 'Same folder A' });
-    const folderProjectB = await store.updateProjects({ action: 'create', label: 'Same folder B' });
-    await store.updateProjects({ action: 'map', project_id: sharedProject.project_id,
-      identity_ids: [firstSharedIdentity.id, secondSharedIdentity.id, worktreeIdentity.id, nativeIdentity.id,
-        legacyIdentity.id, revisionIdentity.id] });
-    await store.updateProjects({ action: 'map', project_id: folderProjectA.project_id, identity_ids: [firstSameFolderIdentity.id] });
-    await store.updateProjects({ action: 'map', project_id: folderProjectB.project_id, identity_ids: [secondSameFolderIdentity.id] });
-    await store.updateProjects({ action: 'rename', project_id: sharedProject.project_id, label: 'Shared project renamed' });
-
-    const resolvedState = async (semanticKey: string) => (await sql`SELECT project_state, project_id, project_label, project_key, project_basis
-      FROM personal_hub.activity_request_project_resolution WHERE account_id = ${account} AND semantic_key = ${semanticKey}
-      ORDER BY observed_at DESC LIMIT 1`)[0];
-    assert.equal((await resolvedState(sha('detail-request'))).project_id, sharedProject.project_id,
-      'two machines and a worktree can share one logical project');
-    assert.equal((await resolvedState(sha('native-project-request'))).project_label, 'Shared project renamed');
-    assert.equal((await resolvedState(sha('same-folder-request'))).project_id, folderProjectA.project_id);
-    assert.equal((await resolvedState(sha('second-same-folder'))).project_id, folderProjectB.project_id);
-    const legacyResolved = await resolvedState(sha('legacy-project-request'));
-    assert.deepEqual([legacyResolved.project_id, legacyResolved.project_basis, legacyResolved.project_key],
-      [sharedProject.project_id, 'working_directory', legacyProjectKey], 'legacy hash-only evidence remains assignable');
+    assert.ok(identity(nativeProjectKey, null, 'native') && identity(legacyProjectKey, install.id) && identity(revisionProjectKey, install.id) && identity(worktreeKey, install.id),
+      'native, legacy hash-only, revised, and worktree evidence are all still recorded');
     const [legacyRaw] = await sql`SELECT project_basis, project_key, project_hash FROM personal_hub.activity_requests
       WHERE account_id = ${account} AND semantic_key = ${sha('legacy-project-request')}`;
     assert.deepEqual([legacyRaw.project_basis, legacyRaw.project_key, legacyRaw.project_hash], [null, null, legacyProjectKey],
-      'legacy resolution never rewrites raw facts');
-    const canonicalRevision = await sql`SELECT project_state, project_id FROM personal_hub.activity_request_project_resolution
-      WHERE account_id = ${account} AND semantic_key = ${sha('project-revision')}`;
-    assert.equal(canonicalRevision.length, 1, 'project coverage canonicalizes request revisions');
-    assert.deepEqual([canonicalRevision[0].project_state, canonicalRevision[0].project_id], ['project', sharedProject.project_id],
-      'a retained richer replay replaces Unknown in project coverage');
-    assert.equal((await resolvedState(sha('zero-request'))).project_state, 'no_project');
-    assert.equal((await resolvedState(sha('msg'))).project_state, 'unknown');
-
-    const rawBefore = await resolvedState(sha('worktree-request'));
-    await store.updateProjects({ action: 'unmap', identity_ids: [worktreeIdentity.id] });
-    const unmapped = await resolvedState(sha('worktree-request'));
-    assert.equal(unmapped.project_state, 'unassigned');
-    assert.deepEqual([unmapped.project_key, unmapped.project_basis], [rawBefore.project_key, rawBefore.project_basis],
-      'mapping changes do not edit raw request facts');
-    await store.updateProjects({ action: 'map', project_id: sharedProject.project_id, identity_ids: [worktreeIdentity.id] });
-    await sql`UPDATE personal_hub.usage_project_mapping_revisions SET changed_at = '2026-09-02T05:00:00Z'
-      WHERE identity_id = ${worktreeIdentity.id}`;
-    assert.equal((await resolvedState(sha('worktree-request'))).project_id, sharedProject.project_id);
-    const mappingHistory = await sql`SELECT revision_order, project_id FROM personal_hub.usage_project_mapping_revisions
-      WHERE identity_id = ${worktreeIdentity.id} ORDER BY revision_order`;
-    assert.deepEqual(mappingHistory.map(row => row.project_id), [sharedProject.project_id, null, sharedProject.project_id],
-      'database revision order preserves rapid map, unmap, and remap writes when audit timestamps collide');
-
-    const registryAfter = await store.listProjects();
-    assert.ok(registryAfter.coverage.evidence.with_identity >= 9);
-    assert.ok(registryAfter.coverage.mapping.mapped >= 8);
-    // Raw observations are the evidence window's rows (every sighting, bounded like the dashboard ledgers), a
-    // different quantity from the canonical request states, which resolve one row per key.
-    const [recentRequests] = await sql`SELECT count(*)::int AS rows FROM personal_hub.activity_requests r
-      JOIN personal_hub.usage_accounts a ON a.id = r.account_id WHERE r.observed_at >= now() - interval '35 days'`;
-    assert.equal(registryAfter.coverage.evidence.request_observations, Number(recentRequests.rows));
-    assert.ok(registryAfter.coverage.evidence.canonical_requests >= 9, 'canonical request-state coverage counts one state per request key');
-    assert.equal(await store.listProjects(), registryAfter, 'the registry read is cached until a write or an upload invalidates it');
-    assert.equal(registryAfter.identities.some(item => 'path' in item), false, 'the registry never returns local paths');
+      'ingest never rewrites raw project facts');
+    assert.equal('updateProjects' in store, false, 'manual create, rename, map and unmap are retired');
+    const registry = await store.listProjects();
+    assert.deepEqual(Object.keys(registry), ['projects'], 'the registry read is the Tokens filter list only');
+    assert.equal(registry.projects.some(project => 'path' in project || 'identities' in project), false, 'and never returns paths or identities');
+    assert.equal(await store.listProjects(), registry, 'the registry read is cached until an upload invalidates it');
     const [eventCounts] = await sql`SELECT
         (SELECT count(*)::int FROM personal_hub.agent_events WHERE account_id = ${account}) AS agents,
         (SELECT count(*)::int FROM personal_hub.tool_events WHERE account_id = ${account}) AS tools,
@@ -742,9 +690,9 @@ maybe('the application role can append to every ledger but never update or delet
       (id, basis, evidence_key, install_id, first_seen, last_seen)
       VALUES (${writableIdentity}, 'working_directory', ${sha(writableIdentity)}, '00000000-0000-4000-8000-000000000302',
         '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
-    const [appendedMapping] = await app`INSERT INTO personal_hub.usage_project_mapping_revisions (id, identity_id, project_id)
-      VALUES (${randomUUID()}, ${writableIdentity}, ${writableProject}) RETURNING revision_order`;
-    assert.ok(Number(appendedMapping.revision_order) > 0, 'the application role can allocate database mapping order');
+    // Manual mapping is retired (20260923090300): the application role can no longer append a mapping revision.
+    await assert.rejects(app`INSERT INTO personal_hub.usage_project_mapping_revisions (id, identity_id, project_id)
+      VALUES (${randomUUID()}, ${writableIdentity}, ${writableProject})`, /permission denied/, 'mapping revisions are closed to the app');
     const writableSource = randomUUID(), writableResource = randomUUID();
     await app`INSERT INTO personal_hub.usage_knowledge_sources (id, label) VALUES (${writableSource}, 'Application role source')`;
     await app`INSERT INTO personal_hub.usage_knowledge_source_identities
@@ -758,7 +706,6 @@ maybe('the application role can append to every ledger but never update or delet
     assert.ok(Number(appendedSourceMapping.revision_order) > 0, 'the application role can allocate knowledge-source mapping order');
     await app`SELECT count(*) FROM personal_hub.allowance_percent_view`;
     await app`SELECT count(*) FROM personal_hub.token_bucket_canonical`;
-    await app`SELECT count(*) FROM personal_hub.activity_request_project_resolution`;
     await app`SELECT count(*) FROM personal_hub.resource_access_source_resolution`;
     await app`SELECT count(*) FROM personal_hub.token_bucket_revisions`;
   } finally { await app.end({ timeout: 1 }); }

@@ -168,7 +168,15 @@ const NIL_UUID = `'00000000-0000-0000-0000-000000000000'::uuid`;
 export const TOOL_INVOCATION_COLUMNS = [
   'inv_revision_id', 'inv_observed_at', 'inv_received_at', 'source_id',
   'tool_name', 'tool_namespace', 'tool_class', 'outcome', 'caller_request_key', 'caller_agent_key', 'session_hash',
+  'parent_invocation_key',
 ] as const;
+/**
+ * Invocation-register columns added after the table was first built and backfilled. A column here is
+ * filled for existing rows by `toolColumnBackfill`, because the guarded upsert never rewrites a register
+ * whose winner is unchanged. 20260923090200 added `parent_invocation_key` (the Codex exec a nested MCP call
+ * ran under; lib/usage-query.ts nests those calls under their exec).
+ */
+export const ADDED_TOOL_INVOCATION_COLUMNS = ['parent_invocation_key'] as const;
 /** The result register: its winner, then the outcome it reports. */
 export const TOOL_RESULT_COLUMNS = ['res_revision_id', 'res_observed_at', 'res_received_at', 'res_outcome'] as const;
 
@@ -193,6 +201,7 @@ export const canonicalToolUpsert = (keysJoin: string, touched?: string) => {
   ${touched ? `${touched},\n  ` : 'WITH '}inv AS (
     SELECT t.account_id, t.invocation_key, t.id AS inv_revision_id, t.observed_at AS inv_observed_at, t.received_at AS inv_received_at,
       b.source_id, t.tool_name, t.tool_namespace, t.tool_class, t.outcome, t.caller_request_key, t.caller_agent_key, t.session_hash,
+      t.parent_invocation_key,
       row_number() OVER (PARTITION BY t.account_id, t.invocation_key ORDER BY ${toolRecency('t')}) AS rank
     FROM personal_hub.tool_events t
     ${keysJoin}
@@ -230,8 +239,27 @@ export const toolRankBy = toolRecency;
  * Rebuild the tool projection from the ledger. The same rule as `refreshCanonicalRequests`: any path
  * that writes personal_hub.tool_events outside `ingestUsage` must call this afterwards.
  */
-export const refreshCanonicalToolInvocations = (sql: { unsafe: (query: string) => Promise<unknown> }) =>
-  sql.unsafe(canonicalToolUpsert(''));
+export const refreshCanonicalToolInvocations = async (sql: { unsafe: (query: string) => Promise<unknown> }) => {
+  await sql.unsafe(canonicalToolUpsert(''));
+  // The guarded upsert leaves a register whose winner is unchanged alone, so a column added later is
+  // filled from that same winner here.
+  await sql.unsafe(toolColumnBackfill());
+};
+
+/**
+ * Fill added invocation-register columns on rows that already exist, from the ledger revision each row's
+ * register already names. Idempotent: it writes only a row whose value differs. It is the backfill in
+ * 20260923090200 (generated from here by scripts/generate-canonical-backfill.mjs) and the post-deploy
+ * recompute step: rows the pre-deploy code upserted between `supabase db push` and the deploy did not
+ * carry the column, and this statement repairs exactly those.
+ */
+export const toolColumnBackfill = (columns: readonly string[] = ADDED_TOOL_INVOCATION_COLUMNS) => columns.map(column => `UPDATE personal_hub.canonical_tool_invocations c
+   SET ${column} = t.${column}
+  FROM personal_hub.tool_events t
+ WHERE t.id = c.inv_revision_id AND c.account_id = t.account_id AND c.invocation_key = t.invocation_key
+   AND t.${column} IS NOT NULL
+   AND c.${column} IS DISTINCT FROM t.${column}`).join(';\n');
+export const refreshAddedToolColumns = (sql: { unsafe: (query: string) => Promise<unknown> }) => sql.unsafe(toolColumnBackfill());
 
 /** Both projections, for fixtures and repairs that touch both ledgers. */
 export const refreshCanonicalProjections = async (sql: { unsafe: (query: string) => Promise<unknown> }) => {

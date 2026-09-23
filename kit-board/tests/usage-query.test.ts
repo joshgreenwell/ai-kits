@@ -50,12 +50,16 @@ test('the knowledge section applies the machine filter through the access bindin
   assert.deepEqual(bound(accesses, /AND b\.source_id = ANY\(\$(\d+)::uuid\[\]\)/), [MACHINE], 'accesses are limited to the selected machine\'s binding');
   const invocations = find('CREATE TEMP TABLE _usage_access_invocations')!;
   assert.match(invocations.text, /caller_keys AS/, 'an agent filter is a detail filter, so the calling requests are ranked for the access invocations');
-  assert.deepEqual(bound(invocations, /r\.agent_key = ANY\(\$(\d+)::text\[\]\)/), [AGENT]);
+  assert.deepEqual(bound(invocations, /r\.agent_group_id = ANY\(\$(\d+)::text\[\]\)/), [AGENT], 'an agent filter value is a group id, matched through the agent map');
+  assert.match(invocations.text, /LEFT JOIN _usage_agent_map am ON am\.account_id = r\.account_id AND am\.source_id = r\.source_id/, 'the calling requests find their group by plain equality on the evidence');
+  const map = find('CREATE TEMP TABLE _usage_agent_map')!;
+  assert.deepEqual(bound(map, /AND r\.source_id = ANY\(\$(\d+)::uuid\[\]\)/), [MACHINE], 'the agent map is built over the same machines');
+  assert.match(map.text, /GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10/, 'the map aggregates before it joins any label');
   assert.deepEqual(bound(invocations, /source_id = ANY\(\$(\d+)::uuid\[\]\)/), [MACHINE], 'the calling request follows the same machine filter as tools');
   const rows = find('AS distinct_agents')!;
-  assert.deepEqual(bound(rows, /WHERE i\.caller_agent_key = ANY\(\$(\d+)::text\[\]\) AND i\.matches/), [AGENT]);
+  assert.deepEqual(bound(rows, /WHERE \(i\.account_id, i\.caller_agent_key\) IN \(SELECT account_id, agent_key FROM _usage_agent_map WHERE agent_key IS NOT NULL AND group_id = ANY\(\$(\d+)::text\[\]\)\) AND i\.matches/), [AGENT]);
   const total = find('AS distinct_invocations\n')!;
-  assert.match(total.text, /WHERE i\.caller_agent_key = ANY\(\$1::text\[\]\) AND i\.matches AND a\.current_configuration/, 'the unduplicated total is filtered like the rows');
+  assert.match(total.text, /WHERE \(i\.account_id, i\.caller_agent_key\) IN \(SELECT account_id, agent_key FROM _usage_agent_map WHERE agent_key IS NOT NULL AND group_id = ANY\(\$1::text\[\]\)\) AND i\.matches AND a\.current_configuration/, 'the unduplicated total is filtered like the rows');
   assert.deepEqual(result.knowledge.unsupported_filters, ['detail filters apply through the calling request; invocations without a retained caller request are excluded']);
   assert.equal(find('in_range_invocations AS'), undefined, 'the knowledge section does not read the tools section\'s invocation set');
 });
@@ -85,7 +89,7 @@ test('agent lifecycle evidence follows the machine and agent filters and names t
   const filtered = await run({ section: 'requests', machines: MACHINE, agents: AGENT, efforts: 'high' });
   const events = filtered.find('FROM personal_hub.agent_events e')!;
   assert.deepEqual(bound(events, /AND b\.source_id = ANY\(\$(\d+)::uuid\[\]\)/), [MACHINE]);
-  assert.deepEqual(bound(events, /AND e\.agent_key = ANY\(\$(\d+)::text\[\]\)/), [AGENT]);
+  assert.deepEqual(bound(events, /AND \(e\.account_id, e\.agent_key\) IN \(SELECT account_id, agent_key FROM _usage_agent_map WHERE agent_key IS NOT NULL AND group_id = ANY\(\$(\d+)::text\[\]\)\)/), [AGENT]);
   assert.match(filtered.result.agents.coverage.note, /the efforts filter does not apply to them/);
   const plain = await run({ section: 'requests' });
   assert.doesNotMatch(plain.find('FROM personal_hub.agent_events e')!.text, /source_id = ANY|agent_key = ANY/);

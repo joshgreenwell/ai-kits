@@ -269,9 +269,104 @@ export const adapterCoverageSchema = z.object({
   }
 });
 
+/**
+ * Display text (section 1.6). The companion normalizes before it validates: it removes every
+ * character of general category Cc, Cf, Cs, Zl or Zp, trims (after that removal both Rust
+ * `str::trim` and JS `trim` remove exactly Zs), truncates to the limit in code points and trims
+ * again. Here the result is only checked: no forbidden character, already trimmed, and 1 to
+ * `max` code points (not UTF-16 units, so an astral character counts once, as it does in Rust
+ * and in Postgres `char_length`). That is strictly stronger than the DB CHECKs.
+ */
+export const DISPLAY_TEXT_FORBIDDEN = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu;
+export const LABEL_MAX_CHARS = 200;
+export const PROJECT_NAME_MAX_CHARS = 80;
+export const UNTITLED_PROJECT = 'Untitled project';
+const codePoints = (text: string) => { let n = 0; for (const _ of text) n++; return n; };
+export function labelText(max: number) {
+  return z.string().regex(/^[^\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]+$/u)
+    .refine(text => text === text.trim(), 'Display text must be trimmed')
+    .refine(text => codePoints(text) <= max, `Display text is at most ${max} characters`)
+    .meta({ minLength: 1, maxLength: max });
+}
+export const projectName = labelText(PROJECT_NAME_MAX_CHARS);
+
+/** The section 1.6 normalization, as the companion applies it; the server only validates. */
+export function normalizeDisplayText(raw: string, max: number): { text: string; truncated: boolean } {
+  const cleaned = raw.replace(DISPLAY_TEXT_FORBIDDEN, '').trim();
+  const chars = Array.from(cleaned);
+  if (chars.length <= max) return { text: cleaned, truncated: false };
+  return { text: chars.slice(0, max).join('').trim(), truncated: true };
+}
+
+/** The three side record types: display names and app projects. They are not ledger records. */
+export const sideRecordTypes = ['name.label', 'project.catalog', 'project.membership'] as const;
+export type SideRecordType = typeof sideRecordTypes[number];
+export const labelKinds = ['tool', 'tool_namespace', 'agent_name', 'agent', 'session_agent'] as const;
+export const agentRoles = ['main', 'subagent'] as const;
+export const projectApps = ['codex_desktop', 'claude_desktop', 'cursor'] as const;
+export const projectStates = ['active', 'removed'] as const;
+export const membershipKinds = ['working_directory', 'session'] as const;
+export const membershipResolutions = ['app_assignment', 'inherited', 'root_prefix', 'worktree_root_prefix',
+  'projectless', 'outside_roots', 'no_folder'] as const;
+/** The resolutions that name a project: `project_key` is non-null exactly for these. */
+export const projectResolutions = ['app_assignment', 'inherited', 'root_prefix', 'worktree_root_prefix'] as const;
+const hashedName = /^h:[a-f0-9]{16}$/, hex64 = /^[a-f0-9]{64}$/;
+
+/** No `channel` and no `basis`: a side record is a local-state snapshot on the install's carrier binding. */
+const sideHeader = {
+  record_id: uuid,
+  binding_id: uuid,
+  adapter: z.enum(adapters),
+  observed_at: stamp,
+  parser_version: z.string().max(30),
+};
+
+/** A readable name for a hashed key the ledger already holds. The key is never changed by it. */
+export const nameLabelSchema = z.object({ ...sideHeader, record_type: z.literal('name.label'),
+  kind: z.enum(labelKinds),
+  key: z.string().regex(/^(h:[a-f0-9]{16}|[a-f0-9]{64})$/),
+  label: labelText(LABEL_MAX_CHARS),
+  role: z.enum(agentRoles).nullable(),
+  parent_key: sha256.nullable(),
+}).strict().superRefine((record, ctx) => {
+  const hashed = record.kind === 'tool' || record.kind === 'tool_namespace' || record.kind === 'agent_name';
+  if (!(hashed ? hashedName : hex64).test(record.key)) {
+    ctx.addIssue({ code: 'custom', path: ['key'], message: 'Label key must match its kind' });
+  }
+  if (hashed && record.role !== null) {
+    ctx.addIssue({ code: 'custom', path: ['role'], message: 'Only agent and session agent labels carry a role' });
+  }
+  if (record.kind !== 'session_agent' && record.parent_key !== null) {
+    ctx.addIssue({ code: 'custom', path: ['parent_key'], message: 'Only session agent labels carry a parent key' });
+  }
+});
+
+/** One project the owner created in an app. `project_key` is unkeyed, so it survives a salt change. */
+export const projectCatalogSchema = z.object({ ...sideHeader, record_type: z.literal('project.catalog'),
+  app: z.enum(projectApps),
+  project_key: sha256,
+  name: projectName,
+  position: z.number().int().min(0).max(2_147_483_647).nullable(),
+  state: z.enum(projectStates),
+}).strict();
+
+/** Which app project a folder or a session belongs to, and how that was decided. */
+export const projectMembershipSchema = z.object({ ...sideHeader, record_type: z.literal('project.membership'),
+  member_kind: z.enum(membershipKinds),
+  member_key: sha256,
+  project_key: sha256.nullable(),
+  resolution: z.enum(membershipResolutions),
+}).strict().superRefine((record, ctx) => {
+  const named = (projectResolutions as readonly string[]).includes(record.resolution);
+  if (named !== (record.project_key !== null)) {
+    ctx.addIssue({ code: 'custom', path: ['project_key'], message: 'Project key must match its resolution' });
+  }
+});
+
 export const usageRecordSchema = z.discriminatedUnion('record_type',
   [activityRequestSchema, accountUsageBucketSchema, allowanceReadingSchema, moneyEntrySchema,
-    agentEventSchema, toolEventSchema, resourceAccessSchema]);
+    agentEventSchema, toolEventSchema, resourceAccessSchema,
+    nameLabelSchema, projectCatalogSchema, projectMembershipSchema]);
 
 export const usageEnvelopeSchema = z.object({
   schema_version: z.literal(2),
@@ -299,6 +394,14 @@ export type AgentEvent = z.infer<typeof agentEventSchema>;
 export type ToolEvent = z.infer<typeof toolEventSchema>;
 export type ResourceAccess = z.infer<typeof resourceAccessSchema>;
 export type AdapterCoverage = z.infer<typeof adapterCoverageSchema>;
+export type NameLabel = z.infer<typeof nameLabelSchema>;
+export type ProjectCatalog = z.infer<typeof projectCatalogSchema>;
+export type ProjectMembership = z.infer<typeof projectMembershipSchema>;
+export type SideRecord = NameLabel | ProjectCatalog | ProjectMembership;
+export type LedgerRecord = Exclude<UsageRecord, SideRecord>;
+export function isSideRecord(record: UsageRecord): record is SideRecord {
+  return (sideRecordTypes as readonly string[]).includes(record.record_type);
+}
 
 export type InvalidUsageRecord = { record_id: string; reason: 'invalid' };
 
@@ -330,6 +433,23 @@ export function parseUsageEnvelope(input: unknown): { envelope: UsageEnvelope; i
 export const rejectionReasons = ['binding_not_owned', 'binding_not_enabled', 'identity_changed', 'adapter_not_allowed_for_install',
   'record_type_not_allowed_for_install', 'adapter_provider_mismatch', 'invalid'] as const;
 export type RejectionReason = typeof rejectionReasons[number];
+
+/**
+ * `POST /api/v1/usage` response. `deferred_record_ids` lists side records the server could not
+ * apply this time (never rejected, so the install keeps them and a later resync retries them).
+ * It is present only when non-empty: the companion's response type denies unknown fields, and
+ * only builds that send side records can receive it.
+ */
+export const usageResponseSchema = z.object({
+  ok: z.literal(true),
+  schema_version: z.literal(2),
+  run_id: uuid,
+  accepted: z.object({ buckets: counter, records: counter }).strict(),
+  duplicates: counter,
+  rejected: z.array(z.object({ record_id: uuid, reason: z.enum(rejectionReasons) }).strict()),
+  deferred_record_ids: z.array(uuid).min(1).optional(),
+}).strict();
+export type UsageResponse = z.infer<typeof usageResponseSchema>;
 
 /** `claude_*` → claude, `codex_*` → codex, `cursor_*` → cursor, and the two API providers. */
 export function adapterProvider(adapter: Adapter): Provider {

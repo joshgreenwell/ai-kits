@@ -28,7 +28,7 @@ test('the private URL round-trips the filter state and drops what it does not re
 test('chips name every narrowing with its label and remove one value at a time', () => {
   const filters = { ...DEFAULT_FILTERS, accounts: ['claude-a', 'codex-b'], projects: ['no_project', 'p1'], agent_scope: 'main' as const, agents: ['a'.repeat(64)] };
   const chips = activeFilterChips(filters, { accounts: { 'claude-a': 'Claude personal' }, projects: { p1: 'Kit board' } });
-  assert.deepEqual(chips.map(c => c.label), ['Account: Claude personal', 'Account: codex-b', 'Project: No project', 'Project: Kit board', 'Agent: agent aaaaaaaa', 'Main agent only']);
+  assert.deepEqual(chips.map(c => c.label), ['Account: Claude personal', 'Account: codex-b', 'Project: No project', 'Project: Kit board', 'Agent: agent group aaaaaaaa', 'Main agent only']);
   assert.deepEqual(chips[0].next.accounts, ['codex-b']);
   assert.deepEqual(chips.at(-1)!.next.agent_scope, 'all');
   const cleared = clearedFilters({ ...filters, preset: 'previous_month', resolution: 'hour' });

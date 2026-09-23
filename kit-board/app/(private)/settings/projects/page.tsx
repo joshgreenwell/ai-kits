@@ -8,7 +8,7 @@ export default function Projects() {
       <PageHeader
         eyebrow="Settings · project identity"
         title="Projects"
-        description="Name the projects your requests belong to and map each reported identity to one. The hash of a working directory or a provider's native id is all that ever leaves a machine."
+        description="The projects you created in your apps, with the folders, sessions, and requests each one covers. Read-only: projects come from the apps, and folder paths never leave a machine."
       />
       <ProjectRegistry />
     </Workspace>

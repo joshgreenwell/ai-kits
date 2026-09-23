@@ -20,7 +20,8 @@ const priced = (overrides: Partial<UsageQueryResult['cost']['by_model'][number]>
   long_context_calls: 0, assumed_standard_calls: 2, assumed_cache_write_ttl_calls: 0, priority_at_standard_calls: 0, pricing_service_tiers: ['standard'], rate_versions: ['fixture-v1'], ...overrides,
 });
 
-const MAIN_KEY = 'a'.repeat(64), CHILD_KEY = 'b'.repeat(64);
+const MAIN_GROUP = 'a'.repeat(64), CHILD_GROUP = 'b'.repeat(64), UNATTRIBUTED_GROUP = 'e'.repeat(64);
+const DESK_INSTALL = '00000000-0000-4000-8000-00000000d35c';
 
 /** A synthetic query result the way the layer returns it: two accounts, one project, a merged snapshot, one uncovered day, one partial day. */
 function synthetic(): UsageQueryResult {
@@ -46,19 +47,22 @@ function synthetic(): UsageQueryResult {
     effort_series: { rows: [], coverage: empty },
     pricing_inputs: { rows: [], coverage: coverage(2_000, 1_400, 1_400), note: 'fixture pricing coverage' },
     projects: { rows: [
-      { state: 'project', project_id: 'p1', label: 'Kit board', total_tokens: 300, calls: 1, conversations: 1, share: 0.6 },
-      { state: 'no_project', project_id: null, label: null, total_tokens: 120, calls: 1, conversations: 1, share: 0.24 },
-      { state: 'unknown', project_id: null, label: null, total_tokens: 80, calls: 0, conversations: 0, share: 0.16 },
+      { state: 'project', project_id: 'p1', label: 'Kit board', filter_value: 'p1', total_tokens: 300, calls: 1, conversations: 1, share: 0.6 },
+      { state: 'no_project', project_id: null, label: null, filter_value: 'no_project', total_tokens: 120, calls: 1, conversations: 1, share: 0.24 },
+      { state: 'unknown', project_id: null, label: null, filter_value: 'unknown', total_tokens: 80, calls: 0, conversations: 0, share: 0.16 },
+      { state: 'no_project', project_id: null, label: 'Chats / no project', filter_value: 'projectless', total_tokens: 0, calls: 0, conversations: 0, share: 0 },
+      { state: 'not_reported', project_id: null, label: 'desk: companion update needed', filter_value: `not_reported:${DESK_INSTALL}`, total_tokens: 0, calls: 0, conversations: 0, share: 0 },
     ], coverage: { ...coverage(2_000, 500, 420), note: 'Project evidence: request-covered tokens with a project identity; Unknown project is the remainder.' }, registry: { ...coverage(2_000, 420, 300), note: 'Registry mapping: attributed tokens whose identity maps to a named project.' } },
     agents: { rows: [
-      { agent_key: MAIN_KEY, class: 'main', name: null, depth: 0, parent_agent_key: null, model: 'm1', total_tokens: 380, calls: 1, share: 0.76 },
-      { agent_key: CHILD_KEY, class: 'builtin', name: 'Explore', depth: 1, parent_agent_key: MAIN_KEY, model: 'm1', total_tokens: 80, calls: 1, share: 0.16 },
-      { agent_key: null, class: 'unknown', name: null, depth: null, parent_agent_key: null, model: null, total_tokens: 40, calls: 0, share: 0.08 },
-    ], summary: { main_tokens: 380, subagent_tokens: 80, unattributed_tokens: 40, observed_children: 1, spawns: 2, by_class: { main: 380, builtin: 80, unknown: 40 } }, coverage: { ...coverage(2_000, 500, 460), note: 'Agent attribution: request-covered tokens carrying an agent identity.' } },
+      { group_id: MAIN_GROUP, provider: 'claude', role: 'main', name: 'main', builtin: false, instances: 1, sessions: 1, total_tokens: 380, calls: 1, composition: composition(380, 0, 0, 0, null), share: 0.76 },
+      { group_id: CHILD_GROUP, provider: 'claude', role: 'subagent', name: 'Explore', builtin: true, instances: 2, sessions: 1, total_tokens: 80, calls: 1, composition: composition(80, 0, 0, 0, null), share: 0.16 },
+      { group_id: UNATTRIBUTED_GROUP, provider: 'cursor', role: 'unattributed', name: 'unattributed', builtin: false, instances: 0, sessions: 1, total_tokens: 40, calls: 0, composition: composition(40, 0, 0, 0, null), share: 0.08 },
+    ], summary: { main_tokens: 380, subagent_tokens: 80, unattributed_tokens: 40, observed_children: 1, spawns: 2, by_class: { main: 380, builtin: 80, unattributed: 40 } }, coverage: { ...coverage(2_000, 500, 460), note: 'Agent attribution: request-covered tokens carrying an agent identity.' } },
     tools: { invocations: 5, by_tool: [
-      { name: 'Read', class: 'builtin', namespace: null, invocations: 3, share: 0.6 },
-      { name: 'search_notes', class: 'mcp', namespace: 'obsidian', invocations: 2, share: 0.4 },
-    ], by_caller: [{ agent_key: CHILD_KEY, agent_name: 'Explore', agent_class: 'builtin', model: 'm1', invocations: 3 }, { agent_key: null, agent_name: null, agent_class: null, model: null, invocations: 2 }],
+      { name: 'Read', class: 'builtin', namespace: null, builtin: true, machine: null, synthetic: false, invocations: 3, share: 0.6, children: [] },
+      { name: 'search_notes', class: 'mcp', namespace: 'obsidian', builtin: false, machine: null, synthetic: false, invocations: 2, share: 0.4, children: [] },
+    ], by_caller: [{ state: 'group', group_id: CHILD_GROUP, provider: 'claude', role: 'subagent', name: 'Explore', builtin: true, invocations: 3 },
+      { state: 'none', group_id: null, provider: null, role: null, name: null, builtin: false, invocations: 2 }],
       by_outcome: { succeeded: 3, failed: 1, unknown: 1 }, caller_coverage: { ...coverage(5, 5, 3, 'invocations'), note: 'Reported invocations with a supported caller.' }, outcome_coverage: { ...coverage(5, 5, 4, 'invocations'), note: 'Reported invocations with a supported outcome.' }, unsupported_filters: ['models'] },
     knowledge: { rows: [
       { source_id: 's1', label: 'Fixture vault', state: 'source', accesses: 3, distinct_invocations: 2, distinct_sessions: 1, distinct_agents: 1, by_access_kind: { read: 2, search: 1 }, earlier_configuration_accesses: 1 },
@@ -142,42 +146,56 @@ test('project and agent cards read their rows, coverage, and selection from the 
   const result = synthetic();
   const html = render();
   const body = text(html);
-  assert.match(body, /Named projects 1 2 state buckets kept inside the total/);
+  assert.match(body, /Named projects 1 4 state buckets kept inside the total/);
   assert.match(body, /Attribution coverage 21% 420 of 2,000 headline tokens carry a project/);
-  assert.match(body, /Registry mapping 71% 300 of 420 attributed tokens map to a named project/);
-  assert.match(body, /Kit board 300 60% 1 1/); assert.match(body, /No project 120 24% 1 1/); assert.match(body, /Unknown project 80 16% 0 0/, 'No project and Unknown project stay separate rows');
+  assert.match(body, /In an app project 71% 300 of 420 placed tokens land in a project an app defines/);
+  assert.match(body, /Kit board 300 60% 1 1/); assert.match(body, /No project 120 24% 1 1/); assert.match(body, /Unknown 80 16% 0 0/, 'No project and Unknown stay separate rows');
+  assert.match(body, /Chats \/ no project 0 0\.0% 0 0/, 'a projectless app chat reads as its own row');
+  assert.match(body, /desk: companion update needed 0 0\.0% 0 0/, 'a machine that has not reported projects is named');
   assert.match(body, /Main agent 380 76% of attributable tokens/); assert.match(body, /Subagents 80 16% · 1 distinct observed child/); assert.match(body, /Unattributed 40 8\.0%/); assert.match(body, /Spawn events 2/);
-  assert.match(body, /Role classes Main 380 Built-in 80 Unknown role 40/);
-  assert.match(body, /Explore bbbbbbbb Built-in Main agent aaaaaaaa m1 1 80 16% 1/, 'a child names its parent, model, and depth');
-  assert.match(body, /Unattributed Unknown role not recorded not recorded — 40 8\.0% 0/, 'missing identity stays unattributed with nothing invented');
+  assert.match(body, /Role classes Main 380 Built-in 80 Unattributed 40/);
+  assert.match(body, /Claude Code main agent Main 1 1 380 76% 1/, 'one row per provider, role and name');
+  assert.match(body, /Claude Code Explore built-in Subagent 2 1 80 16% 1/, 'a group counts its instances and sessions and tags a built-in');
+  assert.match(body, /Cursor unattributed Unattributed 0 1 40 8\.0% 0/, 'missing identity stays unattributed with nothing invented');
+  assert.match(body, /Forked Codex subagent rollouts record their parent session and agent, so their tokens count under Codex main/, 'the forked-rollout gap is stated');
   assert.match(body, /do not say whether a user or a model asked for the delegation/);
   assert.match(html, /aria-pressed="false"[^>]*>Main agent only/); assert.match(html, /aria-pressed="false"[^>]*>Subagents only/);
   assert.doesNotMatch(html, /data-state="selected"/, 'nothing is selected on the landing view');
 
-  assert.deepEqual(result.projects.rows.map(projectFilterValue), ['p1', 'no_project', 'unknown']);
-  assert.deepEqual(result.agents.rows.map(agentLabel), ['Main agent aaaaaaaa', 'Explore', 'Unattributed']);
+  assert.deepEqual(result.projects.rows.map(projectFilterValue), ['p1', 'no_project', 'unknown', 'projectless', `not_reported:${DESK_INSTALL}`], 'every row applies a value of its own');
+  assert.deepEqual(result.agents.rows.map(agentLabel), ['Claude Code · main agent', 'Claude Code · Explore', 'Cursor · unattributed']);
 
-  const filters = { ...DEFAULT_FILTERS, projects: ['no_project'], agents: [CHILD_KEY], agent_scope: 'subagent' as const };
+  const filters = { ...DEFAULT_FILTERS, projects: ['no_project'], agents: [CHILD_GROUP], agent_scope: 'subagent' as const };
   const selectedHtml = render({ filters });
   assert.match(selectedHtml, /data-state="selected"[^>]*>(?:(?!<\/tr>).)*No project/s, 'the state bucket row shows as selected');
   assert.match(selectedHtml, /data-state="selected"[^>]*>(?:(?!<\/tr>).)*Explore/s, 'the agent row shows as selected');
   assert.match(selectedHtml, /aria-pressed="true"[^>]*>Subagents only/);
   const selectedBody = text(selectedHtml);
-  assert.match(selectedBody, /filtering: No project/); assert.match(selectedBody, /filtering: Explore/);
-  assert.match(selectedBody, /Project: No project/); assert.match(selectedBody, /Agent: Explore/, 'the drill-down chip carries the agent name rather than a bare key');
+  assert.match(selectedBody, /filtering: No project/); assert.match(selectedBody, /filtering: Claude Code · Explore/);
+  assert.match(selectedBody, /Project: No project/); assert.match(selectedBody, /Agent: Claude Code · Explore/, 'the drill-down chip carries the agent name rather than a bare group id');
   assert.match(selectedBody, /Subagents only/); assert.match(selectedBody, /Clear all/, 'every drill-down is reversible from the filter bar');
-  assert.deepEqual(activeFilterChips(filters, { agents: { [CHILD_KEY]: 'Explore' } }).map(c => c.label), ['Project: No project', 'Agent: Explore', 'Subagents only']);
+  assert.deepEqual(activeFilterChips(filters, { agents: { [CHILD_GROUP]: 'Claude Code · Explore' } }).map(c => c.label), ['Project: No project', 'Agent: Claude Code · Explore', 'Subagents only']);
+  assert.deepEqual(activeFilterChips({ ...DEFAULT_FILTERS, agents: [CHILD_GROUP] }).map(c => c.label), ['Agent: agent group bbbbbbbb'], 'an unnamed group id falls back to a short id');
+
+  // The projectless and per-machine rows apply values of their own, so each selects only itself.
+  for (const [value, name] of [['projectless', 'Chats / no project'], [`not_reported:${DESK_INSTALL}`, 'desk: companion update needed']]) {
+    const rowHtml = render({ filters: { ...DEFAULT_FILTERS, projects: [value] } });
+    assert.equal((rowHtml.match(/data-state="selected"/g) ?? []).length, 1, `${name} selects one row`);
+    assert.match(rowHtml, new RegExp(`data-state="selected"[^>]*>(?:(?!</tr>).)*${name.replace('/', '\\/')}`, 's'));
+    assert.match(text(rowHtml), new RegExp(`filtering: ${name.replace('/', '\\/')}`));
+    assert.match(text(rowHtml), new RegExp(`Project: ${name.replace('/', '\\/')}`), 'the chip names the row, not a wider bucket');
+  }
 
   const applied: Parameters<typeof ProjectAgentBreakdown>[0]['filters'][] = [];
   const captured = renderToStaticMarkup(<ProjectAgentBreakdown result={result} filters={DEFAULT_FILTERS} onFiltersChange={next => applied.push(next)} />);
   assert.match(captured, /Select a row to filter the whole page to that project; select it again, or remove the chip above, to go back/);
-  assert.match(captured, /Unattributed rows cannot be selected/);
+  assert.match(captured, /Select an agent to filter the whole page to it/);
 
   const bare = synthetic();
   bare.projects = { rows: [], coverage: coverage(2_000, 0, 0), registry: coverage(2_000, 0, 0) };
   bare.agents = { rows: [], summary: { main_tokens: 0, subagent_tokens: 0, unattributed_tokens: 0, observed_children: 0, spawns: 0, by_class: {} }, coverage: coverage(2_000, 0, 0) };
   const bareBody = text(render({ result: bare }));
-  assert.match(bareBody, /No project evidence in scope/); assert.match(bareBody, /No agent evidence in scope/); assert.match(bareBody, /Attribution coverage 0\.0% 0 of 2,000 headline tokens carry a project/); assert.match(bareBody, /Registry mapping — 0 of 0 attributed tokens/, "mapping over nothing is withheld");
+  assert.match(bareBody, /No project evidence in scope/); assert.match(bareBody, /No agent evidence in scope/); assert.match(bareBody, /Attribution coverage 0\.0% 0 of 2,000 headline tokens carry a project/); assert.match(bareBody, /In an app project — 0 of 0 placed tokens/, "mapping over nothing is withheld");
   assert.match(bareBody, /Main agent 0 — of attributable tokens/, 'shares are withheld rather than divided by zero');
 });
 
@@ -190,8 +208,8 @@ test('the tool card keeps invocations, model calls, and spawns apart and lists k
   assert.match(body, /Caller attribution 60% 3 of 5 invocations name their caller/);
   assert.match(body, /Outcomes succeeded 3 failed 1 unknown 1 · 1 without a recorded outcome/);
   assert.match(body, /model filter not applied to tools/);
-  assert.match(body, /Read built-in 3 60%/); assert.match(body, /search_notes MCP · obsidian 2 40%/);
-  assert.match(body, /Explore bbbbbbbb m1 3/); assert.match(body, /No caller recorded not recorded 2/);
+  assert.match(body, /Read built-in built-in 3 60%/); assert.match(body, /search_notes MCP · obsidian 2 40%/);
+  assert.match(body, /Claude Code · Explore built-in Subagent 3/); assert.match(body, /No caller recorded not recorded 2/);
   assert.match(body, /Knowledge sources Tool calls that touched a configured vault or connector/);
   assert.match(body, /model filter not applied to knowledge access 1 configured source 2 distinct tool calls Configure sources/, 'the knowledge area reports its own unapplied filters');
   assert.match(html, /href="\/settings\/sources"/, 'the card links to source configuration in global Settings');
@@ -208,6 +226,21 @@ test('the tool card keeps invocations, model calls, and spawns apart and lists k
   assert.match(bareBody, /Tool invocations 0/); assert.match(bareBody, /Outcomes not collected for these invocations; success and failure are unknown rather than assumed/);
   assert.match(bareBody, /No tool invocations in scope/); assert.match(bareBody, /No caller attribution/); assert.match(bareBody, /No knowledge-source access in scope/);
   assert.match(bareBody, /Caller attribution —/, 'coverage over nothing is withheld, not shown as complete');
+});
+
+test('an exec row expands to the nested calls it ran, and a child whose exec is outside the range keeps its own row', () => {
+  const result = synthetic();
+  result.tools = { ...result.tools, invocations: 9, by_tool: [
+    { name: 'exec', class: 'builtin', namespace: null, builtin: true, machine: null, synthetic: false, invocations: 2, share: 2 / 9,
+      children: [{ name: 'run_query', namespace: 'Fixture DB (connector)', invocations: 4, outcomes: { succeeded: 3, failed: 1 } }] },
+    { name: 'exec (outside range)', class: 'builtin', namespace: null, builtin: true, machine: null, synthetic: true, invocations: 0, share: 0,
+      children: [{ name: 'list_items', namespace: 'fixture-server', invocations: 1, outcomes: { succeeded: 1 } }] },
+    { name: 'h:0123…', class: 'mcp', namespace: null, builtin: false, machine: 'desk', synthetic: false, invocations: 2, share: 2 / 9, children: [] },
+  ] };
+  const body = text(renderToStaticMarkup(<ToolKnowledgeCard result={result} />));
+  assert.match(body, /exec built-in built-in 4 nested calls · 1 tool/, 'the exec row offers its children');
+  assert.match(body, /exec \(outside range\) built-in built-in 1 nested call · 1 tool/);
+  assert.match(body, /h:0123… MCP · unnamed on desk 2/, 'an unlabeled hash reads as a short hash with its machine');
 });
 
 test('detail filters, unfilterable buckets, and a failed refresh are explained without dropping the last good result', () => {

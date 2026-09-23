@@ -15,6 +15,7 @@ const SEPTEMBER = { preset: 'custom' as const, start: '2026-09-01T05:00:00Z', en
 maybe('the filtered usage query reconciles every breakdown to one selected scope', async () => {
   const { createUsageQuery, parseUsageQuery } = await import('../lib/usage-query');
   const { refreshCanonicalProjections } = await import('../lib/usage-canonical');
+  const { appProjectId } = await import('../lib/usage-app-projects');
   const sql = postgres(url!, options);
   const layer = createUsageQuery(() => sql);
   const suffix = randomUUID().slice(0, 8);
@@ -45,11 +46,16 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     await bucket(codex, codexSource, 'sol1', '2026-08-31T14:00:00Z', 'gpt-5.6-sol', 2, 1_000_000);
     await bucket(claude, claudeSource, 'a3', '2026-09-14T20:00:00Z', 'm1', 1, 5);
 
-    // Project registry: one mapped working-directory identity; knowledge registry: one mapped vault.
-    const projectId = randomUUID(), identityId = randomUUID(), vaultId = randomUUID(), vaultIdentity = randomUUID();
-    await sql`INSERT INTO personal_hub.usage_projects (id, label) VALUES (${projectId}, 'Fixture project')`;
-    await sql`INSERT INTO personal_hub.usage_project_identities (id, basis, evidence_key, install_id, first_seen, last_seen) VALUES (${identityId}, 'working_directory', ${projectKey}, ${install}, '2026-09-02T14:10:00Z', '2026-09-02T14:20:00Z')`;
-    await sql`INSERT INTO personal_hub.usage_project_mapping_revisions (id, identity_id, project_id) VALUES (${randomUUID()}, ${identityId}, ${projectId})`;
+    // App projects: one app project whose root holds the fixture folder, so the folder's membership places
+    // its requests; the install has reported project data. Knowledge registry: one mapped vault.
+    const projectName = `Fixture project ${suffix}`, projectId = appProjectId(projectName), appProjectKey = sha(`app-project:${suffix}`);
+    const vaultId = randomUUID(), vaultIdentity = randomUUID();
+    await sql`INSERT INTO personal_hub.usage_projects (id, label) VALUES (${projectId}, ${projectName})`;
+    await sql`INSERT INTO personal_hub.usage_app_projects (install_id, project_key, app, name, position, state, project_id, observed_at)
+      VALUES (${install}, ${appProjectKey}, 'codex_desktop', ${projectName}, 0, 'active', ${projectId}, '2026-09-02T00:00:00Z')`;
+    await sql`INSERT INTO personal_hub.usage_project_memberships (install_id, member_kind, member_key, project_key, resolution, observed_at)
+      VALUES (${install}, 'working_directory', ${projectKey}, ${appProjectKey}, 'root_prefix', '2026-09-02T00:00:00Z')`;
+    await sql`INSERT INTO personal_hub.usage_project_reports (install_id) VALUES (${install})`;
     await sql`INSERT INTO personal_hub.usage_knowledge_sources (id, label) VALUES (${vaultId}, 'Fixture vault')`;
     await sql`INSERT INTO personal_hub.usage_knowledge_source_identities (id, install_id, resource_key, configuration_version, first_seen, last_seen) VALUES (${vaultIdentity}, ${install}, ${`vault.${suffix}`}, 'cfg:1', '2026-09-02T14:10:00Z', '2026-09-02T14:10:00Z')`;
     await sql`INSERT INTO personal_hub.usage_knowledge_source_mapping_revisions (id, identity_id, source_id) VALUES (${randomUUID()}, ${vaultIdentity}, ${vaultId})`;
@@ -137,10 +143,14 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     assert.deepEqual(all.effort_series.rows.map(r => [r.model, r.effort, r.points.reduce((n, p) => n + p.total_tokens, 0)]), [['m1', 'high', 150], ['m1', 'unknown', 20], ['m2', 'low', 40]]);
     assert.deepEqual([all.effort_series.coverage.eligible, all.effort_series.coverage.classified], [210, 210]);
     assert.deepEqual(all.request_detail, { covered_tokens: 210, covered_calls: 3, coverage: { unit: 'tokens', headline: 615, eligible: 615, classified: 210, applicable: 1, complete: 210 / 615, note: all.request_detail.coverage.note } });
-    assert.deepEqual(all.projects.rows.map(r => [r.state, r.label, r.total_tokens, r.calls, r.conversations]), [['project', 'Fixture project', 170, 2, 1], ['no_project', null, 40, 1, 1]]);
+    assert.deepEqual(all.projects.rows.map(r => [r.state, r.label, r.total_tokens, r.calls, r.conversations]), [['project', projectName, 170, 2, 1], ['no_project', null, 40, 1, 1]]);
     assert.deepEqual([all.projects.coverage.headline, all.projects.coverage.eligible, all.projects.coverage.classified, all.projects.registry.eligible, all.projects.registry.classified], [615, 210, 210, 170, 170]);
-    assert.deepEqual(all.agents.summary, { main_tokens: 150, subagent_tokens: 20, unattributed_tokens: 40, observed_children: 1, spawns: 1, by_class: { main: 150, builtin: 20, unknown: 40 } });
-    assert.equal(all.agents.rows.find(r => r.agent_key === childKey)?.parent_agent_key, mainKey);
+    assert.deepEqual(all.agents.summary, { main_tokens: 150, subagent_tokens: 20, unattributed_tokens: 40, observed_children: 1, spawns: 1, by_class: { main: 150, builtin: 20, unattributed: 40 } });
+    assert.deepEqual(all.agents.rows.map(r => [r.provider, r.role, r.name, r.builtin, r.instances, r.sessions, r.total_tokens]).sort(),
+      [['claude', 'main', 'main', false, 1, 1, 150], ['claude', 'subagent', 'Explore', true, 1, 1, 20], ['claude', 'unattributed', 'unattributed', false, 0, 1, 40]].sort());
+    const groupOf = (name: string) => all.agents.rows.find(r => r.name === name)!.group_id;
+    const childGroup = groupOf('Explore'), mainGroup = groupOf('main');
+    assert.match(childGroup, /^[a-f0-9]{64}$/, 'a group id is an opaque sha256');
     assert.deepEqual([all.tools.invocations, all.tools.by_outcome, all.tools.by_tool.map(t => [t.name, t.invocations])], [2, { succeeded: 1, unknown: 1 }, [['Bash', 1], ['Read', 1]]]);
     assert.deepEqual([all.tools.caller_coverage.classified, all.tools.outcome_coverage.classified], [2, 1]);
     assert.deepEqual(all.knowledge.rows.map(r => [r.label, r.accesses, r.distinct_invocations, r.distinct_sessions, r.by_access_kind.read]), [['Fixture vault', 1, 1, 1, 1]]);
@@ -173,11 +183,12 @@ maybe('the filtered usage query reconciles every breakdown to one selected scope
     assert.equal((await query({ efforts: 'high,unknown' })).headline.total_tokens, 170);
     assert.equal((await query({ surfaces: 'desktop' })).headline.total_tokens, 40);
     assert.equal((await query({ agent_scope: 'subagent' })).headline.total_tokens, 20);
-    assert.equal((await query({ agents: childKey })).headline.total_tokens, 20);
-    const childOnly = await query({ agents: childKey });
+    assert.equal((await query({ agents: childGroup })).headline.total_tokens, 20);
+    const childOnly = await query({ agents: childGroup });
     assert.equal(childOnly.tools.invocations, 1);
     assert.deepEqual([childOnly.knowledge.rows, childOnly.knowledge.distinct_invocations, childOnly.agents.summary.spawns], [[], 0, 1], 'the vault access came from the main agent, so the agent filter leaves no access; the child\'s spawn stays');
-    assert.deepEqual((await query({ agents: mainKey })).knowledge.rows.map(r => [r.label, r.accesses]), [['Fixture vault', 1]]);
+    assert.deepEqual((await query({ agents: mainGroup })).knowledge.rows.map(r => [r.label, r.accesses]), [['Fixture vault', 1]]);
+    assert.equal((await query({ agents: childKey })).headline.total_tokens, 0, 'an agent key is not a group id: an old bookmarked key matches nothing');
 
     // 4. Bucket-level filters keep the bucket basis; dimensions AND together.
     const model = await query({ models: 'm1' });
@@ -393,6 +404,7 @@ maybe('knowledge accesses and spawn evidence follow the machine, agent, and deta
 
     const all = await query();
     assert.deepEqual(vault(all), [['Shared vault', 2, 2, 2, 2, 1, 1]]);
+    const childGroup = all.agents.rows.find(r => r.name === 'Explore')!.group_id, mainGroup = all.agents.rows.find(r => r.name === 'main')!.group_id;
     assert.deepEqual([all.knowledge.distinct_invocations, all.knowledge.unsupported_filters, all.agents.summary.spawns], [2, [], 2]);
     assert.match(all.knowledge.note, /follow the account, machine, and agent filters/);
 
@@ -401,10 +413,11 @@ maybe('knowledge accesses and spawn evidence follow the machine, agent, and deta
     assert.deepEqual([vault(machineA), machineA.knowledge.distinct_invocations, machineA.knowledge.unsupported_filters, machineA.agents.summary.spawns], [[['Shared vault', 1, 1, 1, 1, 1, 0]], 1, [], 1]);
     assert.deepEqual(vault(await query({ machines: sourceB, section: 'knowledge' })), [['Shared vault', 1, 1, 1, 1, 0, 1]], 'the sectioned read applies the same machine filter');
     // Agent: the invocation's caller, and the spawn event's own agent key.
-    const child = await query({ agents: childKey });
+    const child = await query({ agents: childGroup });
     assert.deepEqual([vault(child), child.knowledge.distinct_invocations, child.agents.summary.spawns, child.tools.invocations], [[['Shared vault', 1, 1, 1, 1, 0, 1]], 1, 1, 1], 'knowledge and tools agree on the agent');
-    const other = await query({ agents: otherChildKey });
-    assert.deepEqual([vault(other), other.agents.summary.spawns], [[], 1], 'a spawned agent that never called a tool has a spawn and no access');
+    const main = await query({ agents: mainGroup });
+    assert.deepEqual([vault(main), main.agents.summary.spawns], [[['Shared vault', 1, 1, 1, 1, 1, 0]], 0], 'the main agent read the vault and spawned under its own key nothing');
+    assert.equal((await query({ agents: otherChildKey })).agents.summary.spawns, 0, 'a key that never made a request has no group, so it selects nothing');
     // Detail filters reach accesses through the calling request, exactly as tools apply them.
     assert.deepEqual(vault(await query({ efforts: 'high' })), [['Shared vault', 1, 1, 1, 1, 1, 0]]);
     assert.deepEqual(vault(await query({ surfaces: 'desktop' })), [['Shared vault', 1, 1, 1, 1, 0, 1]]);

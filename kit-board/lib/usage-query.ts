@@ -9,6 +9,8 @@ import {
 } from './usage-periods';
 import { catalogThresholds, contextBandFor, priceUsage, type ApiEquivalentEstimate, type PricingInputRow } from './usage-pricing';
 import { estimateEnvironment, type CohortInput, type EnvironmentalEstimate, type StoredEstimate } from './environmental-estimate';
+import { BUILTIN_PROVIDERS, KNOWN_BUILTIN_AGENTS, KNOWN_BUILTIN_TOOLS } from './usage-builtins';
+import { projectMapCtes } from './usage-project-map';
 
 export const USAGE_QUERY_SECTIONS = ['overview', 'requests', 'tools', 'knowledge'] as const;
 export type UsageQuerySection = (typeof USAGE_QUERY_SECTIONS)[number];
@@ -48,8 +50,6 @@ type Row = Record<string, unknown>;
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const num = (value: unknown) => Number(value ?? 0);
 const iso = (value: unknown) => (value === null || value === undefined ? null : new Date(value as string).toISOString());
-const CHANNEL_RANK = "CASE r.channel WHEN 'provider_api' THEN 0 WHEN 'app_server' THEN 1 WHEN 'local_file' THEN 2 WHEN 'local_db' THEN 2 ELSE 3 END";
-const IDENTITY_RANK = "CASE r.session_identity WHEN 'provider' THEN 0 WHEN 'derived' THEN 1 ELSE 2 END";
 const UNKNOWN = 'unknown';
 
 /**
@@ -64,7 +64,18 @@ export const REVISION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export const PROVIDERS = ['codex', 'claude', 'cursor', 'anthropic_api', 'openai_api'] as const;
 export const SURFACES = ['cli', 'ide', 'desktop', 'sdk', 'ci', 'cloud', UNKNOWN] as const;
-export const PROJECT_STATES = ['no_project', UNKNOWN, 'unassigned'] as const;
+/**
+ * Project filter codes besides a project id. `no_project` is the explicit No project row only; `projectless`
+ * is the app's own chats with no project ("Chats / no project"); bare `not_reported` covers every machine
+ * that has not reported projects, and `not_reported:<install id>` one machine, which is what its own row
+ * applies. Each card row applies exactly the requests it shows.
+ */
+export const PROJECT_STATES = ['no_project', 'projectless', UNKNOWN, 'unassigned', 'not_reported'] as const;
+const NOT_REPORTED_FILTER = /^not_reported:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const isProjectCode = (value: string) => (PROJECT_STATES as readonly string[]).includes(value) || NOT_REPORTED_FILTER.test(value);
+/** How a request row's agent role reads when no label states one: identity first, then class and depth. */
+const AGENT_ROLE_SQL = (a: string) => `CASE WHEN ${a}.agent_identity_basis IS NULL THEN 'unattributed' WHEN ${a}.agent_class = 'main' OR ${a}.agent_depth = 0 THEN 'main'
+    WHEN ${a}.agent_depth > 0 OR ${a}.parent_agent_key IS NOT NULL THEN 'subagent' ELSE 'unattributed' END`;
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const code = z.string().regex(/^[a-z0-9_.:-]{1,64}$/);
 const list = <T extends z.ZodTypeAny>(item: T, max: number) => z.array(item).max(max).default([]);
@@ -81,7 +92,7 @@ export const usageQuerySchema = z.object({
   efforts: list(code, 20),
   machines: list(z.uuid(), 50),
   surfaces: list(z.enum(SURFACES), SURFACES.length),
-  projects: list(z.union([z.uuid(), z.enum(PROJECT_STATES)]), 50),
+  projects: list(z.union([z.uuid(), z.enum(PROJECT_STATES), z.string().regex(NOT_REPORTED_FILTER)]), 50),
   agent_scope: z.enum(['all', 'main', 'subagent']).default('all'),
   agents: list(sha256, 50),
   /** When set, skip tables other cards own. Omitted = the full result (tests and non-Tokens callers). Knowledge is separate from tools so each can finish without the other. */
@@ -130,12 +141,28 @@ export type UsageQueryResult = {
   pricing_inputs: { rows: { provider: string | null; model: string | null; reasoning_effort: string | null; service_tier: string | null; speed: string | null; context_window_tokens: number | null;
       cache_write_ttl: string | null; token_state: string | null; context_band: 'short' | 'long'; rate_date: string | null; calls: number; composition: Composition; total_tokens: number }[];
     coverage: Coverage; note: string };
-  projects: { rows: { state: 'project' | 'unassigned' | 'no_project' | 'unknown'; project_id: string | null; label: string | null; total_tokens: number; calls: number; conversations: number; share: number | null }[];
+  /**
+   * One row per resolved state and project (lib/usage-project-map.ts). `label` is the app project's name
+   * ("(removed)" once no active app project keeps it), "Chats / no project" for an app chat with no
+   * project, or "<machine>: companion update needed" for an install that has never reported projects.
+   */
+  projects: { rows: { state: 'project' | 'unassigned' | 'no_project' | 'unknown' | 'not_reported'; project_id: string | null; label: string | null; filter_value: string; total_tokens: number; calls: number; conversations: number; share: number | null }[];
     coverage: Coverage; registry: Coverage };
-  agents: { rows: { agent_key: string | null; class: string; name: string | null; depth: number | null; parent_agent_key: string | null; model: string | null; total_tokens: number; calls: number; share: number | null }[];
+  /**
+   * One row per displayed agent group (spec 6.3): provider, role and name from the labels first, then the
+   * ledger. `group_id` is the value the agent filter takes; `instances` counts distinct agent keys.
+   */
+  agents: { rows: { group_id: string; provider: string; role: 'main' | 'subagent' | 'unattributed'; name: string; builtin: boolean; instances: number; sessions: number;
+      total_tokens: number; calls: number; composition: Composition; share: number | null }[];
     summary: { main_tokens: number; subagent_tokens: number; unattributed_tokens: number; observed_children: number; spawns: number; by_class: Record<string, number> }; coverage: Coverage };
-  tools: { invocations: number; by_tool: { name: string | null; class: string; namespace: string | null; invocations: number; share: number | null }[];
-    by_caller: { agent_key: string | null; agent_name: string | null; agent_class: string | null; model: string | null; invocations: number }[];
+  /**
+   * `by_tool` is top-level rows only: a nested Codex MCP call sits in its exec row's `children` (and a
+   * child whose exec is outside the range under the synthetic "exec (outside range)" row, which has 0
+   * invocations of its own). `invocations` counts every invocation once, children included.
+   */
+  tools: { invocations: number; by_tool: { name: string | null; class: string; namespace: string | null; builtin: boolean; machine: string | null; synthetic: boolean; invocations: number; share: number | null;
+      children: { name: string | null; namespace: string | null; invocations: number; outcomes: Record<string, number> }[] }[];
+    by_caller: { state: 'group' | 'label' | 'outside_range' | 'none'; group_id: string | null; provider: string | null; role: string | null; name: string | null; builtin: boolean; invocations: number }[];
     by_outcome: Record<string, number>; caller_coverage: Coverage; outcome_coverage: Coverage; unsupported_filters: string[] };
   /** Access rows follow the same filters as tool invocations: machine from the access's binding, agent from the invocation's caller, detail filters through the calling request. */
   knowledge: { rows: { source_id: string | null; label: string | null; state: string; accesses: number; distinct_invocations: number; distinct_sessions: number; distinct_agents: number;
@@ -297,63 +324,98 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     return { accounts: clone(accounts) as unknown as Meta['accounts'], sources: clone(sources) as unknown as Meta['sources'], coverage: coverageByAccount };
   }
 
-  const rankBy = (alias: string) =>
-    `${CHANNEL_RANK.replaceAll(/\br\./g, `${alias}.`)}, ${IDENTITY_RANK.replaceAll(/\br\./g, `${alias}.`)}, ${alias}.observed_at DESC, ${alias}.received_at DESC, ${alias}.id DESC`;
-
-  // The effective project basis and key of one request row. Single valued, so the two identity bases below
-  // are mutually exclusive and the table's CHECK constraint already guarantees a row can satisfy only one.
-  const projectBasis = (a: string) => `CASE
-          WHEN ${a}.project_basis IN ('native','working_directory') AND ${a}.project_key IS NOT NULL THEN ${a}.project_basis
-          WHEN ${a}.project_basis = 'none' THEN 'none'
-          WHEN ${a}.project_basis IS NULL AND ${a}.project_key IS NULL AND ${a}.project_hash IS NOT NULL THEN 'working_directory'
-          ELSE 'unknown'
-        END`;
-  const projectKey = (a: string) => `CASE
-          WHEN ${a}.project_basis IN ('native','working_directory') AND ${a}.project_key IS NOT NULL THEN ${a}.project_key
-          WHEN ${a}.project_basis IS NULL AND ${a}.project_key IS NULL AND ${a}.project_hash IS NOT NULL THEN ${a}.project_hash
-          ELSE NULL
-        END`;
+  /**
+   * PROJECT MAP (spec 6.1). One row per distinct project-evidence tuple of the in-range requests, resolved
+   * once against the app catalog and memberships (lib/usage-project-map.ts), materialised with real
+   * statistics before any request table is built. The requests then join it on plain equality, so no
+   * label or membership table is ever looped per request row. `project_key_join` is the key with NULL
+   * folded to '' so the join stays hashable.
+   */
+  async function createProjectMap(tx: { unsafe: Sql['unsafe'] }, q: UsageQuery, accounts: string[], range: ResolvedRange) {
+    const p = new Params();
+    await tx.unsafe(`CREATE TEMP TABLE _usage_project_map ON COMMIT DROP AS
+      WITH ${projectMapCtes(`SELECT DISTINCT r.project_install_id, r.session_hash, r.effective_project_basis, r.effective_project_key
+          FROM personal_hub.canonical_requests r
+          WHERE r.account_id = ANY(${p.add(accounts)}::text[])
+            AND r.activity_at >= ${p.add(new Date(range.start).toISOString())}::timestamptz
+            AND r.activity_at < ${p.add(new Date(range.end).toISOString())}::timestamptz
+            ${q.machines.length ? `AND r.source_id = ANY(${p.add(q.machines)}::uuid[])` : ''}`)}
+      SELECT project_install_id, session_hash, effective_project_basis, coalesce(effective_project_key, '') AS project_key_join,
+        project_state, project_id, project_label,
+        -- The filter value the card row applies, so selecting a row filters to exactly that row.
+        CASE
+          WHEN project_state = 'project' THEN project_id::text
+          WHEN project_reason = 'projectless' THEN 'projectless'
+          WHEN project_state = 'not_reported' THEN coalesce('not_reported:' || project_install_id::text, 'not_reported')
+          ELSE project_state
+        END AS project_filter
+      FROM project_map`, p.values);
+    await tx.unsafe(`ANALYZE _usage_project_map`);
+  }
+  const projectJoin = `LEFT JOIN _usage_project_map pm ON pm.project_install_id = r.project_install_id AND pm.session_hash = r.session_hash
+        AND pm.effective_project_basis = r.effective_project_basis AND pm.project_key_join = coalesce(r.effective_project_key, '')`;
 
   /**
-   * Project identity for the canonical row of each key, resolved inside the single ranking pass.
-   *
-   * The project-preferred revision of a key can differ from its canonical revision, because project basis
-   * outranks channel here. Rather than rank the key set a second time, the pass carries the preferred
-   * revision's evidence onto every row of the key with `first_value` over a second window ordering, and the
-   * canonical row then reads it directly. One window ordering more is far cheaper than one ledger pass more,
-   * and it keeps the pass referenced exactly once so Postgres inlines it instead of materialising a wide
-   * intermediate to temp files.
-   *
-   * The identity lookup is two basis-specific joins rather than one OR'd join. An OR across two different
-   * column sets is not an index condition, so the planner could only evaluate it as a join filter over the
-   * whole identity table for every ranked key; split, each branch seeks its own partial unique index
-   * (`usage_project_identity_working_directory`, `usage_project_identity_native`) whose predicate it matches
-   * exactly, and the table's CHECK constraint already guarantees a row can satisfy only one of them. The
-   * mapping lateral is guarded on a resolved identity so it never loops for a key whose evidence is unknown.
+   * AGENT MAP (spec 6.3). One row per distinct agent-evidence tuple of the in-range requests (1-2k for a
+   * month), aggregated FIRST and only then joined to the install and the three label kinds, so labels are
+   * looked up per agent, not per request. `group_id` is the agent row the card shows and the filter
+   * selects: an opaque sha256 over (provider, display role, display name, builtin), so the comma-split
+   * URL list and the `agents: sha256[]` schema stay valid whatever a name contains. A request finds its row
+   * through `agentMapOn`: plain equality on the evidence columns, NULL folded to a sentinel in the map's
+   * `k_*` columns so the join stays a hash join. (A hashed key such as md5(jsonb_build_array(...)) per
+   * request was measured at about 0.8 s for a production month, 71k rows, 2026-09-23; this costs a hash
+   * probe.) Built once per transaction that needs it: nothing reads a temp table across transactions.
    */
-  const projectJoins = `LEFT JOIN personal_hub.usage_project_identities wd
-        ON r.effective_project_basis = 'working_directory' AND wd.basis = 'working_directory'
-        AND wd.install_id = r.project_install_id AND wd.evidence_key = r.effective_project_key
-      LEFT JOIN personal_hub.usage_project_identities nat
-        ON r.effective_project_basis = 'native' AND nat.basis = 'native'
-        AND nat.account_id = r.account_id AND nat.provider = r.project_provider AND nat.evidence_key = r.effective_project_key
-      LEFT JOIN LATERAL (
-        SELECT revision.project_id
-        FROM personal_hub.usage_project_mapping_revisions revision
-        WHERE revision.identity_id = coalesce(wd.id, nat.id)
-        ORDER BY revision.revision_order DESC
-        LIMIT 1
-      ) m ON coalesce(wd.id, nat.id) IS NOT NULL
-      LEFT JOIN personal_hub.usage_projects proj ON proj.id = m.project_id`;
-  const projectState = `CASE
-          WHEN r.effective_project_basis = 'none' THEN 'no_project'
-          WHEN r.effective_project_basis = 'unknown' THEN 'unknown'
-          WHEN coalesce(wd.id, nat.id) IS NULL THEN 'unknown'
-          WHEN m.project_id IS NULL THEN 'unassigned'
-          ELSE 'project'
-        END`;
+  const cursorSession = (a: string) => `CASE WHEN ${a}.provider = 'cursor' THEN ${a}.session_hash END`;
+  const agentMapOn = (m: string, a: string) => `${m}.account_id = ${a}.account_id AND ${m}.source_id = ${a}.source_id AND ${m}.provider = ${a}.provider
+        AND ${m}.k_agent = coalesce(${a}.agent_key, '') AND ${m}.k_session = coalesce(${cursorSession(a)}, '')
+        AND ${m}.k_class = coalesce(${a}.agent_class, '') AND ${m}.k_name = coalesce(${a}.agent_name, '')
+        AND ${m}.k_depth = coalesce(${a}.agent_depth, -1) AND ${m}.k_parent = coalesce(${a}.parent_agent_key, '')
+        AND ${m}.k_basis = coalesce(${a}.agent_identity_basis, '')`;
+  const builtinArraysSql = (p: Params, lists: Record<string, readonly string[]>, column: string) => `CASE ${column} ${BUILTIN_PROVIDERS
+    .map(provider => `WHEN '${provider}' THEN ${p.add([...(lists[provider] ?? [])])}::text[]`).join(' ')} ELSE '{}'::text[] END`;
+  async function createAgentMap(tx: { unsafe: Sql['unsafe'] }, q: UsageQuery, accounts: string[], range: ResolvedRange) {
+    const p = new Params();
+    await tx.unsafe(`CREATE TEMP TABLE _usage_agent_map ON COMMIT DROP AS
+      WITH agg AS (
+        SELECT r.account_id, r.source_id, r.provider, r.agent_key, CASE WHEN r.provider = 'cursor' THEN r.session_hash END AS cursor_session,
+          r.agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.agent_identity_basis
+        FROM personal_hub.canonical_requests r
+        WHERE r.account_id = ANY(${p.add(accounts)}::text[])
+          AND r.activity_at >= ${p.add(new Date(range.start).toISOString())}::timestamptz
+          AND r.activity_at < ${p.add(new Date(range.end).toISOString())}::timestamptz
+          ${q.machines.length ? `AND r.source_id = ANY(${p.add(q.machines)}::uuid[])` : ''}
+        GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+      ), labelled AS (
+        SELECT a.*, b.install_id,
+          coalesce(a.agent_key, '') AS k_agent, coalesce(a.cursor_session, '') AS k_session, coalesce(a.agent_class, '') AS k_class,
+          coalesce(a.agent_name, '') AS k_name, coalesce(a.agent_depth, -1) AS k_depth, coalesce(a.parent_agent_key, '') AS k_parent,
+          coalesce(a.agent_identity_basis, '') AS k_basis,
+          la.label AS agent_label, la.role AS agent_label_role, ln.label AS name_label, sa.label AS session_label, sa.role AS session_label_role
+        FROM agg a
+        LEFT JOIN personal_hub.companion_bindings b ON b.source_id = a.source_id
+        LEFT JOIN personal_hub.usage_name_labels la ON la.install_id = b.install_id AND la.kind = 'agent' AND la.key = a.agent_key
+        LEFT JOIN personal_hub.usage_name_labels ln ON ln.install_id = b.install_id AND ln.kind = 'agent_name' AND ln.key = a.agent_name AND a.agent_name LIKE 'h:%'
+        LEFT JOIN personal_hub.usage_name_labels sa ON sa.install_id = b.install_id AND sa.kind = 'session_agent' AND sa.key = a.cursor_session
+      ), shaped AS (
+        SELECT l.*,
+          coalesce(l.agent_label_role, l.session_label_role, ${AGENT_ROLE_SQL('l')}) AS display_role,
+          coalesce(l.agent_label, l.name_label, l.session_label, l.agent_name,
+            CASE WHEN l.agent_class = 'main' THEN 'main' WHEN l.provider = 'codex' AND l.agent_class = 'builtin' THEN 'default' ELSE 'unattributed' END) AS display_name
+        FROM labelled l
+      ), classed AS (
+        SELECT s.*, (coalesce(s.agent_class = 'builtin', false) OR s.display_name = ANY(${builtinArraysSql(p, KNOWN_BUILTIN_AGENTS, 's.provider')})) AS builtin
+        FROM shaped s
+      )
+      SELECT c.*, encode(sha256(convert_to(jsonb_build_array(c.provider, c.display_role, c.display_name, c.builtin)::text, 'UTF8')), 'hex') AS group_id
+      FROM classed c`, p.values);
+    await tx.unsafe(`ANALYZE _usage_agent_map`);
+  }
+  const agentJoin = `LEFT JOIN _usage_agent_map am ON ${agentMapOn('am', 'r')}`;
+  /** The requests a set of agent groups covers, as (account_id, agent_key) pairs, for filters on tables that carry only a key. */
+  const agentKeysIn = (p: Params, groups: string[]) =>
+    `(SELECT account_id, agent_key FROM _usage_agent_map WHERE agent_key IS NOT NULL AND group_id = ANY(${p.add(groups)}::text[]))`;
 
-  /** Canonical requests for a key set. Discover in-range keys when `keysCte` is omitted; tools pass the invocation callers. */
   /**
    * Columns a caller lookup needs: what the tool and knowledge cards display about a calling request, plus
    * every column a detail filter can test. Far narrower than the full ledger row, which matters because the
@@ -361,8 +423,14 @@ export function createUsageQuery(getDatabase?: () => Sql) {
    * lookup that only reports a model and an agent has no reason to drag the token columns through the sort.
    */
   const CALLER_COLUMNS = `r.account_id, r.semantic_key, r.activity_at, r.model_actual, r.agent_key, r.agent_class,
-        r.agent_name, r.agent_depth, r.parent_agent_key, r.reasoning_effort, r.surface`;
+        r.agent_name, r.agent_depth, r.parent_agent_key, r.reasoning_effort, r.surface, r.provider, r.session_hash, r.agent_identity_basis`;
 
+  /**
+   * Canonical requests for a key set. Discover in-range keys when `keysCte` is omitted; knowledge passes its
+   * callers. `project` joins `_usage_project_map` and `agents` joins `_usage_agent_map`, which the caller
+   * must have created in the same transaction (`createProjectMap`, `createAgentMap`); the agent join is
+   * needed only for the agent-group and agent-scope filters.
+   */
   function requestCte(p: Params, q: UsageQuery, accounts: string[], range: ResolvedRange, keysCte?: string,
     opts: { columns?: string; project?: boolean } = {}) {
     const detail: string[] = [];
@@ -381,40 +449,31 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       return parts.length ? `(${parts.join(' OR ')})` : null;
     };
     const model = modelFilter('r.model_actual');
+    const withAgents = q.agents.length > 0 || q.agent_scope !== 'all';
     if (q.efforts.length) detail.push(codeFilter('r.reasoning_effort', q.efforts)!);
     if (q.surfaces.length) detail.push(`r.surface = ANY(${p.add(q.surfaces)}::text[])`);
-    if (q.agent_scope === 'main') detail.push(`(r.agent_class = 'main' OR r.agent_depth = 0)`);
-    if (q.agent_scope === 'subagent') detail.push(`(r.agent_depth > 0 OR r.parent_agent_key IS NOT NULL)`);
-    if (q.agents.length) detail.push(`r.agent_key = ANY(${p.add(q.agents)}::text[])`);
+    // Agent scope and agent groups use the displayed role and group, so the card and its filters describe one partition.
+    if (q.agent_scope === 'main') detail.push(`r.agent_display_role = 'main'`);
+    if (q.agent_scope === 'subagent') detail.push(`r.agent_display_role = 'subagent'`);
+    if (q.agents.length) detail.push(`r.agent_group_id = ANY(${p.add(q.agents)}::text[])`);
     if (q.projects.length) {
-      const ids = q.projects.filter(v => !(PROJECT_STATES as readonly string[]).includes(v));
-      const states = q.projects.filter(v => (PROJECT_STATES as readonly string[]).includes(v));
+      const ids = q.projects.filter(v => !isProjectCode(v));
+      const codes = q.projects.filter(v => isProjectCode(v) && v !== 'not_reported');
       const parts: string[] = [];
       if (ids.length) parts.push(`r.project_id = ANY(${p.add(ids)}::uuid[])`);
-      if (states.length) parts.push(`r.project_state = ANY(${p.add(states)}::text[])`);
+      if (codes.length) parts.push(`r.project_filter = ANY(${p.add(codes)}::text[])`);
+      if (q.projects.includes('not_reported')) parts.push(`r.project_state = 'not_reported'`);
       detail.push(`(${parts.join(' OR ')})`);
     }
     // Canonical requests come from personal_hub.canonical_requests, which already holds one row per
-    // (account_id, semantic_key), chosen at write time in the order lib/usage-canonical.ts defines:
-    // exactly the order this function used to apply on every read.
+    // (account_id, semantic_key), chosen at write time in the order lib/usage-canonical.ts defines. What is
+    // left is a range scan on canonical_requests_activity (account_id, activity_at DESC), where BOTH range
+    // bounds are index boundary conditions, so the scan size is the SELECTED RANGE.
     //
-    // GONE, relative to the shape this replaces: the in-range key discovery, the widened re-scan of
-    // every revision, the row_number() ranking, the four first_value() project windows, the WINDOW
-    // clause, and the join to companion_bindings. What is left is a range scan on
-    // canonical_requests_activity (account_id, activity_at DESC), where BOTH range bounds are index
-    // boundary conditions, so the scan size is the SELECTED RANGE. The shape this replaces walked
-    // every entry of activity_requests_semantic_activity (account_id, semantic_key, activity_at) for
-    // any range, because activity_at sat third in it and was only an in-index filter. That is why a
-    // one-day read used to cost nearly what a one-month read cost.
-    //
-    // Project resolution deliberately STAYS at read time. The projection carries only the evidence of
-    // the project-preferred revision, never a resolved id or label, because naming a working directory
-    // in Settings must still relabel past requests. The identity joins and the state expression run
-    // here unchanged, against the same column names the window functions used to produce.
-    //
-    // REVISION_WINDOW_MS is no longer referenced here: the write-time recompute ranks a key's whole
-    // history with no window at all. The constant stays because the knowledge section still widens for its
-    // own DISTINCT ON over tool_events; the tools section reads canonical_tool_invocations instead.
+    // Project resolution deliberately STAYS at read time: the projection carries only the evidence of the
+    // project-preferred revision, never a resolved id or label, because an app's catalog or a membership
+    // must still relabel past requests. It is resolved once per distinct evidence tuple in
+    // `_usage_project_map`, never per row.
     const withProject = opts.project ?? true;
     const columns = opts.columns ?? `r.revision_id AS id, r.account_id, r.provider, r.semantic_key, r.session_hash, r.model_actual,
         r.activity_at, r.observed_at, r.surface, r.reasoning_effort, r.service_tier, r.speed,
@@ -432,16 +491,18 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     ];
     const text = `resolved AS (
       SELECT ${columns}, r.source_id,
-        ${withProject ? `${projectState} AS project_state, m.project_id, proj.label AS project_label`
-          : `NULL::text AS project_state, NULL::uuid AS project_id, NULL::text AS project_label`}
+        ${withProject ? `coalesce(pm.project_state, 'unknown') AS project_state, pm.project_id, pm.project_label, coalesce(pm.project_filter, 'unknown') AS project_filter`
+          : `NULL::text AS project_state, NULL::uuid AS project_id, NULL::text AS project_label, NULL::text AS project_filter`},
+        ${withAgents ? 'am.group_id AS agent_group_id, am.display_role AS agent_display_role' : 'NULL::text AS agent_group_id, NULL::text AS agent_display_role'}
       FROM personal_hub.canonical_requests r
       ${keysCte ? `JOIN ${keysCte} k ON k.account_id = r.account_id AND k.semantic_key = r.semantic_key` : ''}
-      ${withProject ? projectJoins : ''}
+      ${withProject ? projectJoin : ''}
+      ${withAgents ? agentJoin : ''}
       WHERE ${where.join(' AND ')}
     ), requests AS (
       SELECT r.*, ${detail.length ? `(${detail.join(' AND ')})` : 'true'} AS matches FROM resolved r
     )`;
-    return { text, detailFilters: detail.length > 0 };
+    return { text, detailFilters: detail.length > 0, withAgents, withProject };
   }
 
   // A parameter is added only when the expression references it: an unreferenced bound value has no type.
@@ -595,14 +656,20 @@ export function createUsageQuery(getDatabase?: () => Sql) {
 
     const emptyDetail = {
       requestPeriodRows: [] as Row[], projectRows: [] as Row[], agentRows: [] as Row[], requestPricingRows: [] as Row[],
-      effortRows: [] as Row[], toolRows: [] as Row[], knowledgeRows: [] as Row[],
+      effortRows: [] as Row[], knowledgeRows: [] as Row[],
       knowledgeTotal: { distinct_invocations: 0 } as Row,
       agentEvidence: { spawns: 0, observed_children: 0, conversations: 0 } as Row,
     };
     const requestDetail = accounts.length && needRequestTable ? await db.begin(async tx => {
       await prepareRead(tx);
+      // The maps are built before the request table and joined on plain equality: resolution runs per
+      // distinct project or agent tuple, never per request row.
+      const needProject = needRequestGroups || q.projects.length > 0;
+      const needAgents = needRequestGroups || q.agents.length > 0 || q.agent_scope !== 'all';
+      if (needProject) await createProjectMap(tx, q, accounts, range);
+      if (needAgents) await createAgentMap(tx, q, accounts, range);
       const rp = new Params();
-      const cte = requestCte(rp, q, accounts, range);
+      const cte = requestCte(rp, q, accounts, range, undefined, { project: needProject });
       await tx.unsafe(`CREATE TEMP TABLE _usage_requests ON COMMIT DROP AS WITH ${cte.text} SELECT * FROM requests`, rp.values);
       await tx.unsafe(`CREATE INDEX _usage_requests_join ON _usage_requests (account_id, semantic_key)`);
 
@@ -613,15 +680,28 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         FROM _usage_requests r GROUP BY 1, 2, 3, 4 ORDER BY 4, 3`, periodP.values) : [];
 
       const projectRows = needRequestGroups ? await tx.unsafe(`
-        SELECT coalesce(r.project_state, 'unknown') AS state, r.project_id, r.project_label, ${compositionSelect()}
-        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY total_tokens DESC NULLS LAST`) : [];
+        SELECT coalesce(r.project_state, 'unknown') AS state, r.project_id, r.project_label, coalesce(r.project_filter, r.project_state, 'unknown') AS filter_value, ${compositionSelect()}
+        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3, 4 ORDER BY total_tokens DESC NULLS LAST`) : [];
 
-      const agentRows = needRequestGroups ? await tx.unsafe(`
-        SELECT r.agent_key, coalesce(r.agent_class, 'unknown') AS agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.model_actual AS model,
-          CASE WHEN r.agent_identity_basis IS NULL THEN 'unattributed' WHEN r.agent_class = 'main' OR r.agent_depth = 0 THEN 'main'
-               WHEN r.agent_depth > 0 OR r.parent_agent_key IS NOT NULL THEN 'subagent' ELSE 'unattributed' END AS role,
-          ${compositionSelect()}
-        FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY total_tokens DESC NULLS LAST`) : [];
+      // One row per displayed agent group. Aggregate first, per agent evidence tuple and session, then join
+      // the 1-2k map rows and fold into provider, role, name and builtin. Instances are distinct agent keys.
+      const agentRows = needRequestGroups ? await tx.unsafe(`WITH per_agent AS (
+          SELECT r.account_id, r.source_id, r.provider, r.agent_key, r.session_hash, r.agent_class, r.agent_name, r.agent_depth,
+            r.parent_agent_key, r.agent_identity_basis,
+            sum(r.input_fresh_tokens) AS input_fresh_tokens, sum(r.input_cached_tokens) AS input_cached_tokens,
+            sum(r.input_cache_write_tokens) AS input_cache_write_tokens, sum(r.output_tokens) AS output_tokens,
+            sum(r.reasoning_tokens) AS reasoning_tokens, sum(r.unclassified_tokens) AS unclassified_tokens,
+            sum(r.observed_total_tokens) AS observed_total_tokens, count(*) AS calls
+          FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+        SELECT coalesce(m.group_id, '') AS group_id, coalesce(m.provider, r.provider) AS provider,
+          coalesce(m.display_role, 'unattributed') AS role, coalesce(m.display_name, 'unattributed') AS name, coalesce(m.builtin, false) AS builtin,
+          count(DISTINCT r.agent_key)::int AS instances, count(DISTINCT r.session_hash)::int AS sessions,
+          sum(r.input_fresh_tokens)::float8 AS input_fresh, sum(r.input_cached_tokens)::float8 AS input_cached,
+          sum(r.input_cache_write_tokens)::float8 AS input_cache_write, sum(r.output_tokens)::float8 AS output,
+          sum(r.reasoning_tokens)::float8 AS reasoning, sum(r.unclassified_tokens)::float8 AS unclassified,
+          sum(r.observed_total_tokens)::float8 AS total_tokens, sum(r.calls)::int AS calls
+        FROM per_agent r LEFT JOIN _usage_agent_map m ON ${agentMapOn('m', 'r')}
+        GROUP BY 1, 2, 3, 4, 5 ORDER BY total_tokens DESC NULLS LAST`) : [];
 
       const cp = new Params();
       const requestPricingRows = needRequestPricing ? await tx.unsafe(`
@@ -646,7 +726,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           WHERE e.account_id = ANY(${gp.add(accounts)}::text[])
             AND e.observed_at >= ${gp.add(rangeStartIso)}::timestamptz AND e.observed_at < ${gp.add(rangeEndIso)}::timestamptz
             ${q.machines.length ? `AND b.source_id = ANY(${gp.add(q.machines)}::uuid[])` : ''}
-            ${q.agents.length ? `AND e.agent_key = ANY(${gp.add(q.agents)}::text[])` : ''}
+            ${q.agents.length ? `AND (e.account_id, e.agent_key) IN ${agentKeysIn(gp, q.agents)}` : ''}
           ORDER BY e.account_id, e.semantic_key, e.observed_at DESC, e.received_at DESC, e.id DESC)
         SELECT (SELECT count(*)::int FROM events WHERE event_kind = 'spawn') AS spawns,
           (SELECT count(DISTINCT r.session_hash)::int FROM _usage_requests r WHERE r.matches) AS conversations,
@@ -676,17 +756,23 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // invocation's outcome. Production has zero observed_at spread across all 85,949 invocation keys, so
     // neither case exists today. The knowledge card still ranks invocations within the window, so for
     // such an invocation the two cards could disagree; moving it onto this projection too would close that.
-    const toolRows = accounts.length && wantTools ? await db.begin(async tx => {
+    const emptyTools = { byTool: [] as Row[], byCaller: [] as Row[] };
+    const toolDetail = accounts.length && wantTools ? await db.begin(async tx => {
       await prepareRead(tx);
+      // The agent map names every caller (by_caller) and serves the agent filter, so tools always build it;
+      // the project map only when a project filter reaches invocations through their calling request.
+      await createAgentMap(tx, q, accounts, range);
+      if (q.projects.length) await createProjectMap(tx, q, accounts, range);
       const ip = new Params();
       await tx.unsafe(`CREATE TEMP TABLE _usage_invocations ON COMMIT DROP AS
         SELECT i.account_id, i.invocation_key, i.tool_name, i.tool_class, i.tool_namespace, i.caller_agent_key, i.caller_request_key,
-          i.outcome, coalesce(i.res_outcome, i.outcome) AS final_outcome, i.session_hash, i.inv_observed_at AS observed_at, i.source_id
+          i.outcome, coalesce(i.res_outcome, i.outcome) AS final_outcome, i.session_hash, i.inv_observed_at AS observed_at, i.source_id,
+          i.parent_invocation_key
         FROM personal_hub.canonical_tool_invocations i
         WHERE i.account_id = ANY(${ip.add(accounts)}::text[])
           AND i.inv_observed_at >= ${ip.add(rangeStartIso)}::timestamptz AND i.inv_observed_at < ${ip.add(rangeEndIso)}::timestamptz
           ${q.machines.length ? `AND i.source_id = ANY(${ip.add(q.machines)}::uuid[])` : ''}
-          ${q.agents.length ? `AND i.caller_agent_key = ANY(${ip.add(q.agents)}::text[])` : ''}`, ip.values);
+          ${q.agents.length ? `AND (i.account_id, i.caller_agent_key) IN ${agentKeysIn(ip, q.agents)}` : ''}`, ip.values);
       await tx.unsafe(`CREATE INDEX _usage_invocations_caller ON _usage_invocations (account_id, caller_request_key)`);
       await tx.unsafe(`ANALYZE _usage_invocations`);
 
@@ -697,21 +783,85 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       const callers = requestCte(tp, q, accounts, range, undefined, { columns: CALLER_COLUMNS, project: q.projects.length > 0 });
       await tx.unsafe(`CREATE TEMP TABLE _usage_tool_callers ON COMMIT DROP AS
         WITH ${callers.text}
-        SELECT account_id, semantic_key, model_actual, agent_name, agent_class, matches FROM requests`, tp.values);
+        SELECT r.account_id, r.semantic_key, r.model_actual, cm.group_id AS caller_group_id, r.matches FROM requests r
+        LEFT JOIN _usage_agent_map cm ON r.provider = 'cursor' AND ${agentMapOn('cm', 'r')}`, tp.values);
       await tx.unsafe(`CREATE INDEX _usage_tool_callers_key ON _usage_tool_callers (account_id, semantic_key)`);
       await tx.unsafe(`ANALYZE _usage_tool_callers`);
 
-      return tx.unsafe(`WITH joined AS (
-          SELECT i.*, r.model_actual AS caller_model, r.agent_name AS caller_name, r.agent_class AS caller_class, r.matches
+      // NESTED CALLS (spec 6.4). A row is a child only when its parent is a Codex `exec`: a nested MCP call
+      // the companion (2.2.0) recorded under the exec that ran it. Every other parent link, such as a
+      // Claude parent_tool_use_id, stays a top-level row. Parents are fetched by primary key, whether or
+      // not they fall in the range, so a child whose exec is outside the range (or never arrived) still
+      // counts, under a synthetic "exec (outside range)" row, and never vanishes.
+      // `in_scope` is a join, not a correlated EXISTS: the in-range set has no index on its key, and a
+      // per-parent subplan over it would scan it once per parent.
+      await tx.unsafe(`CREATE TEMP TABLE _usage_nested_parents ON COMMIT DROP AS
+        WITH wanted AS (
+          SELECT DISTINCT account_id, parent_invocation_key AS invocation_key FROM _usage_invocations WHERE parent_invocation_key IS NOT NULL)
+        SELECT c.account_id, c.invocation_key, c.tool_name, b.provider, (s.invocation_key IS NOT NULL) AS in_scope
+        FROM wanted w
+        JOIN personal_hub.canonical_tool_invocations c ON c.account_id = w.account_id AND c.invocation_key = w.invocation_key
+        JOIN personal_hub.companion_bindings b ON b.source_id = c.source_id
+        LEFT JOIN _usage_invocations s ON s.account_id = w.account_id AND s.invocation_key = w.invocation_key
+        WHERE c.inv_revision_id IS NOT NULL`);
+
+      await tx.unsafe(`CREATE TEMP TABLE _usage_tool_rows ON COMMIT DROP AS
+        WITH joined AS (
+          SELECT i.*, b.install_id, b.provider, r.caller_group_id, r.matches,
+            np.tool_name AS parent_tool, np.provider AS parent_provider, np.in_scope AS parent_in_scope
           FROM _usage_invocations i
-          LEFT JOIN _usage_tool_callers r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key)
-        SELECT tool_name, tool_class, tool_namespace, caller_agent_key, caller_name, caller_class, caller_model, final_outcome AS outcome,
-          (caller_request_key IS NOT NULL) AS has_caller_request, count(*)::int AS invocations
-        FROM joined ${useRequests ? 'WHERE matches' : ''} GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9`);
-    }) : [];
+          LEFT JOIN personal_hub.companion_bindings b ON b.source_id = i.source_id
+          LEFT JOIN _usage_tool_callers r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key
+          LEFT JOIN _usage_nested_parents np ON np.account_id = i.account_id AND np.invocation_key = i.parent_invocation_key)
+        SELECT j.account_id, j.source_id, j.install_id, j.provider, j.tool_name, j.tool_namespace, j.tool_class, j.final_outcome AS outcome,
+          j.caller_agent_key, j.caller_group_id, (j.caller_request_key IS NOT NULL) AS has_caller_request,
+          CASE
+            WHEN j.parent_invocation_key IS NULL THEN 'top'
+            WHEN j.parent_tool = 'exec' AND j.parent_provider = 'codex' THEN CASE WHEN j.parent_in_scope THEN 'child' ELSE 'orphan' END
+            WHEN j.parent_tool IS NULL AND j.provider = 'codex' AND j.tool_class = 'mcp' THEN 'orphan'
+            ELSE 'top'
+          END AS nesting
+        FROM joined j ${useRequests ? 'WHERE j.matches' : ''}`);
+
+      // Aggregate first, then name: labels are joined per (install, tool, namespace), not per invocation.
+      const byTool = await tx.unsafe(`WITH agg AS (
+          SELECT install_id, provider, tool_name, tool_namespace, tool_class, nesting, outcome,
+            count(*)::int AS invocations, count(*) FILTER (WHERE caller_agent_key IS NOT NULL OR has_caller_request)::int AS with_caller
+          FROM _usage_tool_rows GROUP BY 1, 2, 3, 4, 5, 6, 7)
+        SELECT a.*, tl.label AS tool_label, nl.label AS namespace_label, ci.machine_label
+        FROM agg a
+        LEFT JOIN personal_hub.usage_name_labels tl ON tl.install_id = a.install_id AND tl.kind = 'tool' AND tl.key = a.tool_name
+        LEFT JOIN personal_hub.usage_name_labels nl ON nl.install_id = a.install_id AND nl.kind = 'tool_namespace' AND nl.key = a.tool_namespace
+        LEFT JOIN personal_hub.companion_installs ci ON ci.id = a.install_id`);
+
+      // Callers, keyed by the agent map's group through (source -> install, caller agent key). A key the
+      // map lacks (its requests fall outside the range) falls back to its `agent` label, then reads as
+      // "caller outside range"; a Cursor invocation with no agent key takes its calling request's group.
+      const byCaller = await tx.unsafe(`WITH agg AS (
+          SELECT account_id, source_id, install_id, provider, caller_agent_key, caller_group_id, count(*)::int AS invocations
+          FROM _usage_tool_rows GROUP BY 1, 2, 3, 4, 5, 6
+        ), by_key AS (
+          SELECT DISTINCT ON (account_id, source_id, agent_key) account_id, source_id, agent_key, group_id, provider, display_role, display_name, builtin
+          FROM _usage_agent_map WHERE agent_key IS NOT NULL
+          ORDER BY account_id, source_id, agent_key, (display_role = 'unattributed'), display_name, group_id)
+        SELECT a.provider AS caller_provider, a.caller_agent_key, a.invocations,
+          k.group_id, k.provider, k.display_role, k.display_name, k.builtin,
+          rm.group_id AS request_group_id, rm.provider AS request_provider, rm.display_role AS request_role, rm.display_name AS request_name, rm.builtin AS request_builtin,
+          la.label AS agent_label, la.role AS agent_label_role
+        FROM agg a
+        LEFT JOIN by_key k ON k.account_id = a.account_id AND k.source_id = a.source_id AND k.agent_key = a.caller_agent_key
+        LEFT JOIN (SELECT DISTINCT ON (group_id) group_id, provider, display_role, display_name, builtin FROM _usage_agent_map ORDER BY group_id) rm
+          ON a.caller_agent_key IS NULL AND rm.group_id = a.caller_group_id
+        LEFT JOIN personal_hub.usage_name_labels la ON la.install_id = a.install_id AND la.kind = 'agent' AND la.key = a.caller_agent_key`);
+      return { byTool, byCaller };
+    }) : emptyTools;
 
     const knowledgeDetail = accounts.length && wantKnowledge ? await db.begin(async tx => {
       await prepareRead(tx);
+      // Agent groups and scope resolve through the agent map; projects through the project map. Each is built
+      // here, in this transaction, only when a filter needs it.
+      if (q.agents.length || q.agent_scope !== 'all') await createAgentMap(tx, q, accounts, range);
+      if (useRequests && q.projects.length) await createProjectMap(tx, q, accounts, range);
       // Accesses follow the machine filter through their own binding, the agent filter through the
       // invocation's caller, and the detail filters through the calling request, exactly as tool
       // invocations do, so the two areas of the card describe one scope.
@@ -770,7 +920,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       // excluded under those filters rather than matched: the same rule the tools area applies.
       const fp = new Params();
       const keep = [
-        ...(q.agents.length ? [`i.caller_agent_key = ANY(${fp.add(q.agents)}::text[])`] : []),
+        ...(q.agents.length ? [`(i.account_id, i.caller_agent_key) IN ${agentKeysIn(fp, q.agents)}`] : []),
         ...(useRequests ? ['i.matches'] : []),
       ];
       const accessFilter = keep.length ? `WHERE ${keep.join(' AND ')}` : '';
@@ -795,6 +945,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     const {
       requestPeriodRows, projectRows, agentRows, requestPricingRows, effortRows, agentEvidence,
     } = requestDetail;
+    const { byTool: toolAgg, byCaller: callerAgg } = toolDetail;
     const { knowledgeRows, knowledgeTotal } = knowledgeDetail;
 
     // 6. Monthly snapshots for the months the range touches, crosswalked to accounts where the operator mapped them.
@@ -1003,35 +1154,116 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       : 'Catalog pricing is applied by the cost calculation (USG-013). Hourly collection is enough to estimate; request-level effort, tier, speed, and long-context evidence refine the estimate when a detail filter makes requests the headline.';
 
     const projectRowsOut = projectRows.map(row => ({ state: row.state as UsageQueryResult['projects']['rows'][number]['state'], project_id: (row.project_id as string | null) ?? null,
-      label: (row.project_label as string | null) ?? null, total_tokens: num(row.total_tokens), calls: num(row.calls), conversations: num(row.conversations), share: share(num(row.total_tokens), useRequests ? headlineTokens : requestTotals.matching.tokens) }));
+      label: (row.project_label as string | null) ?? null, filter_value: row.filter_value as string, total_tokens: num(row.total_tokens), calls: num(row.calls), conversations: num(row.conversations), share: share(num(row.total_tokens), useRequests ? headlineTokens : requestTotals.matching.tokens) }));
     const projectEvidenced = projectRowsOut.filter(r => r.state !== 'unknown').reduce((n, r) => n + r.total_tokens, 0);
     const projectIdentity = projectRowsOut.filter(r => r.state === 'project' || r.state === 'unassigned').reduce((n, r) => n + r.total_tokens, 0);
     const projectMapped = projectRowsOut.filter(r => r.state === 'project').reduce((n, r) => n + r.total_tokens, 0);
 
-    const agentRowsOut = agentRows.map(row => ({ agent_key: (row.agent_key as string | null) ?? null, class: row.agent_class as string, name: (row.agent_name as string | null) ?? null,
-      depth: row.agent_depth === null ? null : num(row.agent_depth), parent_agent_key: (row.parent_agent_key as string | null) ?? null, model: (row.model as string | null) ?? null,
-      role: row.role as string, total_tokens: num(row.total_tokens), calls: num(row.calls), share: share(num(row.total_tokens), useRequests ? headlineTokens : requestTotals.matching.tokens) }));
+    type AgentOut = UsageQueryResult['agents']['rows'][number];
+    const agentRowsOut: AgentOut[] = agentRows.map(row => {
+      const composition = emptyComposition(); addComposition(composition, row);
+      return { group_id: row.group_id as string, provider: row.provider as string, role: row.role as AgentOut['role'], name: row.name as string, builtin: row.builtin === true,
+        instances: num(row.instances), sessions: num(row.sessions), total_tokens: num(row.total_tokens), calls: num(row.calls), composition,
+        share: share(num(row.total_tokens), useRequests ? headlineTokens : requestTotals.matching.tokens) };
+    });
     const roleTokens = (role: string) => agentRowsOut.filter(r => r.role === role).reduce((n, r) => n + r.total_tokens, 0);
+    // The role-class line uses the displayed role and builtin tag, the same partition the rows and the agent-scope filter use.
     const byClass: Record<string, number> = {};
-    for (const row of agentRowsOut) byClass[row.class] = (byClass[row.class] ?? 0) + row.total_tokens;
+    for (const row of agentRowsOut) {
+      const cls = row.role === 'main' ? 'main' : row.role === 'unattributed' ? 'unattributed' : row.builtin ? 'builtin' : 'custom';
+      byClass[cls] = (byClass[cls] ?? 0) + row.total_tokens;
+    }
 
-    const toolTotal = toolRows.reduce((n, row) => n + num(row.invocations), 0);
-    const byTool = new Map<string, { name: string | null; class: string; namespace: string | null; invocations: number }>();
-    const byCaller = new Map<string, { agent_key: string | null; agent_name: string | null; agent_class: string | null; model: string | null; invocations: number }>();
+    // Tools: display names from the labels, builtin from the class or the provider's display list, and
+    // nested Codex MCP calls folded under their exec (spec 6.4). An unlabeled `h:` key reads as a short
+    // hash with its machine and never raises an error.
+    type ToolOut = UsageQueryResult['tools']['by_tool'][number];
+    type ChildOut = ToolOut['children'][number];
+    const HASHED = /^h:[a-f0-9]{16}$/;
+    const shortHash = (value: string) => `${value.slice(0, 6)}…`;
+    const toolTotal = toolAgg.reduce((n, row) => n + num(row.invocations), 0);
+    const byTool = new Map<string, ToolOut & { childIndex: Map<string, ChildOut> }>();
     const byOutcome: Record<string, number> = {};
     let withCaller = 0, withOutcome = 0;
-    for (const row of toolRows) {
+    const execKeys: string[] = [];
+    const SYNTHETIC_EXEC = 'synthetic|exec (outside range)';
+    // A Codex app connector's namespace label is its full `codex_apps:<app>` text (the companion keeps the
+    // prefix so the read can tell a connector from an MCP server of the same name); it reads "<app> (connector)".
+    const CONNECTOR = 'codex_apps:';
+    const display = (row: Row) => {
+      const raw = (row.tool_name as string | null) ?? null, label = (row.tool_label as string | null) ?? null;
+      const unlabeled = !label && !!raw && HASHED.test(raw);
+      const name = label ?? (raw ? (unlabeled ? shortHash(raw) : raw) : row.tool_class === 'builtin' ? 'builtin (unnamed)' : null);
+      const rawNs = (row.tool_namespace as string | null) ?? null, nsLabel = (row.namespace_label as string | null) ?? null;
+      const nsUnlabeled = !nsLabel && !!rawNs && HASHED.test(rawNs);
+      const nsText = nsLabel ?? rawNs;
+      const namespace = nsText === null ? null
+        : nsText.startsWith(CONNECTOR) && nsText.length > CONNECTOR.length ? `${nsText.slice(CONNECTOR.length)} (connector)`
+        : nsUnlabeled ? shortHash(nsText) : nsText;
+      const machine = unlabeled || nsUnlabeled ? (row.machine_label as string | null) ?? null : null;
+      const builtin = row.tool_class === 'builtin' || (!!name && (KNOWN_BUILTIN_TOOLS[row.provider as string] ?? []).includes(name));
+      // Rows aggregate by identity, not by the text shown: an unlabeled hash is keyed by its full value and
+      // its install (the salt is per install), so two hashes sharing their shown prefix never merge. Labelled
+      // and readable values key by their text, which merges the same name across machines.
+      const install = (row.install_id as string | null) ?? '';
+      const nameId = unlabeled ? ['hash', raw, install] : ['text', name];
+      const nsId = nsUnlabeled ? ['hash', rawNs, install] : ['text', nsText];
+      return { name, namespace, machine, builtin, nameId, nsId };
+    };
+    const topRow = (key: string, init: () => ToolOut) => {
+      const existing = byTool.get(key);
+      if (existing) return existing;
+      const created = { ...init(), childIndex: new Map<string, ChildOut>() };
+      byTool.set(key, created);
+      return created;
+    };
+    // Top-level rows first, so a child always finds its exec row.
+    const ordered = [...toolAgg].sort((a, b) => Number(a.nesting !== 'top') - Number(b.nesting !== 'top'));
+    for (const row of ordered) {
       const n = num(row.invocations);
-      const toolKey = `${row.tool_class}|${row.tool_namespace ?? ''}|${row.tool_name ?? ''}`;
-      const tool = byTool.get(toolKey) ?? { name: (row.tool_name as string | null) ?? null, class: row.tool_class as string, namespace: (row.tool_namespace as string | null) ?? null, invocations: 0 };
-      tool.invocations += n; byTool.set(toolKey, tool);
-      const callerKey = `${row.caller_agent_key ?? ''}|${row.caller_model ?? ''}`;
-      const caller = byCaller.get(callerKey) ?? { agent_key: (row.caller_agent_key as string | null) ?? null, agent_name: (row.caller_name as string | null) ?? null, agent_class: (row.caller_class as string | null) ?? null, model: (row.caller_model as string | null) ?? null, invocations: 0 };
-      caller.invocations += n; byCaller.set(callerKey, caller);
       const outcome = (row.outcome as string | null) ?? UNKNOWN;
       byOutcome[outcome] = (byOutcome[outcome] ?? 0) + n;
-      if (row.caller_agent_key || row.has_caller_request) withCaller += n;
+      withCaller += num(row.with_caller);
       if (outcome !== UNKNOWN) withOutcome += n;
+      const shown = display(row);
+      if (row.nesting === 'top') {
+        const key = JSON.stringify([row.tool_class, shown.nsId, shown.nameId]);
+        const tool = topRow(key, () => ({ name: shown.name, class: row.tool_class as string, namespace: shown.namespace, builtin: shown.builtin, machine: shown.machine,
+          synthetic: false, invocations: 0, share: null, children: [] }));
+        tool.invocations += n;
+        if (row.tool_name === 'exec' && row.provider === 'codex' && !execKeys.includes(key)) execKeys.push(key);
+        continue;
+      }
+      const parentKey = row.nesting === 'child' && execKeys.length ? execKeys[0] : SYNTHETIC_EXEC;
+      const parent = topRow(parentKey, () => ({ name: 'exec (outside range)', class: 'builtin', namespace: null, builtin: true, machine: null,
+        synthetic: true, invocations: 0, share: null, children: [] }));
+      const childKey = JSON.stringify([shown.nsId, shown.nameId]);
+      const child = parent.childIndex.get(childKey) ?? { name: shown.name, namespace: shown.namespace, invocations: 0, outcomes: {} };
+      child.invocations += n;
+      child.outcomes[outcome] = (child.outcomes[outcome] ?? 0) + n;
+      parent.childIndex.set(childKey, child);
+    }
+    const toolRowsOut: ToolOut[] = [...byTool.values()].map(({ childIndex, ...tool }) => ({ ...tool, share: share(tool.invocations, toolTotal),
+      children: [...childIndex.values()].sort((a, b) => b.invocations - a.invocations || String(a.name).localeCompare(String(b.name))) }))
+      .sort((a, b) => b.invocations - a.invocations || b.children.length - a.children.length || String(a.name).localeCompare(String(b.name)));
+
+    type CallerOut = UsageQueryResult['tools']['by_caller'][number];
+    const callers = new Map<string, CallerOut>();
+    for (const row of callerAgg) {
+      const n = num(row.invocations);
+      const caller: Omit<CallerOut, 'invocations'> = row.group_id
+        ? { state: 'group', group_id: row.group_id as string, provider: row.provider as string, role: row.display_role as string, name: row.display_name as string, builtin: row.builtin === true }
+        : row.request_group_id
+          ? { state: 'group', group_id: row.request_group_id as string, provider: row.request_provider as string, role: row.request_role as string, name: row.request_name as string, builtin: row.request_builtin === true }
+          : row.caller_agent_key && row.agent_label
+            ? { state: 'label', group_id: null, provider: (row.caller_provider as string | null) ?? null, role: (row.agent_label_role as string | null) ?? null, name: row.agent_label as string,
+                builtin: (KNOWN_BUILTIN_AGENTS[row.caller_provider as string] ?? []).includes(row.agent_label as string) }
+            : row.caller_agent_key
+              ? { state: 'outside_range', group_id: null, provider: (row.caller_provider as string | null) ?? null, role: null, name: null, builtin: false }
+              : { state: 'none', group_id: null, provider: null, role: null, name: null, builtin: false };
+      const key = caller.state === 'group' ? `group:${caller.group_id}` : caller.state === 'label' ? `label:${caller.provider}:${caller.role}:${caller.name}` : `${caller.state}:${caller.provider ?? ''}`;
+      const entry = callers.get(key) ?? { ...caller, invocations: 0 };
+      entry.invocations += n; callers.set(key, entry);
     }
 
     const knowledge = knowledgeRows.map(row => ({ source_id: (row.source_id as string | null) ?? null, label: (row.source_label as string | null) ?? null, state: row.state as string,
@@ -1068,15 +1300,15 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       pricing_inputs: { rows: pricing, coverage: coverage('tokens', headlineTokens, pricedEligible, pricedWithEvidence, pricingCoverageNote), note: pricingNote },
       projects: { rows: projectRowsOut,
         coverage: coverage('tokens', headlineTokens, requestCovered, projectEvidenced, 'Project evidence: request-covered tokens with a project identity or an explicit No project; Unknown project is the remainder.'),
-        registry: coverage('tokens', headlineTokens, projectIdentity, projectMapped, 'Registry mapping: tokens carrying a stable project identity that a named project maps.') },
-      agents: { rows: agentRowsOut.map(({ role: _role, ...row }) => row),
+        registry: coverage('tokens', headlineTokens, projectIdentity, projectMapped, 'App projects: tokens whose folder or session the companion placed, and the part that lands in a project an app defines.') },
+      agents: { rows: agentRowsOut,
         summary: { main_tokens: roleTokens('main'), subagent_tokens: roleTokens('subagent'), unattributed_tokens: roleTokens('unattributed'), observed_children: num(agentEvidence.observed_children), spawns: num(agentEvidence.spawns), by_class: byClass },
         coverage: coverage('tokens', headlineTokens, requestCovered, roleTokens('main') + roleTokens('subagent'), [
           'Agent attribution: request-covered tokens assigned to a main or child identity; missing identity stays unattributed.',
           ...(eventUnsupported.length ? [`Spawn events and lifecycle-observed children follow the machine and agent filters only; the ${eventUnsupported.join(', ')} filter${eventUnsupported.length > 1 ? 's do' : ' does'} not apply to them.`] : []),
         ].join(' ')) },
-      tools: { invocations: toolTotal, by_tool: [...byTool.values()].map(t => ({ ...t, share: share(t.invocations, toolTotal) })).sort((a, b) => b.invocations - a.invocations),
-        by_caller: [...byCaller.values()].sort((a, b) => b.invocations - a.invocations), by_outcome: byOutcome,
+      tools: { invocations: toolTotal, by_tool: toolRowsOut,
+        by_caller: [...callers.values()].sort((a, b) => b.invocations - a.invocations || String(a.name).localeCompare(String(b.name))), by_outcome: byOutcome,
         caller_coverage: coverage('invocations', toolTotal, toolTotal, withCaller, 'Reported invocations with a supported caller.'),
         outcome_coverage: coverage('invocations', toolTotal, toolTotal, withOutcome, 'Reported invocations with a supported outcome.'), unsupported_filters: toolUnsupported },
       knowledge: { rows: knowledge, distinct_invocations: num(knowledgeTotal.distinct_invocations),

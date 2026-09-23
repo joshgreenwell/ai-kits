@@ -21,10 +21,10 @@ test('the status line judges contact per collector at its own cadence and never 
 
 test('registry payloads name the id field per kind and dedupe identities', () => {
   const a = '11111111-1111-4111-8111-111111111111';
-  assert.deepEqual(registryPayload('project', { action: 'create', label: '  Kit board ' }), { action: 'create', label: 'Kit board' });
-  assert.deepEqual(registryPayload('project', { action: 'rename', id: a, label: 'Board' }), { action: 'rename', project_id: a, label: 'Board' });
+  assert.deepEqual(registryPayload('source', { action: 'create', label: '  Kit board ' }), { action: 'create', label: 'Kit board' });
+  assert.deepEqual(registryPayload('source', { action: 'rename', id: a, label: 'Board' }), { action: 'rename', source_id: a, label: 'Board' });
   assert.deepEqual(registryPayload('source', { action: 'map', id: a, identity_ids: [a, a] }), { action: 'map', source_id: a, identity_ids: [a] });
   assert.deepEqual(registryPayload('source', { action: 'unmap', identity_ids: [a] }), { action: 'unmap', identity_ids: [a] });
   assert.equal(registryOutcome('source', { action: 'map', id: a, identity_ids: [a] }, 'Vault'), 'Mapped 1 identity to “Vault”.');
-  assert.equal(registryOutcome('project', { action: 'unmap', identity_ids: [a, '22222222-2222-4222-8222-222222222222'] }), 'Unmapped 2 identities; their requests resolve as unassigned again.');
+  assert.equal(registryOutcome('source', { action: 'unmap', identity_ids: [a, '22222222-2222-4222-8222-222222222222'] }), 'Unmapped 2 identities; their requests resolve as unassigned again.');
 });

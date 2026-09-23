@@ -113,6 +113,13 @@ function HealthLadder({ install }: { install: InstallSummary }) {
       {health.overdue && <Badge variant="soft-warning" title={`no contact since ${when(health.last_contact_at)}`}>overdue · expected every {schedule.effective_cadence_minutes} min</Badge>}
       {schedule.pending && <Badge variant="soft-warning" title={`installed ${schedule.installed_interval_minutes ?? '?'} min, desired ${schedule.desired_interval_minutes} min`}>cadence pending</Badge>}
       {capabilities.current && capabilities.previous_digest && <Badge variant="soft-info" title={`previous build ${capabilities.previous_digest.slice(0, 12)}; changed ${when(capabilities.changed_at)}`}>build changed {when(capabilities.changed_at)}</Badge>}
+      {install.names.labels === 'sent' && <Badge variant="soft-info" title="readable tool, agent and project names arrive beside their hashes">Names: sent</Badge>}
+      {install.names.labels === 'needs_update' && <Badge variant="outline" title="this build sends hashes only; names and app projects need companion 2.2.0">Needs companion 2.2.0</Badge>}
+      {install.names.labels !== 'not_applicable' && (
+        <Badge variant={install.names.deferrals_8d > 0 ? 'soft-warning' : 'outline'} title="names or project records the server could not apply in the last eight days; the companion retries them">
+          {install.names.deferrals_8d} deferred · 8 days
+        </Badge>
+      )}
     </div>
   );
 }

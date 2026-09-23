@@ -57,8 +57,8 @@ A failed request with no model-usage evidence is not a model call. A failed or c
 
 | Metric | Definition | Unit and counting rule |
 | --- | --- | --- |
-| Project tokens | Canonical execution tokens whose stable native or local project identity maps through the project registry to a named project. | Tokens and share of the selected canonical total. Machine paths and worktrees may map to one project. |
-| Unassigned-project tokens | Activity with stable project/path identity but no registry mapping. | Tokens. This is evidence-present but mapping-missing, separate from Unknown and No project. |
+| Project tokens | Canonical execution tokens whose session or folder the collecting install's companion placed in an app project it reported (`project.membership` naming a `project.catalog` entry); the session's placement wins over the folder's. A project is a group the owner created in an app, never a folder, and same-named app projects merge by `lower(btrim(name))`. | Tokens and share of the selected canonical total. Machine paths and worktrees may belong to one project. A project the app removed keeps its history, labelled "(removed)". |
+| Unassigned-project tokens | Activity the companion placed in no app project: its folder is outside every project root (`outside_roots`), it has no workspace folder (`no_folder`), or its membership names a project the server has not received. | Tokens. Separate from Unknown, No project, Chats / no project (the app's own chats with no project, `projectless`), and "<machine>: companion update needed" (an install that has never reported projects, `not_reported`). |
 | No-project tokens | Activity for which a source explicitly states that no project applies. | Tokens. Separate from unknown. |
 | Unknown-project tokens | Activity without sufficient project evidence. | Tokens. Included in the overall total and attribution denominator. |
 | Knowledge accesses | Tool invocations whose recorded connector identity or supported path argument resolves against the knowledge-source configuration most recently applied by the collecting install, named by the row's `configuration_version`. | Per-source invocation count. Working context (the line's `cwd` or a call's `workdir`) only resolves a relative argument and is not access by itself. One invocation can access several sources, so per-source counts may overlap. Rows an install classified under an earlier configuration are shown separately, never folded into the current count. |
@@ -102,13 +102,13 @@ The parent issues spawn `s1`. Child `a1` starts, makes four model calls, pauses,
 
 ### Project states
 
-Ten calls belong to mapped working directories for Project Atlas, two carry stable but unmapped path identities, two explicitly have no project, and three old calls carry no working-directory or native-project evidence.
+Ten calls belong to sessions or working directories the companion placed in the app project Project Atlas, two carry working directories outside every project root, two explicitly have no project, and three old calls come from an install that has reported projects but carry no membership for their folder or session.
 
 - Project Atlas receives the tokens from its ten calls.
-- Unassigned project receives the tokens from two calls and reports missing registry mapping.
+- Unassigned project receives the tokens from two calls (`outside_roots`).
 - No project receives the tokens from two calls.
 - Unknown project receives the tokens from three calls.
-- The project card reports evidence coverage and registry-mapping coverage separately.
+- The project card reports evidence coverage and app-project placement separately.
 
 ### Coarse and detailed overlap
 
@@ -201,7 +201,7 @@ The display timezone is **America/Chicago** initially. Store and join timestamps
 
 The Tokens filter bar shows time, accounts, and projects. More filters contains provider, model, effort, machine/source, surface, and main/subagent scope when those dimensions have usable coverage. Selecting a filter never causes an unfilterable snapshot to be substituted as if it matched.
 
-Within one dimension selected values are ORed; dimensions are ANDed. Unfiltered totals include Unknown. Selecting named values excludes Unknown and reports the excluded amount; selecting Unknown matches a supported field whose value is unknown. A source that cannot represent the dimension is unfilterable rather than an Unknown match. Unassigned project, No project, and Unknown project are separate selectable buckets. A provider workspace/project dimension is not renamed as the app's conversation Project without a verified mapping.
+Within one dimension selected values are ORed; dimensions are ANDed. Unfiltered totals include Unknown. Selecting named values excludes Unknown and reports the excluded amount; selecting Unknown matches a supported field whose value is unknown. A source that cannot represent the dimension is unfilterable rather than an Unknown match. Unassigned project, No project, Chats / no project, companion update needed (all machines, or one machine from its own row), and Unknown project are separate selectable buckets; selecting a card row never selects more than that row shows. A provider workspace/project dimension is not renamed as the app's conversation Project without a verified mapping.
 
 Account/provider selection can carry to Allowances. Project, model, effort, and agent filters do not narrow pooled allowance meters. A history-range control changes chart history, not the current allowance observation.
 
@@ -224,8 +224,8 @@ Each section reports coverage for the selected canonical headline population, no
 | Exclusive composition | Canonical tokens assigned to exclusive categories | Canonical observed total tokens |
 | Observed request detail | Canonical tokens (and separately calls) linked to accepted request-detail records, including an incomplete slice | Canonical execution tokens (and calls) eligible for request collection |
 | Request replacement readiness | Canonical tokens (and separately calls) in slices declared complete and reconciled at request level | Canonical execution tokens (and calls) eligible for request collection |
-| Project evidence | Canonical eligible tokens with a stable mapped/unassigned project identity or explicit No project | Canonical tokens in sources that could provide project evidence |
-| Project registry mapping | Project-evidenced tokens mapped to a named Project | Canonical tokens carrying a stable project/path identity |
+| Project evidence | Canonical eligible tokens whose project state is anything but Unknown: a named project, No project, Chats / no project, Unassigned, or companion update needed | Canonical tokens in sources that could provide project evidence |
+| App-project placement | Tokens placed in a named app project | Tokens placed in a named app project or Unassigned (the companion reported a membership that is not a projectless chat) |
 | Agent attribution | Canonical eligible tokens assigned to main or distinct child identity | Canonical tokens in sources that could provide agent evidence |
 | Tool detection | Eligible source-period events scanned by a parser that completely supports tool evidence | All events in tool-capable source coverage, including tool-only/orphan events |
 | Tool caller/outcome | Reported invocations with supported caller/outcome respectively | Reported tool invocations |

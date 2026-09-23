@@ -69,6 +69,47 @@ Copy-Item .\target\release\observatory.exe $companionExe -Force
 
 `service install` is intentionally repeated after replacing the binary: it refreshes the task command and cadence, reads the task back, and immediately reports the new build's capabilities. The first run after a parser-generation change replays retained source files and can take longer than a normal hourly run.
 
+### Upgrading to 2.2.0: back up, gate, then install
+
+Companion 2.2.0 adds readable names beside the hashes, the projects you create in the Codex app, and nested Codex MCP calls (see [usage coverage P13](usage-coverage.md#p13-app-projects-and-readable-names)). Its labels can only name hashes computed under the salt the state database holds, so **back up the state database before every upgrade**; the backup carries the salt (`meta.privacy_salt`). The server migrations `20260923090000` to `20260923090300` and the server deploy go first; a 2.1.0 companion keeps working against them and its machine shows "companion update needed" under Projects until it upgrades.
+
+1. Pause the scheduled task, keep the old binary, and back up the state database with SQLite's own backup (the file is in WAL mode, so a plain file copy is not a backup):
+
+   The companion opens its state at `<config-dir>/<install_id>.sqlite3`, with `install_id` taken from `companion.json`, so derive the path rather than globbing for it:
+
+   ```powershell
+   $installId = (Get-Content (Join-Path $companionDir 'companion.json') -Raw | ConvertFrom-Json).install_id
+   $state = Join-Path $companionDir "$installId.sqlite3"
+   sqlite3 $state ".backup '$state.before-2.2.0'"
+   ```
+
+2. Build two copies in a scratch config directory and record the cutoff, the `finished_at` of the last run in `runs`. The dry-run copy must carry the same `<install_id>.sqlite3` name, because that is the only file `run --config-dir $scratch` opens; under any other name the dry run creates a fresh, empty database and the gate checks an untouched copy. The baseline copy is never run; it holds what the server received and is what lets the gate check that no tool row changed its calling request. `VACUUM INTO` refuses an existing file, so clear old copies first:
+
+   ```powershell
+   $scratch = Join-Path $env:TEMP 'observatory-gate'; New-Item -ItemType Directory -Force $scratch | Out-Null
+   $gateState = Join-Path $scratch "$installId.sqlite3"
+   $baseline = Join-Path $scratch 'baseline.sqlite3'
+   Remove-Item $gateState, "$gateState-wal", "$gateState-shm", $baseline -ErrorAction SilentlyContinue
+   sqlite3 $state "VACUUM INTO '$gateState'"
+   sqlite3 $state "VACUUM INTO '$baseline'"
+   Copy-Item (Join-Path $companionDir 'companion.json') $scratch
+   $cutoff = sqlite3 $state "SELECT max(finished_at) FROM runs"
+   ```
+
+3. With the 2.2.0 build, run the dry run on the scratch directory, then the gate on that same file with the baseline:
+
+   ```powershell
+   & $newExe --config-dir $scratch run --dry-run --offline
+   & $newExe upgrade-gate --state $gateState --baseline $baseline --cutoff $cutoff
+   & $newExe --config-dir $scratch projects --apps
+   ```
+
+   `$newExe` is the 2.2.0 build, for example `.\target\release\observatory.exe`. **Any failure aborts the install**: restore the task and stop. The gate allows exactly the ledger changes the release intends (PowerShell and NotebookRead tool events gaining their name, and new nested MCP tool events) and fails on any request or agent revision, any older record newly keyed, or, because `--baseline` is given, any tool row whose calling request changed. Without `--baseline` that last check does not run and the gate's JSON shows `caller_request_changes: null`, so check that it is a number (normally `0`). Also check that the gate's `pending_side` lists the new side record types (`name.label`, `project.catalog`, `project.membership`) with the production settings (`hashed_custom`, `hashed`): an empty `pending_side` means the dry run did not touch this file. `projects --apps` reads the same dry-run file and prints counts only (projects, roots, threads, requests by resolution, forked rollouts, unresolved reasons) for comparison with the owner's expectations.
+4. Only then replace the binary and run `service install`, `run` and `doctor` as in the update steps above. The first run replays retained rollouts under the lock and can take several minutes.
+5. Check Settings > Companion: the machine shows "Names: sent" and a deferral count of 0; Settings > Projects lists the app projects and no longer shows the machine under "Machine not upgraded".
+
+After the server deploy, re-run the backfill statement at the end of `supabase/migrations/20260923090200_tool_invocation_parent.sql` once (it is idempotent; `refreshAddedToolColumns()` in `lib/usage-canonical.ts` runs the same statement): tool rows ingested between `supabase db push` and the deploy were written by the old code without `parent_invocation_key`.
+
 ## macOS install, update, and run
 
 Use the same config directory for every command. An update must reuse the existing directory; it must not pair a second install.
@@ -100,6 +141,28 @@ companion_dir="$HOME/.config/personal-hub/companion"
 "$companion_exe" --config-dir "$companion_dir" run
 "$companion_exe" --config-dir "$companion_dir" doctor
 ```
+
+Before upgrading a Mac to 2.2.0, follow the backup and gate steps above. The state file is `<config-dir>/<install_id>.sqlite3`, and the dry-run copy must keep that exact name inside the scratch directory, or the dry run opens a fresh database and the gate checks an untouched copy:
+
+```bash
+companion_dir="$HOME/.config/personal-hub/companion"
+install_id="$(sed -n 's/.*"install_id" *: *"\([^"]*\)".*/\1/p' "$companion_dir/companion.json")"
+state="$companion_dir/$install_id.sqlite3"
+sqlite3 "$state" ".backup '$state.before-2.2.0'"
+
+scratch="$(mktemp -d)"
+sqlite3 "$state" "VACUUM INTO '$scratch/$install_id.sqlite3'"
+sqlite3 "$state" "VACUUM INTO '$scratch/baseline.sqlite3'"
+cp "$companion_dir/companion.json" "$scratch/"
+cutoff="$(sqlite3 "$state" "SELECT max(finished_at) FROM runs")"
+
+new_exe=/path/to/2.2.0/observatory
+"$new_exe" --config-dir "$scratch" run --dry-run --offline
+"$new_exe" upgrade-gate --state "$scratch/$install_id.sqlite3" --baseline "$scratch/baseline.sqlite3" --cutoff "$cutoff"
+"$new_exe" --config-dir "$scratch" projects --apps
+```
+
+Paste back only the counts-only output of `projects --apps` and the gate, and check the gate's `caller_request_changes` is a number, not `null`.
 
 The LaunchAgent installed by `service install` pins both that executable and `--config-dir`. Keep the checkout update (`git pull`, merge, or branch switch) separate from the install command so local changes are reviewed before the binary is replaced. The first upgraded run may be slow while newer parsers replay retained Claude and Codex histories; wait for its JSON result and require `"ok": true`, no retained outbox, a non-pending schedule, and no unexplained `failed` or `partial` state from an enabled execution adapter before considering the update complete.
 

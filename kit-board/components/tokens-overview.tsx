@@ -43,11 +43,14 @@ export type TokensOverviewProps = {
 
 /** The Tokens overview; headline cards can render before request and tool sections finish. */
 export function TokensOverview({ filters, onFiltersChange, result, vocabulary, error, stale, loading, onRetry, now, status, pending }: TokensOverviewProps) {
-  // Agent chips take their names from the result itself: the registry has no agent vocabulary, and a drill-down chip should read like the row that made it.
+  // Agent chips take their names from the result itself: an agent filter value is an opaque group id, and a drill-down chip should read like the row that made it.
   const labels = useMemo(() => ({
-    accounts: Object.fromEntries(vocabulary.accounts.map(o => [o.value, o.label])), projects: Object.fromEntries(vocabulary.projects.map(o => [o.value, o.label])),
+    accounts: Object.fromEntries(vocabulary.accounts.map(o => [o.value, o.label])),
+    // A machine's "companion update needed" filter is named by the row that applies it.
+    projects: { ...Object.fromEntries((result?.projects.rows ?? []).filter(row => row.state === 'not_reported' && row.label).map(row => [row.filter_value, row.label as string])),
+      ...Object.fromEntries(vocabulary.projects.map(o => [o.value, o.label])) },
     machines: Object.fromEntries(vocabulary.machines.map(o => [o.value, o.label])),
-    agents: Object.fromEntries((result?.agents.rows ?? []).filter(row => row.agent_key).map(row => [row.agent_key as string, agentLabel(row)])),
+    agents: Object.fromEntries((result?.agents.rows ?? []).filter(row => row.group_id).map(row => [row.group_id, agentLabel(row)])),
   }), [vocabulary, result]);
   const composition = result ? compositionView(result.headline) : null;
   const summary = result ? seriesSummary(result.series.points) : null;
@@ -193,7 +196,7 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
               ) : null}
               {result.unsupported.length ? <ul className="grid gap-1 text-xs" data-testid="unsupported">{result.unsupported.map(note => <li key={note} className="text-warning">{note}</li>)}</ul> : null}
               {result.notes.length ? <ul className="text-muted-foreground grid gap-1 text-xs" data-testid="notes">{result.notes.map(note => <li key={note}>{note}</li>)}</ul> : null}
-              <p className="text-muted-foreground text-xs">Local logs do not cover browser or cloud conversations; those move account allowances without exposing tokens here. Configure collectors and project names under <Link href="/settings" className="underline underline-offset-4">Settings</Link>.</p>
+              <p className="text-muted-foreground text-xs">Local logs do not cover browser or cloud conversations; those move account allowances without exposing tokens here. Configure collectors and see how requests map to your app projects under <Link href="/settings" className="underline underline-offset-4">Settings</Link>.</p>
             </div>
           </Card>
         </>
@@ -202,6 +205,7 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
   );
 }
 
+/** `GET /api/usage-projects`: the app projects the Tokens filter offers, `{ id, label }` each. */
 type ProjectsRegistry = { projects: { id: string; label: string }[] };
 type SectionPending = { requests: boolean; tools: boolean; knowledge: boolean };
 
