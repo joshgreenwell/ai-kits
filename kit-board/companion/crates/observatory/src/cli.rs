@@ -37,8 +37,12 @@ pub enum Command {
     Hook(HookArgs),
     /// Last run summary, outbox, receipts, and schedule state.
     Status,
-    /// Working directories this install has seen and their project hashes (local only).
-    Projects,
+    /// Working directories this install has seen and their project hashes (local only);
+    /// `--apps` prints the app-project resolution as counts instead.
+    Projects(ProjectsArgs),
+    /// Checks a dry-run copy of the state before an upgrade: fails when the new build would
+    /// revise or duplicate ledger history beyond what the release allows.
+    UpgradeGate(UpgradeGateArgs),
     /// Named knowledge sources (vaults) this install classifies tool calls against, with
     /// their local roots (local only); `add` and `remove` edit companion.json.
     Resources(ResourcesArgs),
@@ -91,6 +95,33 @@ pub struct RunArgs {
     /// Do not contact the Observatory for the config document; use the cache or defaults.
     #[arg(long)]
     pub offline: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ProjectsArgs {
+    /// Print how app projects, folders, and sessions resolve, as counts; no paths.
+    #[arg(long)]
+    pub apps: bool,
+    /// With --apps: also print the titles of a few threads placed only by a root prefix.
+    #[arg(long, requires = "apps")]
+    pub samples: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct UpgradeGateArgs {
+    /// The dry-run state copy to check (after `run --dry-run --offline` on it).
+    #[arg(long, value_name = "FILE")]
+    pub state: PathBuf,
+    /// The last real run's `finished_at`. Without --baseline, activity before it is
+    /// history (strict: activity that run had not read yet also counts); with
+    /// --baseline it is reported only.
+    #[arg(long, value_name = "RFC3339")]
+    pub cutoff: String,
+    /// A copy taken before the dry run, holding what the previous build produced and
+    /// the server received. History is then what that build had read, not a time;
+    /// it also enables the request-membership check and the per-field breakdown.
+    #[arg(long, value_name = "FILE")]
+    pub baseline: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]

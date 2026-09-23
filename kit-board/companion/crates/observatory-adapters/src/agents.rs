@@ -10,6 +10,7 @@ use observatory_contract::{
     IdentityBasis, Nullable, ParentIdentityBasis, Provider, Record, Sha256Hex, Stamp, Text, ToolName, Uuid,
 };
 use observatory_core::adapter::record_id;
+use observatory_core::builtins::{CLAUDE_BUILTIN_AGENTS, CODEX_BUILTIN_AGENTS};
 use observatory_core::privacy::{PrivacyKey, agent_name_hash};
 use observatory_core::pyjson::digest;
 use observatory_core::state::{AgentEventRow, AgentProfileRow, State, StateError};
@@ -180,9 +181,7 @@ pub fn invocation_key(provider: Provider, account: &str, provider_id: &str) -> S
 
 pub fn classify_claude(name: Option<&str>) -> &'static str {
     match name {
-        Some(
-            "general-purpose" | "Explore" | "Plan" | "claude-code-guide" | "statusline-setup" | "claude",
-        ) => "builtin",
+        Some(name) if CLAUDE_BUILTIN_AGENTS.contains(&name) => "builtin",
         Some(_) => "custom",
         None => "unknown",
     }
@@ -190,7 +189,7 @@ pub fn classify_claude(name: Option<&str>) -> &'static str {
 
 pub fn classify_codex(role: Option<&str>) -> &'static str {
     match role {
-        Some("codex-auto-review") => "builtin",
+        Some(role) if CODEX_BUILTIN_AGENTS.contains(&role) => "builtin",
         Some(_) => "custom",
         None => "builtin",
     }

@@ -64,6 +64,21 @@ fn statusline_report(ctx: &observatory_core::adapter::RunContext) -> Value {
     })
 }
 
+/// Side records the server deferred (it could not apply them yet), counted per
+/// record type, beside what the last run's side-record build reported.
+fn side_record_report(ctx: &observatory_core::adapter::RunContext) -> Value {
+    let Ok(state) = State::open_read_only(&ctx.state_path) else { return Value::Null };
+    let deferred = state.deferred_counts().unwrap_or_default();
+    let last = state
+        .last_run()
+        .ok()
+        .flatten()
+        .and_then(|row| serde_json::from_str::<Value>(&row.summary).ok())
+        .map(|summary| summary["side_records"].clone())
+        .unwrap_or(Value::Null);
+    json!({ "deferred": deferred, "last_run": last })
+}
+
 /// Effective mode and reason per adapter; prerequisite and credential checks
 /// reported as coverage states. Prints booleans and codes, never a token or a
 /// path outside the configuration directory. `--offline` reads the cached
@@ -141,6 +156,7 @@ pub fn doctor(dir: &Path, args: DoctorArgs) -> CommandResult {
         "bindings": bindings,
         "adapters": rows,
         "claude_statusline": statusline_report(ctx),
+        "side_records": side_record_report(ctx),
         "schedule": service::status(&prepared.config.install_id).ok(),
         "v1_schedules": service::v1_schedules(),
     }));

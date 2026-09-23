@@ -38,21 +38,25 @@ pub use capabilities::{
 pub use config::{BindingInfo, CompanionInfo, ConfigDocument, InstallInfo};
 pub use coverage::{AdapterCoverage, CapabilityCoverage};
 pub use enums::{
-    AccessEvidenceBasis, AccessKind, Adapter, AgentClass, AgentEventKind, AllowanceKind, AllowanceUnit, Arch,
-    Basis, CapabilityDimension, CapabilityState, Channel, CompositionState, CoverageState, CursorState,
-    DetailCode, EntryKind, EventOutcome, ExecutionHost, IdentityBasis, InstallKind, MoneyUnit,
-    ParentIdentityBasis, Platform, ProjectBasis, Provider, Reader, RecordType, ReferenceKind,
-    RejectionReason, RequestOutcome, SessionIdentity, Surface, ToolClass, ToolEventKind, UnknownVariant,
+    AccessEvidenceBasis, AccessKind, Adapter, AgentClass, AgentEventKind, AgentRole, AllowanceKind,
+    AllowanceUnit, Arch, Basis, CapabilityDimension, CapabilityState, Channel, CompositionState,
+    CoverageState, CursorState, DetailCode, EntryKind, EventOutcome, ExecutionHost, IdentityBasis,
+    InstallKind, LabelKind, MembershipKind, MembershipResolution, MoneyUnit, ParentIdentityBasis, Platform,
+    ProjectApp, ProjectBasis, ProjectState, Provider, Reader, RecordType, ReferenceKind, RejectionReason,
+    RequestOutcome, SessionIdentity, Surface, ToolClass, ToolEventKind, UnknownVariant,
 };
 pub use envelope::{Bucket, BucketEntry, Envelope, Run, Violation};
 pub use newtypes::{
-    AccountId, Amount, Code, Counter, IsoDate, Lit, MAX_SAFE_INTEGER, MachineId, MeterKey, ModePath,
-    Nullable, Real, Sha256Hex, Stamp, Text, ToolName, Uuid, ValueError,
+    AccountId, Amount, Code, Counter, DisplayText, IsoDate, LabelKey, LabelText, Lit, MAX_SAFE_INTEGER,
+    MachineId, MeterKey, ModePath, NormalizedText, Nullable, ProjectName, Real, Sha256Hex, Stamp, Text,
+    ToolName, UNTITLED_PROJECT, Uuid, ValueError, is_forbidden_display_char, is_normalized_display_text,
+    normalize_display_text,
 };
 pub use records::{
     AccountUsageBucket, ActivityRequest, AgentAttribution, AgentEvent, AllowanceReading, Dimensions,
-    Measures, MoneyEntry, PricingEvidence, ProjectAttribution, Record, Reference, ResourceAccess,
-    TokenAccounting, Tokens, ToolCount, ToolEvent, ToolIdentity,
+    Measures, MoneyEntry, NameLabel, Position, PricingEvidence, ProjectAttribution, ProjectCatalog,
+    ProjectMembership, Record, Reference, ResourceAccess, TokenAccounting, Tokens, ToolCount, ToolEvent,
+    ToolIdentity,
 };
 pub use settings::{CollectionSettings, Gate, InstallOverride};
 

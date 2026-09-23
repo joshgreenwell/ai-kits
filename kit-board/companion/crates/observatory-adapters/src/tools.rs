@@ -14,9 +14,10 @@ use observatory_contract::{
     ToolClass, ToolCount, ToolEvent, ToolEventKind, ToolIdentity, ToolName, Uuid,
 };
 use observatory_core::adapter::record_id;
+use observatory_core::builtins::{CLAUDE_BUILTIN_TOOLS, CODEX_BUILTIN_NAMESPACES, CODEX_BUILTIN_TOOLS};
 use observatory_core::privacy::{PrivacyKey, tool_name_hash, tool_namespace_hash};
 use observatory_core::pyjson::digest;
-use observatory_core::state::{State, StateError, ToolEventRow};
+use observatory_core::state::{ORIGIN_DIRECT, ORIGIN_NESTED_MCP, State, StateError, ToolEventRow};
 use serde_json::json;
 
 const RAW_NAME_LIMIT: usize = 400;
@@ -70,59 +71,15 @@ fn bounded_raw(value: Option<&str>) -> (Option<String>, bool) {
 }
 
 fn claude_builtin(name: &str) -> bool {
-    matches!(
-        name,
-        "Agent"
-            | "AskUserQuestion"
-            | "Bash"
-            | "BashOutput"
-            | "Edit"
-            | "EnterPlanMode"
-            | "ExitPlanMode"
-            | "Glob"
-            | "Grep"
-            | "KillShell"
-            | "LS"
-            | "MultiEdit"
-            | "NotebookEdit"
-            | "NotebookRead"
-            | "PowerShell"
-            | "Read"
-            | "Skill"
-            | "SlashCommand"
-            | "Task"
-            | "TaskOutput"
-            | "TaskStop"
-            | "TodoWrite"
-            | "WebFetch"
-            | "WebSearch"
-            | "Write"
-    )
+    CLAUDE_BUILTIN_TOOLS.contains(&name)
 }
 
 fn codex_builtin_name(name: &str) -> bool {
-    matches!(
-        name,
-        "apply_patch"
-            | "create_goal"
-            | "exec"
-            | "exec_command"
-            | "get_goal"
-            | "local_shell"
-            | "request_user_input"
-            | "request_user_input_async"
-            | "shell_command"
-            | "update_goal"
-            | "update_plan"
-            | "view_image"
-            | "wait"
-            | "web_search"
-            | "write_stdin"
-    )
+    CODEX_BUILTIN_TOOLS.contains(&name)
 }
 
 fn codex_builtin_namespace(namespace: &str) -> bool {
-    matches!(namespace, "clock" | "codex_app" | "collaboration" | "image_gen" | "multi_agent_v1" | "web")
+    CODEX_BUILTIN_NAMESPACES.contains(&namespace)
 }
 
 pub fn claude_identity(key: &PrivacyKey, raw_name: Option<&str>) -> ToolEvidence {
@@ -168,6 +125,26 @@ pub fn codex_identity(
     }
 }
 
+/// The identity of an MCP call a Codex `exec` script made (`item_completed`
+/// `McpToolCall`): class `mcp`, the namespace the MCP server's name or, for a
+/// connector app, `codex_apps:<appName>`, and the name its `actionName` when
+/// present, else its `tool`. Hashed like every other MCP name.
+pub fn nested_mcp_identity(
+    key: &PrivacyKey,
+    server: Option<&str>,
+    app_name: Option<&str>,
+    action_name: Option<&str>,
+    tool: Option<&str>,
+) -> ToolEvidence {
+    let app_name = app_name.map(str::trim).filter(|value| !value.is_empty());
+    let namespace = match app_name {
+        Some(app) => Some(format!("codex_apps:{app}")),
+        None => server.map(str::to_owned),
+    };
+    let name = action_name.map(str::trim).filter(|value| !value.is_empty()).or(tool);
+    ToolEvidence::new(key, "mcp", name, namespace.as_deref())
+}
+
 pub fn result_key(provider: Provider, account: &str, provider_id: &str) -> String {
     digest(&json!(["tool-result", provider.as_str(), account, provider_id])).as_str().to_owned()
 }
@@ -185,6 +162,67 @@ pub fn save_invocation(
     parent_invocation_key: Option<&str>,
     identity: &ToolEvidence,
     outcome: &str,
+) -> Result<(), StateError> {
+    save_invocation_from(
+        state,
+        binding,
+        invocation_key,
+        timestamp,
+        session_hash,
+        caller_request_key,
+        caller_agent_key,
+        caller_is_subagent,
+        parent_invocation_key,
+        identity,
+        outcome,
+        ORIGIN_DIRECT,
+    )
+}
+
+/// `save_invocation` for an MCP call a Codex `exec` script made: never part of a
+/// request's own tool summary, always linked to the `exec` that ran it.
+#[allow(clippy::too_many_arguments)]
+pub fn save_nested_invocation(
+    state: &State,
+    binding: &str,
+    invocation_key: &str,
+    timestamp: &str,
+    session_hash: Option<&str>,
+    caller_agent_key: Option<&str>,
+    caller_is_subagent: bool,
+    parent_invocation_key: &str,
+    identity: &ToolEvidence,
+) -> Result<(), StateError> {
+    save_invocation_from(
+        state,
+        binding,
+        invocation_key,
+        timestamp,
+        session_hash,
+        None,
+        caller_agent_key,
+        caller_is_subagent,
+        Some(parent_invocation_key),
+        identity,
+        "unknown",
+        ORIGIN_NESTED_MCP,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn save_invocation_from(
+    state: &State,
+    binding: &str,
+    invocation_key: &str,
+    timestamp: &str,
+    session_hash: Option<&str>,
+    caller_request_key: Option<&str>,
+    caller_agent_key: Option<&str>,
+    caller_is_subagent: bool,
+    parent_invocation_key: Option<&str>,
+    identity: &ToolEvidence,
+    outcome: &str,
+    origin: &str,
 ) -> Result<(), StateError> {
     state.upsert_tool_event(
         binding,
@@ -205,6 +243,7 @@ pub fn save_invocation(
             namespace_hash: identity.namespace_hash.clone(),
             outcome: outcome.to_owned(),
             name_truncated: identity.name_truncated,
+            origin: origin.to_owned(),
         },
     )
 }
@@ -220,6 +259,60 @@ pub fn save_result(
     session_hash: Option<&str>,
     caller_agent_key: Option<&str>,
     caller_is_subagent: bool,
+) -> Result<(), StateError> {
+    save_result_from(
+        state,
+        binding,
+        id,
+        invocation_key,
+        timestamp,
+        outcome,
+        session_hash,
+        caller_agent_key,
+        caller_is_subagent,
+        ORIGIN_DIRECT,
+    )
+}
+
+/// `save_result` for a nested MCP call.
+#[allow(clippy::too_many_arguments)]
+pub fn save_nested_result(
+    state: &State,
+    binding: &str,
+    id: &str,
+    invocation_key: &str,
+    timestamp: &str,
+    outcome: &str,
+    session_hash: Option<&str>,
+    caller_agent_key: Option<&str>,
+    caller_is_subagent: bool,
+) -> Result<(), StateError> {
+    save_result_from(
+        state,
+        binding,
+        id,
+        invocation_key,
+        timestamp,
+        outcome,
+        session_hash,
+        caller_agent_key,
+        caller_is_subagent,
+        ORIGIN_NESTED_MCP,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn save_result_from(
+    state: &State,
+    binding: &str,
+    id: &str,
+    invocation_key: &str,
+    timestamp: &str,
+    outcome: &str,
+    session_hash: Option<&str>,
+    caller_agent_key: Option<&str>,
+    caller_is_subagent: bool,
+    origin: &str,
 ) -> Result<(), StateError> {
     let invocation = state.tool_invocation(binding, invocation_key)?;
     state.upsert_tool_event(
@@ -248,6 +341,7 @@ pub fn save_result(
             namespace_hash: invocation.as_ref().and_then(|row| row.namespace_hash.clone()),
             outcome: outcome.to_owned(),
             name_truncated: invocation.as_ref().is_some_and(|row| row.name_truncated),
+            origin: origin.to_owned(),
         },
     )
 }
@@ -330,7 +424,11 @@ impl<'a> ToolIndex<'a> {
     pub fn new(rows: &'a [ToolEventRow]) -> Self {
         let mut by_request: HashMap<&'a str, Vec<&'a ToolEventRow>> = HashMap::new();
         for row in rows {
+            // Only calls the model made count toward a request; a nested MCP call made
+            // inside an `exec` script is the exec's detail, not another request tool. A
+            // direct call may still carry a parent (Claude `parent_tool_use_id`).
             if row.event_kind == "invocation"
+                && row.origin == ORIGIN_DIRECT
                 && let Some(request_key) = row.caller_request_key.as_deref()
             {
                 by_request.entry(request_key).or_default().push(row);
@@ -513,6 +611,7 @@ mod tests {
             namespace_hash: identity.namespace_hash.clone(),
             outcome: "succeeded".into(),
             name_truncated: false,
+            origin: "direct".into(),
         }
     }
 

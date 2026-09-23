@@ -58,3 +58,19 @@ fn invalid_documents_are_rejected_with_their_labeled_reason() {
         );
     }
 }
+
+#[test]
+fn the_labels_feature_is_sent_only_when_true() {
+    let path = corpus().join("valid").join("default-build.json");
+    let original: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(original["features"].get("labels").is_none(), "a pre-2.2.0 document has no labels flag");
+    let mut document: CapabilitiesDocument = serde_json::from_value(original.clone()).unwrap();
+    assert!(!document.features.labels, "absent reads as false");
+    assert_eq!(serde_json::to_value(&document).unwrap(), original, "false is not written");
+
+    document.features.labels = true;
+    let produced = serde_json::to_value(&document).unwrap();
+    assert_eq!(produced["features"]["labels"], Value::Bool(true));
+    let again: CapabilitiesDocument = serde_json::from_value(produced).unwrap();
+    assert!(again.features.labels);
+}

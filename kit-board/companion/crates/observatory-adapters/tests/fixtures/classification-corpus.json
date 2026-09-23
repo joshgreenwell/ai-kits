@@ -1,0 +1,337 @@
+{
+ "note": "Sanitized: product and harness names kept; every other name is a synthetic stand-in of the same form.",
+ "tools": [
+  {
+   "name": "Agent",
+   "namespace": null
+  },
+  {
+   "name": "Artifact",
+   "namespace": null
+  },
+  {
+   "name": "Bash",
+   "namespace": null
+  },
+  {
+   "name": "Edit",
+   "namespace": null
+  },
+  {
+   "name": "Glob",
+   "namespace": null
+  },
+  {
+   "name": "Grep",
+   "namespace": null
+  },
+  {
+   "name": "ListAgents",
+   "namespace": null
+  },
+  {
+   "name": "Monitor",
+   "namespace": null
+  },
+  {
+   "name": "PowerShell",
+   "namespace": null
+  },
+  {
+   "name": "Read",
+   "namespace": null
+  },
+  {
+   "name": "SendMessage",
+   "namespace": null
+  },
+  {
+   "name": "SendUserFile",
+   "namespace": null
+  },
+  {
+   "name": "Skill",
+   "namespace": null
+  },
+  {
+   "name": "StructuredOutput",
+   "namespace": null
+  },
+  {
+   "name": "TaskOutput",
+   "namespace": null
+  },
+  {
+   "name": "TaskStop",
+   "namespace": null
+  },
+  {
+   "name": "ToolSearch",
+   "namespace": null
+  },
+  {
+   "name": "WebFetch",
+   "namespace": null
+  },
+  {
+   "name": "WebSearch",
+   "namespace": null
+  },
+  {
+   "name": "Workflow",
+   "namespace": null
+  },
+  {
+   "name": "Write",
+   "namespace": null
+  },
+  {
+   "name": "apply_patch",
+   "namespace": null
+  },
+  {
+   "name": "exec",
+   "namespace": null
+  },
+  {
+   "name": "exec_command",
+   "namespace": null
+  },
+  {
+   "name": "followup_task",
+   "namespace": "collaboration"
+  },
+  {
+   "name": "interrupt_agent",
+   "namespace": "collaboration"
+  },
+  {
+   "name": "list_agents",
+   "namespace": "collaboration"
+  },
+  {
+   "name": "request_user_input",
+   "namespace": null
+  },
+  {
+   "name": "request_user_input_async",
+   "namespace": null
+  },
+  {
+   "name": "send_message",
+   "namespace": "collaboration"
+  },
+  {
+   "name": "sleep",
+   "namespace": "clock"
+  },
+  {
+   "name": "spawn_agent",
+   "namespace": "collaboration"
+  },
+  {
+   "name": "synthetic-tool-001",
+   "namespace": "synthetic-namespace-001"
+  },
+  {
+   "name": "synthetic-tool-002",
+   "namespace": "synthetic-namespace-002"
+  },
+  {
+   "name": "synthetic-tool-003",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-004",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-005",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-006",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-007",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-008",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-009",
+   "namespace": "synthetic-namespace-004"
+  },
+  {
+   "name": "synthetic-tool-010",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-011",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-012",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-013",
+   "namespace": "synthetic-namespace-001"
+  },
+  {
+   "name": "synthetic-tool-014",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-015",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-016",
+   "namespace": "mcp__synthetic-namespace-005"
+  },
+  {
+   "name": "synthetic-tool-017",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-018",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-019",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-020",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-021",
+   "namespace": "synthetic-namespace-003"
+  },
+  {
+   "name": "synthetic-tool-022",
+   "namespace": "synthetic-namespace-006"
+  },
+  {
+   "name": "wait",
+   "namespace": null
+  },
+  {
+   "name": "wait_agent",
+   "namespace": "collaboration"
+  }
+ ],
+ "claude_raw_names": [
+  "",
+  " ",
+  "Agent",
+  "Artifact",
+  "Bash",
+  "Edit",
+  "Glob",
+  "Grep",
+  "ListAgents",
+  "Monitor",
+  "NotebookRead",
+  "PowerShell",
+  "Read",
+  "Read ",
+  "SendMessage",
+  "SendUserFile",
+  "Skill",
+  "StructuredOutput",
+  "Task",
+  "TaskOutput",
+  "TaskStop",
+  "ToolSearch",
+  "WebFetch",
+  "WebSearch",
+  "Workflow",
+  "Write",
+  "apply_patch",
+  "exec",
+  "exec_command",
+  "local_shell",
+  "mcp__",
+  "mcp____x",
+  "mcp__clock__sleep",
+  "mcp__collaboration__followup_task",
+  "mcp__collaboration__interrupt_agent",
+  "mcp__collaboration__list_agents",
+  "mcp__collaboration__send_message",
+  "mcp__collaboration__spawn_agent",
+  "mcp__collaboration__wait_agent",
+  "mcp__solo",
+  "mcp__synthetic-namespace-001__synthetic-tool-001",
+  "mcp__synthetic-namespace-001__synthetic-tool-013",
+  "mcp__synthetic-namespace-002__synthetic-tool-002",
+  "mcp__synthetic-namespace-003__synthetic-tool-003",
+  "mcp__synthetic-namespace-003__synthetic-tool-004",
+  "mcp__synthetic-namespace-003__synthetic-tool-005",
+  "mcp__synthetic-namespace-003__synthetic-tool-006",
+  "mcp__synthetic-namespace-003__synthetic-tool-007",
+  "mcp__synthetic-namespace-003__synthetic-tool-008",
+  "mcp__synthetic-namespace-003__synthetic-tool-010",
+  "mcp__synthetic-namespace-003__synthetic-tool-011",
+  "mcp__synthetic-namespace-003__synthetic-tool-012",
+  "mcp__synthetic-namespace-003__synthetic-tool-014",
+  "mcp__synthetic-namespace-003__synthetic-tool-015",
+  "mcp__synthetic-namespace-003__synthetic-tool-017",
+  "mcp__synthetic-namespace-003__synthetic-tool-018",
+  "mcp__synthetic-namespace-003__synthetic-tool-019",
+  "mcp__synthetic-namespace-003__synthetic-tool-020",
+  "mcp__synthetic-namespace-003__synthetic-tool-021",
+  "mcp__synthetic-namespace-004__synthetic-tool-009",
+  "mcp__synthetic-namespace-006__synthetic-tool-022",
+  "read",
+  "request_user_input",
+  "request_user_input_async",
+  "wait",
+  "wait_agent",
+  "web_search"
+ ],
+ "agent_names": [
+  "",
+  "Explore ",
+  "claude-code-guide",
+  "custom-role",
+  "default",
+  "explorer",
+  "general-purpose",
+  "synthetic-agent-001",
+  "synthetic-agent-002",
+  "synthetic-agent-003",
+  "synthetic-agent-004",
+  "synthetic-agent-005",
+  "synthetic-agent-006",
+  "synthetic-agent-007",
+  "synthetic-agent-008",
+  "synthetic-agent-009",
+  "synthetic-agent-010",
+  "synthetic-agent-011",
+  "worker",
+  "workflow-subagent"
+ ],
+ "namespaces": [
+  "clock",
+  "codex_app",
+  "codex_apps:Synthetic",
+  "collaboration",
+  "functions",
+  "image_gen",
+  "mcp__synthetic",
+  "mcp__synthetic-namespace-005",
+  "multi_agent_v1",
+  "synthetic-namespace-001",
+  "synthetic-namespace-002",
+  "synthetic-namespace-003",
+  "synthetic-namespace-004",
+  "synthetic-namespace-006",
+  "web"
+ ]
+}

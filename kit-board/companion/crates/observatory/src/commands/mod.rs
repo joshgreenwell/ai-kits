@@ -11,6 +11,7 @@ mod settings;
 mod setup;
 mod status;
 mod statusline;
+mod upgrade_gate;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -116,7 +117,8 @@ pub fn dispatch(cli: Cli) -> CommandResult {
         Command::Statusline(args) => Ok(statusline::statusline(&dir, args)),
         Command::Hook(args) => Ok(hook::hook(&dir, args)),
         Command::Status => status::status(&dir),
-        Command::Projects => projects::projects(&dir),
+        Command::Projects(args) => projects::projects(&dir, args),
+        Command::UpgradeGate(args) => upgrade_gate::upgrade_gate(args),
         Command::Resources(args) => resources::resources(&dir, args),
         Command::Doctor(args) => doctor::doctor(&dir, args),
         Command::Settings(args) => settings::settings(&dir, args),

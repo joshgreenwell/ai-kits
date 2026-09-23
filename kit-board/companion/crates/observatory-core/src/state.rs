@@ -5,7 +5,7 @@
 //! migrated in place. Every table holds counters, hashes, checkpoints, and
 //! bounded raw observations; never conversation text.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io;
 use std::path::Path;
 use std::time::Duration;
@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use crate::privacy::{PrivacyKey, project_key, tool_name_hash, tool_namespace_hash};
 
-pub const SCHEMA_VERSION: &str = "8";
+pub const SCHEMA_VERSION: &str = "9";
 
 /// The local-only rejection mark on a queued `resource.access` record whose
 /// key or configuration token no longer matches this machine's configuration.
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS local_tool_events (binding_id TEXT NOT NULL, id TEXT 
   caller_is_subagent INTEGER NOT NULL DEFAULT 0, parent_invocation_key TEXT,
   class TEXT NOT NULL, name TEXT, name_hash TEXT, namespace TEXT, namespace_hash TEXT,
   outcome TEXT NOT NULL, name_truncated INTEGER NOT NULL DEFAULT 0,
-  change_generation INTEGER NOT NULL DEFAULT 0,
+  change_generation INTEGER NOT NULL DEFAULT 0, origin TEXT NOT NULL DEFAULT 'direct',
   PRIMARY KEY (binding_id, id));
 CREATE INDEX IF NOT EXISTS local_tool_events_invocation
   ON local_tool_events(binding_id, invocation_key, event_kind);
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS observations (record_id TEXT PRIMARY KEY, adapter TEX
   observed_at TEXT NOT NULL, payload TEXT NOT NULL, stored_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS records (record_id TEXT PRIMARY KEY, binding_id TEXT NOT NULL, adapter TEXT NOT NULL,
   record_type TEXT NOT NULL, semantic_key TEXT NOT NULL, content_hash TEXT NOT NULL, published_hash TEXT,
-  rejected_reason TEXT, record TEXT NOT NULL, updated_at TEXT NOT NULL);
+  rejected_reason TEXT, record TEXT NOT NULL, updated_at TEXT NOT NULL, deferred_at TEXT);
 CREATE INDEX IF NOT EXISTS records_pending ON records(rejected_reason, published_hash);
 CREATE TABLE IF NOT EXISTS cursor_emitted (binding_id TEXT NOT NULL, record_id TEXT NOT NULL,
   content_digest TEXT NOT NULL, emitted_at TEXT NOT NULL, PRIMARY KEY (binding_id, record_id));
@@ -114,6 +114,16 @@ CREATE TABLE IF NOT EXISTS outbox (hash TEXT PRIMARY KEY, payload TEXT NOT NULL,
 CREATE TABLE IF NOT EXISTS receipts (hash TEXT PRIMARY KEY, received_at TEXT NOT NULL, receipt TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT NOT NULL,
   summary TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS agent_labels (binding_id TEXT NOT NULL, agent_key TEXT NOT NULL, label TEXT NOT NULL,
+  role TEXT, source TEXT NOT NULL, PRIMARY KEY (binding_id, agent_key));
+CREATE TABLE IF NOT EXISTS codex_session_sources (binding_id TEXT NOT NULL, session_id TEXT NOT NULL,
+  source_kind TEXT NOT NULL, PRIMARY KEY (binding_id, session_id));
+CREATE TABLE IF NOT EXISTS member_paths (binding_id TEXT NOT NULL, member_kind TEXT NOT NULL,
+  member_key TEXT NOT NULL, main_repo_path TEXT NOT NULL, resolved_by TEXT NOT NULL, resolved_at TEXT NOT NULL,
+  PRIMARY KEY (binding_id, member_kind, member_key));
+CREATE TABLE IF NOT EXISTS app_projects_seen (app TEXT NOT NULL, account_id TEXT NOT NULL,
+  app_project_id TEXT NOT NULL, project_key TEXT NOT NULL, name TEXT NOT NULL, position INTEGER,
+  last_state TEXT NOT NULL, PRIMARY KEY (app, account_id, app_project_id));
 ";
 
 /// How long a connection waits for the write lock. Adapters run in parallel threads over one
@@ -167,6 +177,14 @@ CREATE TRIGGER IF NOT EXISTS local_resource_accesses_change_update AFTER UPDATE 
   UPDATE local_resource_accesses
      SET change_generation = coalesce((SELECT value FROM meta WHERE key = 'change_generation'), 0)
    WHERE rowid = NEW.rowid; END;
+";
+
+/// Indexes on columns an older file gains during migration, so they are
+/// created after it. An agent's profile is copied onto its rows on every
+/// request line; without these each copy scanned every stored request.
+const POST_MIGRATION_INDEXES: &str = "
+CREATE INDEX IF NOT EXISTS events_agent ON events(binding_id, agent_key);
+CREATE INDEX IF NOT EXISTS local_agent_events_agent ON local_agent_events(binding_id, agent_key);
 ";
 
 /// The tables `CHANGE_TRIGGERS` stamp.
@@ -339,7 +357,15 @@ pub struct ToolEventRow {
     pub namespace_hash: Option<String>,
     pub outcome: String,
     pub name_truncated: bool,
+    /// `direct` for a call the model made, `nested_mcp` for an MCP call a Codex
+    /// `exec` script made. Nested rows never count toward a request's tools.
+    pub origin: String,
 }
+
+/// `ToolEventRow::origin` for a call the model made itself.
+pub const ORIGIN_DIRECT: &str = "direct";
+/// `ToolEventRow::origin` for an MCP call made from inside a Codex `exec` script.
+pub const ORIGIN_NESTED_MCP: &str = "nested_mcp";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ToolCoverageRow {
@@ -444,6 +470,76 @@ pub struct RecordRow {
     pub updated_at: String,
 }
 
+/// One agent's readable label, from a resolver. Local; the upload is a `name.label`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentLabelRow {
+    pub agent_key: String,
+    pub label: String,
+    /// `main` or `subagent`, when the resolver knows it.
+    pub role: Option<String>,
+    /// What decided the label: `codex_thread` or `codex_guardian`.
+    pub source: String,
+}
+
+/// A sticky worktree resolution: the main repository a folder or a session's
+/// working directory belongs to. Local only; never uploaded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemberPathRow {
+    pub main_repo_path: String,
+    pub resolved_by: String,
+    pub resolved_at: String,
+}
+
+/// One app project this install has read, kept so a project that disappears
+/// from a later successful read becomes a `removed` tombstone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppProjectSeenRow {
+    pub app_project_id: String,
+    pub project_key: String,
+    pub name: String,
+    pub position: Option<i64>,
+    pub last_state: String,
+}
+
+/// One distinct hashed tool name or namespace with the raw values beside it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HashedToolName {
+    pub name: Option<String>,
+    pub name_hash: Option<String>,
+    pub namespace: Option<String>,
+    pub namespace_hash: Option<String>,
+}
+
+/// Requests of one session hash in one working-directory project key (`None`
+/// without folder evidence): `(session, folder, requests)`.
+pub type SessionFolderCount = (String, Option<String>, u64);
+
+/// The requests one session hash holds, and the agent keys among them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SessionAgents {
+    pub requests: u64,
+    pub agent_keys: BTreeSet<String>,
+}
+
+/// One pending record as the upgrade gate sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GateRow {
+    pub record_id: String,
+    pub binding_id: String,
+    pub semantic_key: String,
+    pub content_hash: String,
+    pub published_hash: Option<String>,
+    pub rejected_reason: Option<String>,
+    pub observed_at: Option<String>,
+    pub tool_name: Option<String>,
+    pub caller_request_key: Option<String>,
+    /// `event_kind` of tool and agent events.
+    pub event_kind: Option<String>,
+    pub session_hash: Option<String>,
+    /// The agent the activity belongs to: `agent.key`, or a tool event's `caller_agent_key`.
+    pub agent_key: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutboxRow {
     pub hash: String,
@@ -490,6 +586,7 @@ impl State {
         conn.execute_batch(SCHEMA)?;
         let state = State { conn };
         state.migrate()?;
+        state.conn.execute_batch(POST_MIGRATION_INDEXES)?;
         state.conn.execute_batch(CHANGE_TRIGGERS)?;
         Ok(state)
     }
@@ -513,13 +610,15 @@ impl State {
     /// knowledge-source access evidence, and version 7 predates the allowance
     /// quarantine (both new tables only, created above). A version 8 file
     /// written before the quarantine's candidate column existed gains it here
-    /// (version 8 is unreleased, so the number does not move). Every step is
+    /// (version 8 is unreleased, so the number does not move). Version 8
+    /// predates app projects, labels, and nested tool calls: the new tables
+    /// are created above and two columns are added here. Every step is
     /// idempotent, so an interrupted upgrade resumes.
     fn migrate(&self) -> Result<(), StateError> {
         let version = self.meta("schema_version")?;
-        if version.as_deref() == Some("8")
-            && !self.has_column("allowance_quarantine", "candidate_binding_id")?
-        {
+        // A version 8 file written before the quarantine's candidate column existed, whatever
+        // version it reads now.
+        if !self.has_column("allowance_quarantine", "candidate_binding_id")? {
             self.conn.execute("ALTER TABLE allowance_quarantine ADD COLUMN candidate_binding_id TEXT", [])?;
         }
         if version.as_deref() == Some("1") {
@@ -603,6 +702,20 @@ impl State {
                         END",
                 [],
             )?;
+        }
+        // Version 9: nested tool calls are marked apart from direct ones, and a side
+        // record the server deferred carries when it did. The new tables are created above.
+        if !self.has_column("local_tool_events", "origin")? {
+            self.conn.execute(
+                "ALTER TABLE local_tool_events ADD COLUMN origin TEXT NOT NULL DEFAULT 'direct'",
+                [],
+            )?;
+        }
+        if !self.has_column("records", "deferred_at")? {
+            self.conn.execute("ALTER TABLE records ADD COLUMN deferred_at TEXT", [])?;
+        }
+        if !self.has_column("app_projects_seen", "position")? {
+            self.conn.execute("ALTER TABLE app_projects_seen ADD COLUMN position INTEGER", [])?;
         }
         // Any earlier file gains the change stamp; existing rows read as generation 0,
         // and an adapter with no emission mark emits everything once regardless.
@@ -1299,7 +1412,11 @@ impl State {
                  agent_identity_basis = ?3, parent_agent_key = ?4,
                  parent_agent_identity_basis = ?5, agent_class = ?6,
                  agent_name = ?7, agent_depth = ?8, model_requested = coalesce(model_requested, ?9)
-               WHERE binding_id = ?1 AND agent_key = ?2",
+               WHERE binding_id = ?1 AND agent_key = ?2
+                 AND (agent_identity_basis IS NOT ?3 OR parent_agent_key IS NOT ?4
+                      OR parent_agent_identity_basis IS NOT ?5 OR agent_class IS NOT ?6
+                      OR agent_name IS NOT ?7 OR agent_depth IS NOT ?8
+                      OR (model_requested IS NULL AND ?9 IS NOT NULL))",
             params![
                 binding,
                 merged.key,
@@ -1316,7 +1433,10 @@ impl State {
             "UPDATE local_agent_events SET
                  identity_basis = ?3, parent_key = ?4, parent_identity_basis = ?5,
                  class = ?6, name = ?7, depth = ?8, model_requested = coalesce(model_requested, ?9)
-               WHERE binding_id = ?1 AND agent_key = ?2",
+               WHERE binding_id = ?1 AND agent_key = ?2
+                 AND (identity_basis IS NOT ?3 OR parent_key IS NOT ?4 OR parent_identity_basis IS NOT ?5
+                      OR class IS NOT ?6 OR name IS NOT ?7 OR depth IS NOT ?8
+                      OR (model_requested IS NULL AND ?9 IS NOT NULL))",
             params![
                 binding,
                 merged.key,
@@ -1369,11 +1489,13 @@ impl State {
                     params![binding, child_key, child_depth, new_depth_evidence],
                 )?;
                 self.conn.execute(
-                    "UPDATE events SET agent_depth = ?3 WHERE binding_id = ?1 AND agent_key = ?2",
+                    "UPDATE events SET agent_depth = ?3
+                      WHERE binding_id = ?1 AND agent_key = ?2 AND agent_depth IS NOT ?3",
                     params![binding, child_key, child_depth],
                 )?;
                 self.conn.execute(
-                    "UPDATE local_agent_events SET depth = ?3 WHERE binding_id = ?1 AND agent_key = ?2",
+                    "UPDATE local_agent_events SET depth = ?3
+                      WHERE binding_id = ?1 AND agent_key = ?2 AND depth IS NOT ?3",
                     params![binding, child_key, child_depth],
                 )?;
                 pending.push((child_key, child_depth));
@@ -1487,7 +1609,7 @@ impl State {
             .query_row(
                 "SELECT id, timestamp, event_kind, invocation_key, session_hash, caller_request_key,
                         caller_agent_key, caller_is_subagent, parent_invocation_key, class, name,
-                        name_hash, namespace, namespace_hash, outcome, name_truncated
+                        name_hash, namespace, namespace_hash, outcome, name_truncated, origin
                    FROM local_tool_events WHERE binding_id = ?1 AND id = ?2",
                 params![binding, id],
                 tool_event_from_row,
@@ -1505,7 +1627,7 @@ impl State {
             .query_row(
                 "SELECT id, timestamp, event_kind, invocation_key, session_hash, caller_request_key,
                         caller_agent_key, caller_is_subagent, parent_invocation_key, class, name,
-                        name_hash, namespace, namespace_hash, outcome, name_truncated
+                        name_hash, namespace, namespace_hash, outcome, name_truncated, origin
                    FROM local_tool_events
                   WHERE binding_id = ?1 AND invocation_key = ?2 AND event_kind = 'invocation'",
                 params![binding, invocation_key],
@@ -1522,8 +1644,8 @@ impl State {
             "INSERT INTO local_tool_events
              (binding_id, id, timestamp, event_kind, invocation_key, session_hash,
               caller_request_key, caller_agent_key, caller_is_subagent, parent_invocation_key,
-              class, name, name_hash, namespace, namespace_hash, outcome, name_truncated)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+              class, name, name_hash, namespace, namespace_hash, outcome, name_truncated, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
              ON CONFLICT(binding_id, id) DO UPDATE SET
                timestamp = min(local_tool_events.timestamp, excluded.timestamp),
                session_hash = coalesce(local_tool_events.session_hash, excluded.session_hash),
@@ -1560,6 +1682,7 @@ impl State {
                 row.namespace_hash,
                 row.outcome,
                 row.name_truncated,
+                row.origin,
             ],
         )?;
         if row.event_kind == "invocation" {
@@ -1622,7 +1745,7 @@ impl State {
         let mut statement = self.conn.prepare(
             "SELECT id, timestamp, event_kind, invocation_key, session_hash, caller_request_key,
                     caller_agent_key, caller_is_subagent, parent_invocation_key, class, name,
-                    name_hash, namespace, namespace_hash, outcome, name_truncated
+                    name_hash, namespace, namespace_hash, outcome, name_truncated, origin
                FROM local_tool_events WHERE binding_id = ?1 ORDER BY timestamp, id",
         )?;
         let rows = statement.query_map(params![binding], tool_event_from_row)?;
@@ -2229,7 +2352,7 @@ impl State {
 
     pub fn mark_record_published(&self, record_id: &str, content_hash: &str) -> Result<(), StateError> {
         self.conn.execute(
-            "UPDATE records SET published_hash = ?2 WHERE record_id = ?1",
+            "UPDATE records SET published_hash = ?2, deferred_at = NULL WHERE record_id = ?1",
             params![record_id, content_hash],
         )?;
         Ok(())
@@ -2399,6 +2522,458 @@ impl State {
             )
             .optional()?)
     }
+
+    // --- side records (2.2.0) -----------------------------------------------
+
+    /// Records the `source.subagent.other` kind a Codex `session_meta` carried
+    /// (`guardian`, for example), keyed by the id of that `session_meta`.
+    pub fn upsert_codex_session_source(
+        &self,
+        binding: &str,
+        session_id: &str,
+        source_kind: &str,
+    ) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT INTO codex_session_sources (binding_id, session_id, source_kind) VALUES (?1, ?2, ?3)
+             ON CONFLICT(binding_id, session_id) DO UPDATE SET source_kind = excluded.source_kind",
+            params![binding, session_id, source_kind],
+        )?;
+        Ok(())
+    }
+
+    /// Every `(session_id, source_kind)` a binding's `session_meta` lines recorded.
+    pub fn codex_session_sources(&self, binding: &str) -> Result<Vec<(String, String)>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT session_id, source_kind FROM codex_session_sources WHERE binding_id = ?1
+              ORDER BY session_id",
+        )?;
+        let rows = statement.query_map(params![binding], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Replaces one binding's agent labels with the rows a resolver produced.
+    pub fn replace_agent_labels(&self, binding: &str, rows: &[AgentLabelRow]) -> Result<(), StateError> {
+        self.conn.execute("DELETE FROM agent_labels WHERE binding_id = ?1", params![binding])?;
+        for row in rows {
+            self.conn.execute(
+                "INSERT OR REPLACE INTO agent_labels (binding_id, agent_key, label, role, source)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![binding, row.agent_key, row.label, row.role, row.source],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Every agent label of every binding, ordered by binding then key.
+    pub fn agent_labels(&self) -> Result<Vec<(String, AgentLabelRow)>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT binding_id, agent_key, label, role, source FROM agent_labels ORDER BY binding_id, agent_key",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                AgentLabelRow {
+                    agent_key: row.get(1)?,
+                    label: row.get(2)?,
+                    role: row.get(3)?,
+                    source: row.get(4)?,
+                },
+            ))
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Every cached worktree-to-main-repo resolution, keyed by
+    /// `(binding_id, member_kind, member_key)`.
+    pub fn member_paths(&self) -> Result<HashMap<(String, String, String), MemberPathRow>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT binding_id, member_kind, member_key, main_repo_path, resolved_by, resolved_at
+               FROM member_paths",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                (row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?),
+                MemberPathRow {
+                    main_repo_path: row.get(3)?,
+                    resolved_by: row.get(4)?,
+                    resolved_at: row.get(5)?,
+                },
+            ))
+        })?;
+        Ok(rows.collect::<Result<HashMap<_, _>, _>>()?)
+    }
+
+    /// Caches a positive worktree resolution. A later failure never removes it.
+    pub fn save_member_path(
+        &self,
+        binding: &str,
+        member_kind: &str,
+        member_key: &str,
+        row: &MemberPathRow,
+    ) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT INTO member_paths (binding_id, member_kind, member_key, main_repo_path, resolved_by, resolved_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(binding_id, member_kind, member_key) DO UPDATE SET
+               main_repo_path = excluded.main_repo_path, resolved_by = excluded.resolved_by,
+               resolved_at = excluded.resolved_at",
+            params![binding, member_kind, member_key, row.main_repo_path, row.resolved_by, row.resolved_at],
+        )?;
+        Ok(())
+    }
+
+    /// The app projects this install has ever read for one app and account.
+    pub fn app_projects_seen(
+        &self,
+        app: &str,
+        account_id: &str,
+    ) -> Result<Vec<AppProjectSeenRow>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT app_project_id, project_key, name, position, last_state FROM app_projects_seen
+              WHERE app = ?1 AND account_id = ?2 ORDER BY app_project_id",
+        )?;
+        let rows = statement.query_map(params![app, account_id], |row| {
+            Ok(AppProjectSeenRow {
+                app_project_id: row.get(0)?,
+                project_key: row.get(1)?,
+                name: row.get(2)?,
+                position: row.get(3)?,
+                last_state: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn upsert_app_project_seen(
+        &self,
+        app: &str,
+        account_id: &str,
+        row: &AppProjectSeenRow,
+    ) -> Result<(), StateError> {
+        self.conn.execute(
+            "INSERT INTO app_projects_seen (app, account_id, app_project_id, project_key, name, position, last_state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(app, account_id, app_project_id) DO UPDATE SET project_key = excluded.project_key,
+               name = excluded.name, position = excluded.position, last_state = excluded.last_state",
+            params![
+                app,
+                account_id,
+                row.app_project_id,
+                row.project_key,
+                row.name,
+                row.position,
+                row.last_state,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Makes exactly these side records pending again: clears the publication,
+    /// rejection, and deferral marks. Ledger records are never touched.
+    pub fn resync_side_records(&self, ids: &[String]) -> Result<usize, StateError> {
+        let mut changed = 0;
+        for id in ids {
+            changed += self.conn.execute(
+                "UPDATE records SET published_hash = NULL, rejected_reason = NULL, deferred_at = NULL
+                  WHERE record_id = ?1
+                    AND record_type IN ('name.label', 'project.catalog', 'project.membership')",
+                params![id],
+            )?;
+        }
+        Ok(changed)
+    }
+
+    /// Deletes the local rows of these side record types whose ids are not in
+    /// `keep`. The caller passes only the types whose build fully succeeded, and
+    /// a catalog tombstone the build still produces is in `keep`.
+    pub fn delete_side_records_except(
+        &self,
+        record_types: &[&str],
+        keep: &HashSet<String>,
+    ) -> Result<usize, StateError> {
+        let mut deleted = 0;
+        for record_type in record_types {
+            if !matches!(*record_type, "name.label" | "project.catalog" | "project.membership") {
+                continue;
+            }
+            let ids: Vec<String> = {
+                let sql = "SELECT record_id FROM records WHERE record_type = ?1";
+                let mut statement = self.conn.prepare(sql)?;
+                let rows = statement.query_map(params![record_type], |row| row.get::<_, String>(0))?;
+                rows.collect::<Result<_, _>>()?
+            };
+            for id in ids.iter().filter(|id| !keep.contains(*id)) {
+                deleted += self.conn.execute("DELETE FROM records WHERE record_id = ?1", params![id])?;
+            }
+        }
+        Ok(deleted)
+    }
+
+    /// Marks records the server deferred; they stay acknowledged until a resync.
+    pub fn mark_records_deferred(&self, ids: &[String], at: &str) -> Result<(), StateError> {
+        for id in ids {
+            self.conn.execute("UPDATE records SET deferred_at = ?2 WHERE record_id = ?1", params![id, at])?;
+        }
+        Ok(())
+    }
+
+    /// Records with a deferral mark, per record type.
+    pub fn deferred_counts(&self) -> Result<BTreeMap<String, u64>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT record_type, count(*) FROM records WHERE deferred_at IS NOT NULL GROUP BY record_type",
+        )?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?.max(0) as u64)))?;
+        Ok(rows.collect::<Result<BTreeMap<_, _>, _>>()?)
+    }
+
+    /// Pending records per record type.
+    pub fn pending_counts(&self) -> Result<BTreeMap<String, u64>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT record_type, count(*) FROM records
+              WHERE rejected_reason IS NULL AND (published_hash IS NULL OR published_hash <> content_hash)
+              GROUP BY record_type",
+        )?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?.max(0) as u64)))?;
+        Ok(rows.collect::<Result<BTreeMap<_, _>, _>>()?)
+    }
+
+    /// Every distinct hashed tool name and namespace this state holds for a
+    /// class the ledger hashes (`mcp`, `function`, `custom`), with the bounded
+    /// raw values kept beside them.
+    pub fn hashed_tool_names(&self) -> Result<Vec<HashedToolName>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT DISTINCT name, name_hash, namespace, namespace_hash FROM local_tool_events
+              WHERE class IN ('mcp', 'function', 'custom')
+                AND (name_hash IS NOT NULL OR namespace_hash IS NOT NULL)
+              ORDER BY name_hash, namespace_hash",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(HashedToolName {
+                name: row.get(0)?,
+                name_hash: row.get(1)?,
+                namespace: row.get(2)?,
+                namespace_hash: row.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Every distinct raw agent name the ledger classes `custom`, from requests,
+    /// agent profiles, and agent lifecycle events of every binding.
+    pub fn custom_agent_names(&self) -> Result<BTreeSet<String>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT agent_name FROM events WHERE agent_class = 'custom' AND agent_name IS NOT NULL
+             UNION SELECT name FROM agent_profiles WHERE class = 'custom' AND name IS NOT NULL
+             UNION SELECT name FROM local_agent_events WHERE class = 'custom' AND name IS NOT NULL",
+        )?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<Result<BTreeSet<_>, _>>()?)
+    }
+
+    /// Every working directory any binding has seen, as `(binding_id, row)`,
+    /// ordered so the first row per project hash is stable.
+    pub fn all_projects(&self) -> Result<Vec<(String, ProjectRow)>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT binding_id, project_hash, path, first_seen, last_seen FROM projects
+              ORDER BY project_hash, binding_id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                ProjectRow {
+                    project_hash: row.get(1)?,
+                    path: row.get(2)?,
+                    first_seen: row.get(3)?,
+                    last_seen: row.get(4)?,
+                },
+            ))
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Requests per session hash for one binding, with the agent keys seen in each.
+    pub fn session_agents(&self, binding: &str) -> Result<BTreeMap<String, SessionAgents>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT session, agent_key, count(*) FROM events WHERE binding_id = ?1 GROUP BY session, agent_key",
+        )?;
+        let rows = statement.query_map(params![binding], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?))
+        })?;
+        let mut out: BTreeMap<String, SessionAgents> = BTreeMap::new();
+        for row in rows {
+            let (session, agent_key, count) = row?;
+            let entry = out.entry(session).or_default();
+            entry.requests += count.max(0) as u64;
+            if let Some(key) = agent_key {
+                entry.agent_keys.insert(key);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Requests per working-directory project key for one binding; `None` for
+    /// requests without folder evidence.
+    pub fn project_request_counts(&self, binding: &str) -> Result<BTreeMap<Option<String>, u64>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT CASE WHEN project_basis = 'working_directory' THEN project_key END, count(*)
+               FROM events WHERE binding_id = ?1 GROUP BY 1",
+        )?;
+        let rows = statement.query_map(params![binding], |row| {
+            Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?.max(0) as u64))
+        })?;
+        Ok(rows.collect::<Result<BTreeMap<_, _>, _>>()?)
+    }
+
+    /// Requests per (session hash, working-directory project key) for one binding.
+    pub fn session_project_counts(&self, binding: &str) -> Result<Vec<SessionFolderCount>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT session, CASE WHEN project_basis = 'working_directory' THEN project_key END, count(*)
+               FROM events WHERE binding_id = ?1 GROUP BY 1, 2",
+        )?;
+        let rows = statement.query_map(params![binding], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, i64>(2)?.max(0) as u64,
+            ))
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// The raw session id each of a binding's checkpointed files ended on, by path.
+    pub fn file_sessions(&self, binding: &str) -> Result<Vec<(String, Option<String>)>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT path, CASE WHEN json_valid(context) THEN json_extract(context, '$.session') END
+               FROM files WHERE binding_id = ?1 ORDER BY path",
+        )?;
+        let rows = statement.query_map(params![binding], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Requests per session hash among a binding's stored `activity.request`
+    /// records from one adapter (the Cursor reader keeps no event table).
+    pub fn record_session_counts(
+        &self,
+        binding: &str,
+        adapter: &str,
+    ) -> Result<BTreeMap<String, u64>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT CASE WHEN json_valid(record) THEN json_extract(record, '$.session_hash') END, count(*)
+               FROM records WHERE binding_id = ?1 AND adapter = ?2 AND record_type = 'activity.request'
+              GROUP BY 1",
+        )?;
+        let rows = statement.query_map(params![binding, adapter], |row| {
+            Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?.max(0) as u64))
+        })?;
+        let mut out = BTreeMap::new();
+        for row in rows {
+            let (session, count) = row?;
+            if let Some(session) = session {
+                out.insert(session, count);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The pending rows of one record type (never published, or revised since),
+    /// with the few record fields the upgrade gate weighs.
+    pub fn gate_rows(&self, record_type: &str) -> Result<Vec<GateRow>, StateError> {
+        self.gate_rows_where(record_type, "AND (published_hash IS NULL OR published_hash <> content_hash)")
+    }
+
+    /// Every stored row of one record type, as the upgrade gate weighs it: the
+    /// baseline's history of what the previous build read.
+    pub fn gate_history_rows(&self, record_type: &str) -> Result<Vec<GateRow>, StateError> {
+        self.gate_rows_where(record_type, "")
+    }
+
+    fn gate_rows_where(&self, record_type: &str, filter: &str) -> Result<Vec<GateRow>, StateError> {
+        let sql = format!(
+            "SELECT record_id, binding_id, semantic_key, content_hash, published_hash, rejected_reason,
+                    json_extract(record, '$.observed_at'), json_extract(record, '$.tool.name'),
+                    json_extract(record, '$.caller_request_key'), json_extract(record, '$.event_kind'),
+                    json_extract(record, '$.session_hash'),
+                    CASE record_type WHEN 'tool.event' THEN json_extract(record, '$.caller_agent_key')
+                                     ELSE json_extract(record, '$.agent.key') END
+               FROM records
+              WHERE record_type = ?1 {filter}"
+        );
+        let mut statement = self.conn.prepare(&sql)?;
+        let rows = statement.query_map(params![record_type], |row| {
+            Ok(GateRow {
+                record_id: row.get(0)?,
+                binding_id: row.get(1)?,
+                semantic_key: row.get(2)?,
+                content_hash: row.get(3)?,
+                published_hash: row.get(4)?,
+                rejected_reason: row.get(5)?,
+                observed_at: row.get(6)?,
+                tool_name: row.get(7)?,
+                caller_request_key: row.get(8)?,
+                event_kind: row.get(9)?,
+                session_hash: row.get(10)?,
+                agent_key: row.get(11)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// The semantic keys of every published record of one type.
+    pub fn published_semantic_keys(&self, record_type: &str) -> Result<HashSet<String>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT DISTINCT semantic_key FROM records WHERE record_type = ?1 AND published_hash IS NOT NULL",
+        )?;
+        let rows = statement.query_map(params![record_type], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<Result<HashSet<_>, _>>()?)
+    }
+
+    /// `caller_request_key` of every `tool.event` whose published content is
+    /// the stored content, by record id: what the server holds.
+    pub fn published_tool_callers(&self) -> Result<HashMap<String, Option<String>>, StateError> {
+        let mut statement = self.conn.prepare(
+            "SELECT record_id, json_extract(record, '$.caller_request_key') FROM records
+              WHERE record_type = 'tool.event' AND published_hash = content_hash",
+        )?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))?;
+        Ok(rows.collect::<Result<HashMap<_, _>, _>>()?)
+    }
+
+    /// The stored text of one record.
+    pub fn record_text(&self, record_id: &str) -> Result<Option<String>, StateError> {
+        let sql = "SELECT record FROM records WHERE record_id = ?1";
+        Ok(self.conn.query_row(sql, params![record_id], |row| row.get(0)).optional()?)
+    }
+
+    /// Every stored record of one type; for tests.
+    #[cfg(test)]
+    pub fn records_of_type_for_tests(&self, record_type: &str) -> Vec<RecordRow> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT record_id, binding_id, adapter, record_type, semantic_key, content_hash, published_hash,
+                        rejected_reason, record, updated_at FROM records WHERE record_type = ?1 ORDER BY record_id",
+            )
+            .unwrap();
+        let rows = statement.query_map(params![record_type], record_from_row).unwrap();
+        rows.map(Result::unwrap).collect()
+    }
+
+    /// The origin of a tool event row, when the row exists.
+    pub fn tool_event_origin(&self, binding: &str, id: &str) -> Result<Option<String>, StateError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT origin FROM local_tool_events WHERE binding_id = ?1 AND id = ?2",
+                params![binding, id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
 }
 
 fn resource_config_token_key(digest: &str) -> String {
@@ -2495,6 +3070,7 @@ fn tool_event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ToolEventRow
         namespace_hash: row.get(13)?,
         outcome: row.get(14)?,
         name_truncated: row.get(15)?,
+        origin: row.get(16)?,
     })
 }
 
@@ -2619,7 +3195,7 @@ mod tests {
         assert_eq!(rows[0].calls, 2);
         assert_eq!(rows[0].total_tokens, 2 * 30 + 25);
         assert!(state.bucket_rows("other").unwrap().is_empty());
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("8"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some(SCHEMA_VERSION));
     }
 
     #[test]
@@ -2729,7 +3305,7 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("8"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some(SCHEMA_VERSION));
         let mut row = event("a", 10);
         row.project_hash = Some("h".repeat(64));
         row.project_key = row.project_hash.clone();
@@ -2787,7 +3363,7 @@ mod tests {
         let migrated = state.event("b", "legacy").unwrap().unwrap();
         assert_eq!(migrated.project_key, migrated.project_hash);
         assert_eq!(migrated.project_basis, "working_directory");
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("8"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some(SCHEMA_VERSION));
     }
 
     #[test]
@@ -2820,7 +3396,7 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("8"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some(SCHEMA_VERSION));
         let legacy = state.event("b", "legacy-child").unwrap().unwrap();
         assert!(!legacy.agent_observed);
         assert!(legacy.parent_session.is_some());
@@ -3186,6 +3762,7 @@ mod tests {
             namespace_hash: None,
             outcome: "succeeded".into(),
             name_truncated: false,
+            origin: "direct".into(),
         };
         let result = ToolEventRow {
             id: "4".repeat(64),
@@ -3496,6 +4073,7 @@ mod tests {
             namespace_hash: Some("h:abcdef1234567890".into()),
             outcome: "succeeded".into(),
             name_truncated: false,
+            origin: "direct".into(),
         };
         state.upsert_tool_event("b", &tool).unwrap();
         let nameless = ToolEventRow {
@@ -3587,7 +4165,7 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("8"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some(SCHEMA_VERSION));
         state.upsert_resource_access("b", &access("a", "read", "explicit_argument")).unwrap();
         state.upsert_resource_inspection("b", "inv-1", "matched", false).unwrap();
         assert_eq!(state.resource_accesses("b").unwrap().len(), 1);
@@ -3610,7 +4188,7 @@ mod tests {
             .unwrap();
         }
         let state = State::open(&path).unwrap();
-        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some("8"));
+        assert_eq!(state.meta("schema_version").unwrap().as_deref(), Some(SCHEMA_VERSION));
         assert!(state.has_column("allowance_quarantine", "candidate_binding_id").unwrap());
         assert!(state.quarantine_sample("s1", "{}", Some("h"), "unpaired_identity", "t", None).unwrap());
         assert!(
@@ -3794,6 +4372,7 @@ mod tests {
             namespace_hash: None,
             outcome: "unknown".into(),
             name_truncated: false,
+            origin: "direct".into(),
         }
     }
 

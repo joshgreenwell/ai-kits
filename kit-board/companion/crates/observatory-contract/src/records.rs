@@ -8,14 +8,16 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::enums::{
-    AccessEvidenceBasis, AccessKind, Adapter, AgentClass, AgentEventKind, AllowanceKind, AllowanceUnit,
-    Basis, Channel, CompositionState, EntryKind, EventOutcome, ExecutionHost, IdentityBasis, MoneyUnit,
-    ParentIdentityBasis, ProjectBasis, Reader, RecordType, ReferenceKind, RequestOutcome, SessionIdentity,
-    Surface, ToolClass, ToolEventKind,
+    AccessEvidenceBasis, AccessKind, Adapter, AgentClass, AgentEventKind, AgentRole, AllowanceKind,
+    AllowanceUnit, Basis, Channel, CompositionState, EntryKind, EventOutcome, ExecutionHost, IdentityBasis,
+    LabelKind, MembershipKind, MembershipResolution, MoneyUnit, ParentIdentityBasis, ProjectApp,
+    ProjectBasis, ProjectState, Reader, RecordType, ReferenceKind, RequestOutcome, SessionIdentity, Surface,
+    ToolClass, ToolEventKind,
 };
 use crate::envelope::Violation;
 use crate::newtypes::{
-    Amount, Code, Counter, MeterKey, Nullable, Real, Sha256Hex, Stamp, Text, ToolName, Uuid, ValueError,
+    Amount, Code, Counter, LabelKey, LabelText, MeterKey, Nullable, ProjectName, Real, Sha256Hex, Stamp,
+    Text, ToolName, Uuid, ValueError,
 };
 use crate::{FUTURE_TOLERANCE_SECONDS, MAX_TOOLS_PER_REQUEST};
 
@@ -378,6 +380,96 @@ pub struct MoneyEntry {
     pub model: Nullable<Text<0, 100>>,
 }
 
+/// `project.catalog` `position`: a non-negative integer that fits the database's `integer`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "u64", into = "u64")]
+pub struct Position(u32);
+
+impl Position {
+    pub const MAX: u64 = 2_147_483_647;
+
+    pub fn new(position: u64) -> Result<Self, ValueError> {
+        match u32::try_from(position) {
+            Ok(value) if position <= Position::MAX => Ok(Position(value)),
+            _ => Err(ValueError::Literal(Position::MAX)),
+        }
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl TryFrom<u64> for Position {
+    type Error = ValueError;
+    fn try_from(position: u64) -> Result<Self, ValueError> {
+        Position::new(position)
+    }
+}
+
+impl From<Position> for u64 {
+    fn from(value: Position) -> u64 {
+        u64::from(value.0)
+    }
+}
+
+/// Side record: a readable name for a hashed key the ledger already holds. Names never
+/// enter ledger records; they travel only here. There is no `channel` and no `basis`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NameLabel {
+    pub record_id: Uuid,
+    /// The install's carrier binding.
+    pub binding_id: Uuid,
+    /// The carrier binding's adapter.
+    pub adapter: Adapter,
+    pub observed_at: Stamp,
+    pub parser_version: Text<0, 30>,
+    pub kind: LabelKind,
+    /// `h:<16 hex>` for `tool`, `tool_namespace` and `agent_name`; 64 hex for `agent` and
+    /// `session_agent`. The exact ledger value.
+    pub key: LabelKey,
+    pub label: LabelText,
+    /// Only on `agent` and `session_agent`.
+    pub role: Nullable<AgentRole>,
+    /// Only on `session_agent`: the parent composer's session hash.
+    pub parent_key: Nullable<Sha256Hex>,
+}
+
+/// Side record: one project the owner created in an app.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectCatalog {
+    pub record_id: Uuid,
+    pub binding_id: Uuid,
+    pub adapter: Adapter,
+    pub observed_at: Stamp,
+    pub parser_version: Text<0, 30>,
+    pub app: ProjectApp,
+    /// `sha256(stable_json(["app-project", app, account_id, app_project_id]))`, unkeyed.
+    pub project_key: Sha256Hex,
+    pub name: ProjectName,
+    pub position: Nullable<Position>,
+    pub state: ProjectState,
+}
+
+/// Side record: which app project a folder or a session belongs to, and why.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectMembership {
+    pub record_id: Uuid,
+    pub binding_id: Uuid,
+    pub adapter: Adapter,
+    pub observed_at: Stamp,
+    pub parser_version: Text<0, 30>,
+    pub member_kind: MembershipKind,
+    /// A folder key (`effective_project_key`) or a ledger `session_hash`.
+    pub member_key: Sha256Hex,
+    /// Non-null exactly when `resolution` names a project.
+    pub project_key: Nullable<Sha256Hex>,
+    pub resolution: MembershipResolution,
+}
+
 /// A record of any type, tagged by `record_type`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "record_type")]
@@ -396,6 +488,12 @@ pub enum Record {
     ToolEvent(ToolEvent),
     #[serde(rename = "resource.access")]
     ResourceAccess(ResourceAccess),
+    #[serde(rename = "name.label")]
+    NameLabel(NameLabel),
+    #[serde(rename = "project.catalog")]
+    ProjectCatalog(ProjectCatalog),
+    #[serde(rename = "project.membership")]
+    ProjectMembership(ProjectMembership),
 }
 
 fn future(stamp: &Stamp, now: Timestamp, path: &str, field: &str, out: &mut Vec<Violation>) {
@@ -555,6 +653,9 @@ impl Record {
             Record::AgentEvent(_) => RecordType::AgentEvent,
             Record::ToolEvent(_) => RecordType::ToolEvent,
             Record::ResourceAccess(_) => RecordType::ResourceAccess,
+            Record::NameLabel(_) => RecordType::NameLabel,
+            Record::ProjectCatalog(_) => RecordType::ProjectCatalog,
+            Record::ProjectMembership(_) => RecordType::ProjectMembership,
         }
     }
 
@@ -567,6 +668,9 @@ impl Record {
             Record::AgentEvent(r) => &r.record_id,
             Record::ToolEvent(r) => &r.record_id,
             Record::ResourceAccess(r) => &r.record_id,
+            Record::NameLabel(r) => &r.record_id,
+            Record::ProjectCatalog(r) => &r.record_id,
+            Record::ProjectMembership(r) => &r.record_id,
         }
     }
 
@@ -579,6 +683,9 @@ impl Record {
             Record::AgentEvent(r) => &r.binding_id,
             Record::ToolEvent(r) => &r.binding_id,
             Record::ResourceAccess(r) => &r.binding_id,
+            Record::NameLabel(r) => &r.binding_id,
+            Record::ProjectCatalog(r) => &r.binding_id,
+            Record::ProjectMembership(r) => &r.binding_id,
         }
     }
 
@@ -591,19 +698,29 @@ impl Record {
             Record::AgentEvent(r) => r.adapter,
             Record::ToolEvent(r) => r.adapter,
             Record::ResourceAccess(r) => r.adapter,
+            Record::NameLabel(r) => r.adapter,
+            Record::ProjectCatalog(r) => r.adapter,
+            Record::ProjectMembership(r) => r.adapter,
         }
     }
 
-    pub fn channel(&self) -> Channel {
+    /// The channel of a ledger record; `None` for a side record, which has none.
+    pub fn channel(&self) -> Option<Channel> {
         match self {
-            Record::ActivityRequest(r) => r.channel,
-            Record::AccountUsageBucket(r) => r.channel,
-            Record::AllowanceReading(r) => r.channel,
-            Record::MoneyEntry(r) => r.channel,
-            Record::AgentEvent(r) => r.channel,
-            Record::ToolEvent(r) => r.channel,
-            Record::ResourceAccess(r) => r.channel,
+            Record::ActivityRequest(r) => Some(r.channel),
+            Record::AccountUsageBucket(r) => Some(r.channel),
+            Record::AllowanceReading(r) => Some(r.channel),
+            Record::MoneyEntry(r) => Some(r.channel),
+            Record::AgentEvent(r) => Some(r.channel),
+            Record::ToolEvent(r) => Some(r.channel),
+            Record::ResourceAccess(r) => Some(r.channel),
+            Record::NameLabel(_) | Record::ProjectCatalog(_) | Record::ProjectMembership(_) => None,
         }
+    }
+
+    /// True for `name.label`, `project.catalog` and `project.membership`.
+    pub fn is_side(&self) -> bool {
+        self.record_type().is_side()
     }
 
     pub fn observed_at(&self) -> &Stamp {
@@ -615,6 +732,9 @@ impl Record {
             Record::AgentEvent(r) => &r.observed_at,
             Record::ToolEvent(r) => &r.observed_at,
             Record::ResourceAccess(r) => &r.observed_at,
+            Record::NameLabel(r) => &r.observed_at,
+            Record::ProjectCatalog(r) => &r.observed_at,
+            Record::ProjectMembership(r) => &r.observed_at,
         }
     }
 
@@ -627,11 +747,16 @@ impl Record {
             Record::AgentEvent(r) => r.parser_version.as_str(),
             Record::ToolEvent(r) => r.parser_version.as_str(),
             Record::ResourceAccess(r) => r.parser_version.as_str(),
+            Record::NameLabel(r) => r.parser_version.as_str(),
+            Record::ProjectCatalog(r) => r.parser_version.as_str(),
+            Record::ProjectMembership(r) => r.parser_version.as_str(),
         }
     }
 
     /// The semantic identity used for local deduplication: `semantic_key` for
-    /// request and event records, the record id for the legacy ledgers.
+    /// request and event records, the record id for the legacy ledgers, and the
+    /// target key for side records (`<kind>:<key>`, the project key, or
+    /// `<member_kind>:<member_key>`), which never depends on the carrier binding.
     pub fn semantic_key(&self) -> String {
         match self {
             Record::ActivityRequest(r) => r.semantic_key.as_str().to_owned(),
@@ -641,6 +766,9 @@ impl Record {
             Record::AgentEvent(r) => r.semantic_key.as_str().to_owned(),
             Record::ToolEvent(r) => r.semantic_key.as_str().to_owned(),
             Record::ResourceAccess(r) => r.semantic_key.as_str().to_owned(),
+            Record::NameLabel(r) => format!("{}:{}", r.kind, r.key),
+            Record::ProjectCatalog(r) => r.project_key.as_str().to_owned(),
+            Record::ProjectMembership(r) => format!("{}:{}", r.member_kind, r.member_key),
         }
     }
 
@@ -792,6 +920,35 @@ impl Record {
                 }
             }
             Record::ResourceAccess(_) => {}
+            Record::NameLabel(r) => {
+                if r.kind.is_hashed_name() != r.key.is_hashed_name() {
+                    out.push(Violation {
+                        path: format!("{path}.key"),
+                        rule: "label key must match its kind",
+                    });
+                }
+                if !r.kind.allows_role() && r.role.as_ref().is_some() {
+                    out.push(Violation {
+                        path: format!("{path}.role"),
+                        rule: "only agent and session agent labels carry a role",
+                    });
+                }
+                if !r.kind.allows_parent_key() && r.parent_key.as_ref().is_some() {
+                    out.push(Violation {
+                        path: format!("{path}.parent_key"),
+                        rule: "only session agent labels carry a parent key",
+                    });
+                }
+            }
+            Record::ProjectCatalog(_) => {}
+            Record::ProjectMembership(r) => {
+                if r.resolution.names_project() != r.project_key.as_ref().is_some() {
+                    out.push(Violation {
+                        path: format!("{path}.project_key"),
+                        rule: "project key must match its resolution",
+                    });
+                }
+            }
         }
     }
 }

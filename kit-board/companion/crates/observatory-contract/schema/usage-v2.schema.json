@@ -2079,6 +2079,295 @@
               "outcome"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "binding_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "adapter": {
+                "type": "string",
+                "enum": [
+                  "claude_execution",
+                  "claude_account",
+                  "codex_execution",
+                  "codex_account",
+                  "cursor_account",
+                  "cursor_execution",
+                  "anthropic_api",
+                  "openai_api",
+                  "claude_browser",
+                  "codex_browser",
+                  "cursor_browser"
+                ]
+              },
+              "observed_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "parser_version": {
+                "type": "string",
+                "maxLength": 30
+              },
+              "record_type": {
+                "type": "string",
+                "const": "name.label"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "tool",
+                  "tool_namespace",
+                  "agent_name",
+                  "agent",
+                  "session_agent"
+                ]
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^(h:[a-f0-9]{16}|[a-f0-9]{64})$"
+              },
+              "label": {
+                "type": "string",
+                "pattern": "^[^\\p{Cc}\\p{Cf}\\p{Cs}\\p{Zl}\\p{Zp}]+$",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "main",
+                      "subagent"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "parent_key": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "record_id",
+              "binding_id",
+              "adapter",
+              "observed_at",
+              "parser_version",
+              "record_type",
+              "kind",
+              "key",
+              "label",
+              "role",
+              "parent_key"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "binding_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "adapter": {
+                "type": "string",
+                "enum": [
+                  "claude_execution",
+                  "claude_account",
+                  "codex_execution",
+                  "codex_account",
+                  "cursor_account",
+                  "cursor_execution",
+                  "anthropic_api",
+                  "openai_api",
+                  "claude_browser",
+                  "codex_browser",
+                  "cursor_browser"
+                ]
+              },
+              "observed_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "parser_version": {
+                "type": "string",
+                "maxLength": 30
+              },
+              "record_type": {
+                "type": "string",
+                "const": "project.catalog"
+              },
+              "app": {
+                "type": "string",
+                "enum": [
+                  "codex_desktop",
+                  "claude_desktop",
+                  "cursor"
+                ]
+              },
+              "project_key": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^[^\\p{Cc}\\p{Cf}\\p{Cs}\\p{Zl}\\p{Zp}]+$",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "position": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "removed"
+                ]
+              }
+            },
+            "required": [
+              "record_id",
+              "binding_id",
+              "adapter",
+              "observed_at",
+              "parser_version",
+              "record_type",
+              "app",
+              "project_key",
+              "name",
+              "position",
+              "state"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "binding_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "adapter": {
+                "type": "string",
+                "enum": [
+                  "claude_execution",
+                  "claude_account",
+                  "codex_execution",
+                  "codex_account",
+                  "cursor_account",
+                  "cursor_execution",
+                  "anthropic_api",
+                  "openai_api",
+                  "claude_browser",
+                  "codex_browser",
+                  "cursor_browser"
+                ]
+              },
+              "observed_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "parser_version": {
+                "type": "string",
+                "maxLength": 30
+              },
+              "record_type": {
+                "type": "string",
+                "const": "project.membership"
+              },
+              "member_kind": {
+                "type": "string",
+                "enum": [
+                  "working_directory",
+                  "session"
+                ]
+              },
+              "member_key": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "project_key": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "resolution": {
+                "type": "string",
+                "enum": [
+                  "app_assignment",
+                  "inherited",
+                  "root_prefix",
+                  "worktree_root_prefix",
+                  "projectless",
+                  "outside_roots",
+                  "no_folder"
+                ]
+              }
+            },
+            "required": [
+              "record_id",
+              "binding_id",
+              "adapter",
+              "observed_at",
+              "parser_version",
+              "record_type",
+              "member_kind",
+              "member_key",
+              "project_key",
+              "resolution"
+            ],
+            "additionalProperties": false
           }
         ]
       }

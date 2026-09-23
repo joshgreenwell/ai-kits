@@ -8,7 +8,7 @@
 //! `Malformed` here: the line counts as malformed and scanning continues, with
 //! any side effects that happened before the failure kept, as in Python.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -32,7 +32,8 @@ use crate::resources::{
     save_evidence as save_resource_evidence,
 };
 use crate::tools::{
-    claude_identity, codex_identity, result_key, save_invocation as save_tool_invocation,
+    claude_identity, codex_identity, nested_mcp_identity, result_key,
+    save_invocation as save_tool_invocation, save_nested_invocation, save_nested_result,
     save_result as save_tool_result,
 };
 
@@ -76,6 +77,15 @@ pub struct Ctx {
     /// privacy-safe invocation hashes are checkpointed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_tool_invocations: Vec<String>,
+    /// 2.2.0: Codex `exec` calls whose output has not been recorded yet, by
+    /// call id, with their invocation keys. Nested MCP calls link to the one
+    /// open exec; with none or several open, nothing nested is emitted.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub open_exec: BTreeMap<String, String>,
+    /// 2.2.0: nested MCP calls awaiting the next request accounting event,
+    /// assigned to it together with `pending_tool_invocations`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_nested_invocations: Vec<String>,
 }
 
 impl Ctx {
@@ -95,6 +105,8 @@ impl Ctx {
             reasoning_effort: None,
             agent: None,
             pending_tool_invocations: Vec::new(),
+            open_exec: BTreeMap::new(),
+            pending_nested_invocations: Vec::new(),
         }
     }
 }
@@ -921,6 +933,108 @@ fn process_codex_tool_evidence(
     Ok(())
 }
 
+/// The provider id of a Codex response item: `call_id`, else `id`.
+fn codex_call_id(payload: &Value) -> Option<&str> {
+    payload
+        .get("call_id")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("id").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+/// Tracks which `exec` calls are open: set on the `custom_tool_call` named
+/// `exec`, removed on its output. Independent of `own_started` and the window,
+/// so a forked file's copied history closes its own execs.
+fn track_codex_exec(payload: &Value, ctx: &mut Ctx, account: &str) {
+    match payload.get("type").and_then(Value::as_str) {
+        Some("custom_tool_call") if payload.get("name").and_then(Value::as_str) == Some("exec") => {
+            if let Some(call_id) = codex_call_id(payload) {
+                ctx.open_exec.insert(call_id.to_owned(), invocation_key(Provider::Codex, account, call_id));
+            }
+        }
+        Some("custom_tool_call_output") => {
+            if let Some(call_id) = codex_call_id(payload) {
+                ctx.open_exec.remove(call_id);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// An MCP call a Codex `exec` script made, recorded by the app as an
+/// `item_completed` `McpToolCall` event: one invocation and one result, linked
+/// to the open exec and marked `nested_mcp`, so it never counts toward a
+/// request's own tools. Emitted only when this file's own activity has started,
+/// the event is inside the window, subagent collection permits the file, and
+/// exactly one exec is open.
+#[allow(clippy::too_many_arguments)]
+fn process_nested_mcp(
+    state: &State,
+    binding: &str,
+    account: &str,
+    item: &Value,
+    ctx: &mut Ctx,
+    timestamp: Option<f64>,
+    since: f64,
+    now: f64,
+    extras: &EventExtras<'_>,
+) -> Result<(), AdapterError> {
+    if !ctx.own_started {
+        return Ok(());
+    }
+    let Some(ts) = timestamp.filter(|value| since <= *value && *value <= now + 300.0) else {
+        return Ok(());
+    };
+    if !extras.include_subagents && ctx.agent.as_ref().is_some_and(|agent| agent.class != "main") {
+        return Ok(());
+    }
+    if ctx.open_exec.len() != 1 {
+        return Ok(());
+    }
+    let Some(parent) = ctx.open_exec.values().next().cloned() else { return Ok(()) };
+    let Some(item_id) =
+        item.get("id").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let Some(timestamp_text) = iso(ts).map(|value| value.as_str().to_owned()) else { return Ok(()) };
+    let provider_id = format!("nested:{item_id}");
+    let invocation = invocation_key(Provider::Codex, account, &provider_id);
+    let session_hash = digest(&json!([Provider::Codex.as_str(), account, ctx.session]));
+    let caller_agent_key = ctx.agent.as_ref().and_then(|agent| agent.key.as_deref());
+    let caller_is_subagent = ctx.agent.as_ref().is_some_and(is_known_child);
+    let text = |key: &str| item.get(key).and_then(Value::as_str);
+    let (server, app, action) = (text("server"), text("appName"), text("actionName"));
+    let identity = nested_mcp_identity(extras.privacy_key, server, app, action, text("tool"));
+    save_nested_invocation(
+        state,
+        binding,
+        &invocation,
+        &timestamp_text,
+        Some(session_hash.as_str()),
+        caller_agent_key,
+        caller_is_subagent,
+        &parent,
+        &identity,
+    )?;
+    save_nested_result(
+        state,
+        binding,
+        &result_key(Provider::Codex, account, &provider_id),
+        &invocation,
+        &timestamp_text,
+        explicit_outcome(text("status")).unwrap_or("unknown"),
+        Some(session_hash.as_str()),
+        caller_agent_key,
+        caller_is_subagent,
+    )?;
+    if !ctx.pending_nested_invocations.contains(&invocation) {
+        ctx.pending_nested_invocations.push(invocation);
+    }
+    Ok(())
+}
+
 fn claude_evidence(object: &Map<String, Value>, usage: &Value) -> RequestEvidence {
     let input_fresh = non_negative(get(usage, "input_tokens").ok().flatten());
     let input_cached = non_negative(get(usage, "cache_read_input_tokens").ok().flatten());
@@ -1355,6 +1469,16 @@ pub fn process_line(
                         .or_else(|| epoch(meta_timestamp).filter(|v| *v != 0.0))
                         .unwrap_or(0.0),
                 );
+                // `source.subagent.other` (a guardian review, for example) is kept beside the
+                // session this `session_meta` names; the context itself is untouched.
+                let other = payload.get("source").and_then(|source| source.get("subagent"));
+                let other = other.and_then(|subagent| subagent.get("other")).and_then(Value::as_str);
+                if let Some(kind) = other.map(str::trim).filter(|kind| !kind.is_empty())
+                    && let Some(id) = payload.get("id").filter(|value| py_truthy(value))
+                {
+                    let kind: String = kind.chars().take(50).collect();
+                    state.upsert_codex_session_source(binding, &py_str(id), &kind)?;
+                }
                 ctx.agent =
                     Some(codex_agent_for_session(&payload, account, &ctx.session, ctx.session_from_provider));
                 if let Some(agent) = ctx.agent.as_ref() {
@@ -1390,6 +1514,7 @@ pub fn process_line(
                 // A new turn proves any earlier call with no accounting event
                 // has no supported caller-request join. Keep the call itself.
                 ctx.pending_tool_invocations.clear();
+                ctx.pending_nested_invocations.clear();
                 let Ok(model) = get(&payload, "model") else { return Ok(Err(Malformed)) };
                 let chosen = match model {
                     Some(v) if py_truthy(v) => py_str(v),
@@ -1593,10 +1718,25 @@ pub fn process_line(
                             event_id.as_str(),
                         )?;
                         ctx.pending_tool_invocations.clear();
+                        state.assign_tool_caller_request(
+                            binding,
+                            &ctx.pending_nested_invocations,
+                            event_id.as_str(),
+                        )?;
+                        ctx.pending_nested_invocations.clear();
+                    }
+                    Some("item_completed") => {
+                        let item = payload.get("item").unwrap_or(&Value::Null);
+                        if item.get("type").and_then(Value::as_str) == Some("McpToolCall") {
+                            process_nested_mcp(
+                                state, binding, account, item, ctx, timestamp, since, now, extras,
+                            )?;
+                        }
                     }
                     _ => {}
                 }
             }
+            Some("response_item") => track_codex_exec(&payload, ctx, account),
             _ => {}
         }
         return Ok(Ok(()));
@@ -1678,7 +1818,17 @@ const INTERESTING: [&[u8]; 8] = [
 ];
 
 fn interesting(line: &[u8]) -> bool {
-    INTERESTING.iter().any(|needle| line.windows(needle.len()).any(|window| window == *needle))
+    INTERESTING.iter().any(|needle| contains_bytes(line, needle))
+}
+
+fn contains_bytes(line: &[u8], needle: &[u8]) -> bool {
+    line.windows(needle.len()).any(|window| window == needle)
+}
+
+/// Codex lines worth parsing: the shared markers plus the app's completed MCP
+/// items, which carry nested calls. Claude transcripts keep the 2.1.0 filter.
+fn interesting_for(provider: Provider, line: &[u8]) -> bool {
+    interesting(line) || (provider == Provider::Codex && contains_bytes(line, b"McpToolCall"))
 }
 
 /// `Path(root).expanduser()`.
@@ -1848,7 +1998,7 @@ pub fn scan(
                         break; // A partial trailing record is retried next run.
                     }
                     offset += read as i64;
-                    if !interesting(&line) {
+                    if !interesting_for(provider, &line) {
                         continue;
                     }
                     match serde_json::from_slice::<Value>(&line) {

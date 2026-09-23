@@ -18,9 +18,9 @@ use observatory_contract::{
     BucketEntry, BuildInfo, CapabilitiesDocument, CapabilityCoverage, Code, CollectionSettings,
     ConfigDocument, ConfigSourceKind, Counter, CoverageState, CursorState, DetailCode,
     DetailedReportCapability, Discovered as DiscoveredCapability, EffectiveSettings, Envelope, Features,
-    IsoDate, Lit, MachineId, ModePath, Nullable, Platform, Provider, QueueState, Reader, Readers, Record,
-    ResourceAttributionState, Run, ScheduleCapability, ScheduleState, Scheduler, Sha256Hex, Stamp, Text,
-    ToolClass, Uuid,
+    IsoDate, LabelKind, Lit, MachineId, ModePath, Nullable, Platform, Provider, QueueState, Reader, Readers,
+    Record, RecordType, ResourceAttributionState, Run, ScheduleCapability, ScheduleState, Scheduler,
+    Sha256Hex, Stamp, Text, ToolClass, Uuid,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -35,13 +35,15 @@ use crate::http::{Client, ConfigFetch, HttpError};
 use crate::inbox::{oauth_usage_reader_denied, prune_statusline_files, statusline_reader_denied};
 use crate::outbox;
 use crate::paths;
+use crate::projects::{self, Carrier};
 use crate::pyjson::{digest, epoch_text};
 use crate::resources::{ResourceConfiguration, resource_attribution_denied};
 use crate::service;
 use crate::state::{
     AdapterStateRow, CachedConfig, RecordRow, RunRow, SUPERSEDED_CONFIGURATION, State, StateError,
 };
-use crate::{VERSION, lock};
+use crate::worktree::WorktreeEnv;
+use crate::{VERSION, builtins, labels, lock};
 
 #[derive(Debug, Error)]
 pub enum RunError {
@@ -141,6 +143,9 @@ pub struct RunSummary {
     /// The installed schedule read back beside the desired cadence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule: Option<ScheduleSummary>,
+    /// App projects, memberships, and labels built this run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub side_records: Option<SideSummary>,
 }
 
 fn default_since(now: Timestamp) -> String {
@@ -597,7 +602,7 @@ fn apply_current_privacy_policy(
             request.tools = None;
         } else if let Some(tools) = request.tools.as_mut() {
             tools.retain(|tool| {
-                is_builtin_tool_name(tool.name.as_str())
+                builtins::request_tool_retained(tool.name.as_str())
                     || (tool_detail == ToolDetail::HashedCustom && tool.name.as_str().starts_with("h:"))
             });
             if tools.is_empty() {
@@ -607,7 +612,9 @@ fn apply_current_privacy_policy(
     }
     if let Record::ToolEvent(event) = record {
         let name_allowed = event.tool.name.as_ref().is_some_and(|name| match event.tool.class {
-            ToolClass::Builtin => tool_detail != ToolDetail::Off && is_builtin_tool_name(name.as_str()),
+            ToolClass::Builtin => {
+                tool_detail != ToolDetail::Off && builtins::tool_event_name_readable(name.as_str())
+            }
             ToolClass::Mcp | ToolClass::Function | ToolClass::Custom => {
                 tool_detail == ToolDetail::HashedCustom && name.as_str().starts_with("h:")
             }
@@ -619,7 +626,7 @@ fn apply_current_privacy_policy(
         let namespace_allowed =
             event.tool.namespace.as_ref().is_some_and(|namespace| match event.tool.class {
                 ToolClass::Builtin => {
-                    tool_detail != ToolDetail::Off && is_builtin_tool_namespace(namespace.as_str())
+                    tool_detail != ToolDetail::Off && builtins::tool_namespace_readable(namespace.as_str())
                 }
                 ToolClass::Mcp | ToolClass::Function | ToolClass::Custom => {
                     tool_detail == ToolDetail::HashedCustom && namespace.as_str().starts_with("h:")
@@ -637,19 +644,7 @@ fn apply_current_privacy_policy(
     };
     let Some(agent) = agent else { return };
     let allowed = agent.name.as_ref().is_some_and(|name| match agent.class {
-        AgentClass::Builtin => {
-            tool_detail != ToolDetail::Off
-                && matches!(
-                    name.as_str(),
-                    "general-purpose"
-                        | "Explore"
-                        | "Plan"
-                        | "claude-code-guide"
-                        | "statusline-setup"
-                        | "claude"
-                        | "codex-auto-review"
-                )
-        }
+        AgentClass::Builtin => tool_detail != ToolDetail::Off && builtins::agent_name_readable(name.as_str()),
         AgentClass::Custom => tool_detail == ToolDetail::HashedCustom && name.as_str().starts_with("h:"),
         AgentClass::Main | AgentClass::Unknown => false,
     });
@@ -658,93 +653,30 @@ fn apply_current_privacy_policy(
     }
 }
 
-fn is_builtin_tool_namespace(value: &str) -> bool {
-    matches!(value, "clock" | "codex_app" | "collaboration" | "image_gen" | "multi_agent_v1" | "web")
-}
-
-fn is_builtin_tool_name(value: &str) -> bool {
-    matches!(
-        value,
-        "Agent"
-            | "AskUserQuestion"
-            | "Bash"
-            | "BashOutput"
-            | "Edit"
-            | "EnterPlanMode"
-            | "ExitPlanMode"
-            | "Glob"
-            | "Grep"
-            | "KillShell"
-            | "LS"
-            | "MultiEdit"
-            | "NotebookEdit"
-            | "Read"
-            | "Skill"
-            | "SlashCommand"
-            | "Task"
-            | "TaskOutput"
-            | "TaskStop"
-            | "TodoWrite"
-            | "WebFetch"
-            | "WebSearch"
-            | "Write"
-            | "apply_patch"
-            | "automation_update"
-            | "capture_screen_context"
-            | "close_agent"
-            | "consume_usage_reset"
-            | "create_goal"
-            | "create_sidebar_section"
-            | "create_thread"
-            | "delete_sidebar_section"
-            | "end_realtime_voice_call"
-            | "exec"
-            | "exec_command"
-            | "followup_task"
-            | "fork_thread"
-            | "get_goal"
-            | "get_handoff_status"
-            | "get_usage_limits"
-            | "handoff_thread"
-            | "imagegen"
-            | "interrupt_agent"
-            | "list_agents"
-            | "list_archived_threads"
-            | "list_projects"
-            | "list_threads"
-            | "load_workspace_dependencies"
-            | "local_shell"
-            | "move_project_to_sidebar_section"
-            | "move_thread_to_sidebar_section"
-            | "navigate_to_codex_page"
-            | "open_in_codex"
-            | "read_thread"
-            | "read_thread_terminal"
-            | "request_user_input"
-            | "request_user_input_async"
-            | "rename_sidebar_section"
-            | "reorder_section"
-            | "reorder_sidebar_projects"
-            | "reorder_sidebar_sections"
-            | "run"
-            | "send_message"
-            | "send_message_to_thread"
-            | "set_thread_archived"
-            | "set_thread_title"
-            | "share_thread"
-            | "shell_command"
-            | "sleep"
-            | "spawn_agent"
-            | "uninstall_plugin"
-            | "update_goal"
-            | "update_plan"
-            | "view_image"
-            | "wait"
-            | "wait_agent"
-            | "wait_threads"
-            | "web_search"
-            | "write_stdin"
-    )
+/// Whether a side record may leave under the current settings (section 0.5).
+/// A record held back stays pending on this machine; nothing is rejected.
+/// Section 0.5: labels follow `execution.tool_detail` alone. A label's role is
+/// display data, not a ledger class (a guardian is labeled `subagent` while its
+/// requests stay `main` and upload), so `include_subagents` never holds one back.
+fn side_record_allowed(
+    record: &Record,
+    project_attribution: ProjectAttribution,
+    tool_detail: ToolDetail,
+) -> bool {
+    match record {
+        Record::NameLabel(label) => match tool_detail {
+            ToolDetail::Off => false,
+            ToolDetail::BuiltinOnly => {
+                matches!(label.kind, LabelKind::Agent | LabelKind::SessionAgent)
+                    && builtins::any_agent_label_names_builtin(label.label.as_str())
+            }
+            ToolDetail::HashedCustom => true,
+        },
+        Record::ProjectCatalog(_) | Record::ProjectMembership(_) => {
+            project_attribution == ProjectAttribution::Hashed
+        }
+        _ => true,
+    }
 }
 
 #[cfg(test)]
@@ -846,6 +778,17 @@ fn pending_records_for_agent_setting_with_limit(
         for row in &page {
             match serde_json::from_str::<Record>(&row.record) {
                 Ok(mut record) => {
+                    // Side records ride the carrier binding and follow their own settings, not
+                    // the carrier adapter's deny entries or the ledger's privacy rewrites.
+                    if record.is_side() {
+                        if side_record_allowed(&record, project_attribution, tool_detail) {
+                            records.push(record);
+                            if records.len() == limit {
+                                break;
+                            }
+                        }
+                        continue;
+                    }
                     if local_policy.is_some_and(|policy| {
                         let adapter = record.adapter();
                         let gate = policy.settings.gate(adapter);
@@ -973,6 +916,140 @@ fn rebuild_outbox_preserving_coverage(
     }
 }
 
+/// What the side-record build did this run (section 2.2). Local only.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SideSummary {
+    /// Records produced per side type.
+    pub produced: BTreeMap<String, u64>,
+    /// Stored rows that changed this run.
+    pub changed: u64,
+    /// Local rows of complete types the build no longer produces, deleted.
+    pub deleted: u64,
+    /// Labels cut to 200 characters.
+    pub labels_truncated: u64,
+    /// Names that normalized to nothing.
+    pub labels_dropped: u64,
+    /// Produced records that failed validation and were not stored.
+    pub invalid: u64,
+    /// The weekly resync made these produced records pending again.
+    pub resynced: u64,
+    /// Sources that could not be read; their previous records stand.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub unavailable: BTreeMap<String, &'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<&'static str>,
+}
+
+const LABELS_RESYNC_KEY: &str = "labels_resync_at";
+const LABELS_RESYNC_SECONDS: f64 = 7.0 * 86_400.0;
+
+/// Builds and stores this install's side records. Never fails the run: an
+/// error is a code in the summary, and the previous records stand.
+fn build_side_records(state: &State, ctx: &RunContext, stored_at: &Stamp) -> SideSummary {
+    if ctx.document.is_none() {
+        // Without the server's document the registered bindings are unknown.
+        return SideSummary { skipped: Some("no_config_document"), ..SideSummary::default() };
+    }
+    match try_build_side_records(state, ctx, stored_at) {
+        Ok(summary) => summary,
+        Err(error) => {
+            tracing::warn!(code = "side_records_failed", error = %error, "side records not rebuilt");
+            SideSummary { error: Some("state_error"), ..SideSummary::default() }
+        }
+    }
+}
+
+fn try_build_side_records(
+    state: &State,
+    ctx: &RunContext,
+    stored_at: &Stamp,
+) -> Result<SideSummary, StateError> {
+    let mut summary = SideSummary::default();
+    let Some(carrier) = Carrier::choose(&ctx.bindings, stored_at.clone()) else {
+        summary.skipped = Some("no_binding");
+        return Ok(summary);
+    };
+    let env = WorktreeEnv::current(projects::codex_homes(&ctx.bindings));
+    let resolution = projects::resolve(state, &ctx.bindings, &env, stored_at)?;
+    summary.unavailable = resolution.unavailable.clone();
+    in_transaction(state, || projects::persist(state, &resolution))?;
+    let mut records = projects::records(&resolution, &carrier);
+    let labels = labels::build(state, &carrier, &ctx.privacy_key, &resolution.session_agent_labels)?;
+    summary.labels_truncated = labels.truncated;
+    summary.labels_dropped = labels.dropped;
+    records.extend(labels.records);
+
+    let mut complete: Vec<&str> = Vec::new();
+    if resolution.catalog_complete {
+        complete.push(RecordType::ProjectCatalog.as_str());
+    }
+    if resolution.sessions_complete && resolution.folders.is_some() {
+        complete.push(RecordType::ProjectMembership.as_str());
+    }
+    if resolution.session_agent_labels_complete {
+        complete.push(RecordType::NameLabel.as_str());
+    }
+    let mut produced = HashSet::new();
+    in_transaction(state, || {
+        for record in &records {
+            let mut violations = Vec::new();
+            record.validate(ctx.now, "record", &mut violations);
+            let (Ok(content_hash), Ok(text)) =
+                (observatory_contract::stable_json::content_hash(record), serde_json::to_string(record))
+            else {
+                summary.invalid += 1;
+                continue;
+            };
+            if !violations.is_empty() {
+                summary.invalid += 1;
+                continue;
+            }
+            let row = RecordRow {
+                record_id: record.record_id().as_str().to_owned(),
+                binding_id: record.binding_id().as_str().to_owned(),
+                adapter: record.adapter().as_str().to_owned(),
+                record_type: record.record_type().as_str().to_owned(),
+                semantic_key: record.semantic_key(),
+                content_hash: content_hash.as_str().to_owned(),
+                published_hash: None,
+                rejected_reason: None,
+                record: text,
+                updated_at: stored_at.as_str().to_owned(),
+            };
+            if state.upsert_record(&row)? {
+                summary.changed += 1;
+            }
+            *summary.produced.entry(row.record_type.clone()).or_default() += 1;
+            produced.insert(row.record_id);
+        }
+        summary.deleted = state.delete_side_records_except(&complete, &produced)? as u64;
+        Ok(())
+    })?;
+    let last = state.meta(LABELS_RESYNC_KEY)?.and_then(|text| text.parse::<f64>().ok());
+    if last.is_none_or(|last| ctx.now_seconds - last >= LABELS_RESYNC_SECONDS) {
+        let ids: Vec<String> = produced.into_iter().collect();
+        summary.resynced = state.resync_side_records(&ids)? as u64;
+        state.set_meta(LABELS_RESYNC_KEY, &ctx.now_seconds.to_string())?;
+    }
+    Ok(summary)
+}
+
+fn in_transaction<T>(state: &State, work: impl FnOnce() -> Result<T, StateError>) -> Result<T, StateError> {
+    state.begin()?;
+    match work() {
+        Ok(value) => {
+            state.commit()?;
+            Ok(value)
+        }
+        Err(error) => {
+            state.rollback()?;
+            Err(error)
+        }
+    }
+}
+
 /// Runs one collection cycle with the given adapters.
 pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunSummary, RunError> {
     let started = Instant::now();
@@ -1001,6 +1078,7 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
             detailed_reports: Vec::new(),
             capabilities: None,
             schedule: None,
+            side_records: None,
         });
     }
     let state = State::open(&ctx.state_path)?;
@@ -1190,6 +1268,8 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
     for row in &adapter_rows {
         state.save_adapter_state(row)?;
     }
+    // App projects, memberships, and labels, from what the adapters just stored.
+    let side_records = build_side_records(&state, &ctx, &stored_at);
     // Anything written from here until the next run starts is newer than every
     // emission mark stored above.
     state.advance_change_generation()?;
@@ -1302,6 +1382,7 @@ pub fn execute(prepared: Prepared, adapters: &[Box<dyn Adapter>]) -> Result<RunS
         detailed_reports,
         capabilities,
         schedule: Some(schedule),
+        side_records: Some(side_records),
     };
     if let Ok(text) = serde_json::to_string(&summary) {
         state.save_run(&RunRow {
@@ -1507,6 +1588,7 @@ pub fn capabilities_document(
         detailed_monthly_report: true,
         account_history: true,
         claude_oauth_keepalive: true,
+        labels: true,
     };
     let fingerprint = digest(&serde_json::json!([adapter_rows, features]));
     let resource_attribution = if settings.execution.detail_level != DetailLevel::RequestsWithTools {
@@ -2166,6 +2248,7 @@ mod tests {
                     namespace_hash: None,
                     outcome: "unknown".into(),
                     name_truncated: false,
+                    origin: "direct".into(),
                 },
             )
             .unwrap();
@@ -2378,6 +2461,7 @@ mod tests {
                     namespace_hash: None,
                     outcome: "unknown".into(),
                     name_truncated: false,
+                    origin: "direct".into(),
                 },
             )
             .unwrap();
@@ -2568,5 +2652,215 @@ mod tests {
         let capabilities = summary.capabilities.as_ref().unwrap();
         assert_eq!((capabilities.posted, capabilities.skipped), (false, Some("dry_run")));
         assert_eq!(summary.schedule.as_ref().unwrap().desired_interval_minutes, None);
+    }
+
+    fn side_context(dir: &Path, codex_home: &Path) -> RunContext {
+        let claude = "11111111-1111-4111-8111-111111111111";
+        let codex = "22222222-2222-4222-8222-222222222222";
+        let document: ConfigDocument = serde_json::from_value(json!({
+            "schema_version": 2,
+            "settings_version": 3,
+            "install": { "id": "33333333-3333-4333-8333-333333333333", "kind": "companion",
+                "machine_label": "synthetic", "paused": false },
+            "bindings": [],
+            "settings": CollectionSettings::defaults(),
+            "companion": { "latest_version": null }
+        }))
+        .unwrap();
+        let binding = |id: &str, provider: Provider, account: &str| BindingContext {
+            binding_id: Uuid::from_str(id).unwrap(),
+            account_id: observatory_contract::AccountId::from_str(account).unwrap(),
+            provider,
+            enabled: true,
+            identity_hash: None,
+            identity: IdentityState::Confirmed,
+            identity_conflict: false,
+            roots: Vec::new(),
+            codex_home: Some(codex_home.to_path_buf()),
+            cursor_state_db: None,
+        };
+        RunContext::new(
+            Timestamp::from_str("2026-09-12T00:00:00Z").unwrap(),
+            "2026-09-01".into(),
+            crate::pyjson::epoch_text("2026-09-01T00:00:00Z").unwrap(),
+            CollectionSettings::defaults(),
+            3,
+            Some(document),
+            vec![
+                binding(claude, Provider::Claude, "claude-synthetic"),
+                binding(codex, Provider::Codex, "codex-synthetic"),
+            ],
+            vec![],
+            dir.to_path_buf(),
+            dir.join("state.sqlite3"),
+            dir.join("inbox"),
+            true,
+            Duration::from_secs(60),
+            crate::privacy::PrivacyKey::fixed_for_tests(),
+        )
+    }
+
+    fn side_ids(state: &State, record_type: &str) -> Vec<(String, Option<String>, Option<String>)> {
+        state
+            .records_of_type_for_tests(record_type)
+            .into_iter()
+            .map(|row| (row.record_id, row.published_hash, row.rejected_reason))
+            .collect()
+    }
+
+    /// Spec test R12: side-record housekeeping.
+    #[test]
+    fn side_records_are_resynced_weekly_deleted_when_gone_and_tombstones_survive() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex-home");
+        std::fs::create_dir_all(&codex_home).unwrap();
+        let ctx = side_context(dir.path(), &codex_home);
+        let state = State::open(&ctx.state_path).unwrap();
+        state.privacy_key().unwrap();
+        // A project the app listed once and no longer lists: a tombstone.
+        state
+            .upsert_app_project_seen(
+                "codex_desktop",
+                "codex-synthetic",
+                &crate::state::AppProjectSeenRow {
+                    app_project_id: "p-gone".into(),
+                    project_key: crate::privacy::app_project_key(
+                        "codex_desktop",
+                        "codex-synthetic",
+                        "p-gone",
+                    )
+                    .as_str()
+                    .to_owned(),
+                    name: "Gone".into(),
+                    position: Some(1),
+                    last_state: "active".into(),
+                },
+            )
+            .unwrap();
+        let claude = "11111111-1111-4111-8111-111111111111";
+        state.upsert_project(claude, &"e".repeat(64), "/synthetic/work", "2026-09-02T00:00:00Z").unwrap();
+        let label = |label: &str| crate::state::AgentLabelRow {
+            agent_key: "f".repeat(64),
+            label: label.into(),
+            role: Some("subagent".into()),
+            source: "codex_thread".into(),
+        };
+        state.replace_agent_labels("elsewhere", &[label("worker")]).unwrap();
+        let stored = Stamp::parse("2026-09-12T00:00:00.000Z").unwrap();
+        let first = build_side_records(&state, &ctx, &stored);
+        assert_eq!(first.error, None);
+        assert_eq!(first.produced.get("project.catalog"), Some(&1));
+        assert_eq!(first.produced.get("project.membership"), Some(&1));
+        assert_eq!(first.produced.get("name.label"), Some(&1));
+        // Everything is acknowledged; the server refused the membership once.
+        for record_type in ["name.label", "project.catalog", "project.membership"] {
+            for (id, _, _) in side_ids(&state, record_type) {
+                let row = state.record(&id).unwrap().unwrap();
+                state.mark_record_published(&id, &row.content_hash).unwrap();
+            }
+        }
+        let membership = side_ids(&state, "project.membership")[0].0.clone();
+        state.mark_record_rejected(&membership, "binding_not_owned").unwrap();
+        save_record(&state, &queued_statusline_reading_record(), "2026-09-02T04:01:00.000Z");
+        let ledger_before = state.pending_counts().unwrap();
+
+        // The label is no longer produced: deleted locally. The tombstone is still produced.
+        state.replace_agent_labels("elsewhere", &[]).unwrap();
+        let second = build_side_records(&state, &ctx, &stored);
+        assert_eq!(second.deleted, 1);
+        assert!(side_ids(&state, "name.label").is_empty());
+        let catalog = side_ids(&state, "project.catalog");
+        assert_eq!(catalog.len(), 1);
+        assert!(catalog[0].1.is_some(), "an unchanged tombstone stays acknowledged");
+        assert_eq!(second.resynced, 0, "not due yet");
+
+        // A week later: exactly the produced ids are pending again, the refusal forgotten.
+        state.set_meta(LABELS_RESYNC_KEY, &(ctx.now_seconds - 8.0 * 86_400.0).to_string()).unwrap();
+        let third = build_side_records(&state, &ctx, &stored);
+        assert_eq!(third.resynced, 2);
+        for record_type in ["project.catalog", "project.membership"] {
+            for (_, published, rejected) in side_ids(&state, record_type) {
+                assert_eq!((published, rejected), (None, None));
+            }
+        }
+        let after = state.pending_counts().unwrap();
+        assert_eq!(
+            after.get("allowance.reading"),
+            ledger_before.get("allowance.reading"),
+            "ledger untouched"
+        );
+    }
+
+    fn queued_statusline_reading_record() -> Record {
+        let dir = tempfile::tempdir().unwrap();
+        let scratch = State::open(&dir.path().join("scratch.sqlite3")).unwrap();
+        queued_statusline_reading(&scratch)
+    }
+
+    #[test]
+    fn side_records_travel_by_their_own_settings_and_ignore_adapter_denies() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex-home");
+        std::fs::create_dir_all(&codex_home).unwrap();
+        let ctx = side_context(dir.path(), &codex_home);
+        let state = State::open(&ctx.state_path).unwrap();
+        state.privacy_key().unwrap();
+        let claude = "11111111-1111-4111-8111-111111111111";
+        state.upsert_project(claude, &"e".repeat(64), "/synthetic/work", "2026-09-02T00:00:00Z").unwrap();
+        let rows = |label: &str, role: &str| crate::state::AgentLabelRow {
+            agent_key: if label == "worker" { "f".repeat(64) } else { "d".repeat(64) },
+            label: label.into(),
+            role: Some(role.into()),
+            source: "codex_thread".into(),
+        };
+        let labels = [rows("worker", "subagent"), rows("synthetic-custom-role", "subagent")];
+        state.replace_agent_labels("elsewhere", &labels).unwrap();
+        build_side_records(&state, &ctx, &Stamp::parse("2026-09-12T00:00:00.000Z").unwrap());
+        let count = |tool_detail, project, subagents| {
+            let detail = DetailLevel::RequestsWithTools;
+            pending_records_for_agent_setting(&state, detail, subagents, project, tool_detail)
+                .unwrap()
+                .iter()
+                .map(|record| record.record_type().as_str().to_owned())
+                .collect::<Vec<_>>()
+        };
+        let all = count(ToolDetail::HashedCustom, ProjectAttribution::Hashed, true);
+        assert_eq!(all.iter().filter(|kind| *kind == "name.label").count(), 2);
+        assert_eq!(all.iter().filter(|kind| *kind == "project.membership").count(), 1);
+        let builtin = count(ToolDetail::BuiltinOnly, ProjectAttribution::Hashed, true);
+        assert_eq!(builtin.iter().filter(|kind| *kind == "name.label").count(), 1, "only the builtin role");
+        let off = count(ToolDetail::Off, ProjectAttribution::Hashed, true);
+        assert_eq!(off.iter().filter(|kind| *kind == "name.label").count(), 0);
+        assert_eq!(off.iter().filter(|kind| *kind == "project.membership").count(), 1);
+        let no_projects = count(ToolDetail::HashedCustom, ProjectAttribution::Off, true);
+        assert_eq!(no_projects.iter().filter(|kind| kind.starts_with("project.")).count(), 0);
+        // Labels follow tool_detail only: a subagent-role label (a guardian's, whose
+        // requests are class main and upload) still travels without subagents.
+        let no_subagents = count(ToolDetail::HashedCustom, ProjectAttribution::Hashed, false);
+        assert_eq!(no_subagents.iter().filter(|kind| *kind == "name.label").count(), 2);
+        // The carrier adapter's deny does not hold side records back; a project deny does.
+        let mut settings = CollectionSettings::defaults();
+        settings.execution.detail_level = DetailLevel::RequestsWithTools;
+        settings.execution.tool_detail = ToolDetail::HashedCustom;
+        settings.execution.project_attribution = ProjectAttribution::Hashed;
+        let none = ResourceConfiguration::default();
+        let deny = ["claude_execution".to_owned()];
+        let denied = pending_records_for_current_settings(&state, &settings, &deny, &none).unwrap();
+        assert_eq!(denied.iter().filter(|record| record.is_side()).count(), 3);
+        let deny = ["execution.project_attribution".to_owned()];
+        let project_denied = pending_records_for_current_settings(&state, &settings, &deny, &none).unwrap();
+        assert!(project_denied.iter().all(|record| !matches!(record, Record::ProjectMembership(_))));
+    }
+
+    #[test]
+    fn without_a_config_document_no_side_records_are_built() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_home = dir.path().join("codex-home");
+        let mut ctx = side_context(dir.path(), &codex_home);
+        ctx.document = None;
+        let state = State::open(&ctx.state_path).unwrap();
+        let summary = build_side_records(&state, &ctx, &Stamp::parse("2026-09-12T00:00:00.000Z").unwrap());
+        assert_eq!(summary.skipped, Some("no_config_document"));
+        assert!(state.pending_counts().unwrap().is_empty());
     }
 }

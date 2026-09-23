@@ -107,4 +107,9 @@ pub struct UsageResponse {
     pub accepted: Accepted,
     pub duplicates: Counter,
     pub rejected: Vec<Rejection>,
+    /// Side records the server could not apply this time. They are not rejected: the install
+    /// marks them deferred and a later resync retries them. The server sends the field only
+    /// when it is non-empty, and only builds that send side records can receive it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deferred_record_ids: Vec<Uuid>,
 }

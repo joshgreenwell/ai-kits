@@ -84,6 +84,15 @@ pub struct Features {
     /// This build can spawn Claude Code so *it* refreshes its OAuth store.
     #[serde(default)]
     pub claude_oauth_keepalive: bool,
+    /// This build sends `name.label`, `project.catalog` and `project.membership` records
+    /// (2.2.0). Omitted when false, so an older document round-trips unchanged and the
+    /// server's optional field reads it as absent.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub labels: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

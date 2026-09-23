@@ -18,6 +18,8 @@ jiff.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+# Section 1.6 display text: the same Unicode 16 general categories JavaScript's \p{...} uses.
+unicode-general-category = "1.1"
 
 [dev-dependencies]
 jsonschema.workspace = true

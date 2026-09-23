@@ -395,6 +395,129 @@ string_enum! {
         AgentEvent = "agent.event",
         ToolEvent = "tool.event",
         ResourceAccess = "resource.access",
+        NameLabel = "name.label",
+        ProjectCatalog = "project.catalog",
+        ProjectMembership = "project.membership",
+    }
+}
+
+impl RecordType {
+    /// The three side record types. They carry no `channel` and no `basis`, never enter a
+    /// ledger, and ride on the install's carrier binding.
+    pub const SIDE: &'static [RecordType] =
+        &[RecordType::NameLabel, RecordType::ProjectCatalog, RecordType::ProjectMembership];
+
+    /// True for `name.label`, `project.catalog` and `project.membership`.
+    pub const fn is_side(self) -> bool {
+        match self {
+            RecordType::NameLabel | RecordType::ProjectCatalog | RecordType::ProjectMembership => true,
+            RecordType::ActivityRequest
+            | RecordType::AccountUsageBucket
+            | RecordType::AllowanceReading
+            | RecordType::MoneyEntry
+            | RecordType::AgentEvent
+            | RecordType::ToolEvent
+            | RecordType::ResourceAccess => false,
+        }
+    }
+}
+
+string_enum! {
+    /// What a `name.label` key names.
+    LabelKind {
+        /// A hashed tool name (`h:<16 hex>`).
+        Tool = "tool",
+        /// A hashed MCP or connector namespace (`h:<16 hex>`).
+        ToolNamespace = "tool_namespace",
+        /// A hashed custom agent name (`h:<16 hex>`).
+        AgentName = "agent_name",
+        /// An `agent_key` (64 hex).
+        Agent = "agent",
+        /// The `session_hash` of a Cursor composer (64 hex).
+        SessionAgent = "session_agent",
+    }
+}
+
+impl LabelKind {
+    /// True for the kinds keyed by `h:<16 hex>`; the others are keyed by 64 hex.
+    pub const fn is_hashed_name(self) -> bool {
+        match self {
+            LabelKind::Tool | LabelKind::ToolNamespace | LabelKind::AgentName => true,
+            LabelKind::Agent | LabelKind::SessionAgent => false,
+        }
+    }
+
+    /// Only `agent` and `session_agent` labels may carry a role.
+    pub const fn allows_role(self) -> bool {
+        !self.is_hashed_name()
+    }
+
+    /// Only `session_agent` labels may carry a parent key.
+    pub const fn allows_parent_key(self) -> bool {
+        matches!(self, LabelKind::SessionAgent)
+    }
+}
+
+string_enum! {
+    /// The display role a label gives an agent.
+    AgentRole {
+        Main = "main",
+        Subagent = "subagent",
+    }
+}
+
+string_enum! {
+    /// The app that owns a project. `claude_desktop` and `cursor` are reserved.
+    ProjectApp {
+        CodexDesktop = "codex_desktop",
+        ClaudeDesktop = "claude_desktop",
+        Cursor = "cursor",
+    }
+}
+
+string_enum! {
+    /// Whether the app still lists a project. A removed project keeps its history.
+    ProjectState {
+        Active = "active",
+        Removed = "removed",
+    }
+}
+
+string_enum! {
+    /// What a `project.membership` places in a project.
+    MembershipKind {
+        /// A folder key, equal to `canonical_requests.effective_project_key`.
+        WorkingDirectory = "working_directory",
+        /// A ledger `session_hash`.
+        Session = "session",
+    }
+}
+
+string_enum! {
+    /// How a membership was decided. The first four name a project; the rest do not.
+    MembershipResolution {
+        AppAssignment = "app_assignment",
+        Inherited = "inherited",
+        RootPrefix = "root_prefix",
+        WorktreeRootPrefix = "worktree_root_prefix",
+        Projectless = "projectless",
+        OutsideRoots = "outside_roots",
+        NoFolder = "no_folder",
+    }
+}
+
+impl MembershipResolution {
+    /// True exactly when the membership must carry a `project_key`.
+    pub const fn names_project(self) -> bool {
+        match self {
+            MembershipResolution::AppAssignment
+            | MembershipResolution::Inherited
+            | MembershipResolution::RootPrefix
+            | MembershipResolution::WorktreeRootPrefix => true,
+            MembershipResolution::Projectless
+            | MembershipResolution::OutsideRoots
+            | MembershipResolution::NoFolder => false,
+        }
     }
 }
 

@@ -127,6 +127,22 @@ pub fn agent_name_hash(key: &PrivacyKey, name: &str) -> String {
     key.short_hash(&json!(["agent-name", name]))
 }
 
+/// The key of a project an app keeps: `sha256(stable_json(["app-project", app,
+/// account_id, app_project_id]))`. Unkeyed on purpose, like a session hash, so a
+/// new privacy key never orphans it; the app's project ids are random UUIDs, so
+/// the digest reveals nothing.
+pub fn app_project_key(app: &str, account_id: &str, app_project_id: &str) -> Sha256Hex {
+    let value = json!(["app-project", app, account_id, app_project_id]);
+    Sha256Hex::digest(observatory_contract::stable_json::stable_json(&value).as_bytes())
+}
+
+/// The session hash of a Cursor composer, as `cursor_execution` writes it on
+/// every request: `sha256(stable_json(["cursor_session", composer_id]))`.
+pub fn cursor_session_hash(composer_id: &str) -> Sha256Hex {
+    let value = json!(["cursor_session", composer_id]);
+    Sha256Hex::digest(observatory_contract::stable_json::stable_json(&value).as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

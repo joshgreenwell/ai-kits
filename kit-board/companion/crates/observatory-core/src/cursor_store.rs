@@ -315,6 +315,113 @@ fn cell_text(row: &rusqlite::Row<'_>, idx: usize) -> Result<Option<String>, Curs
     }
 }
 
+/// One Cursor composer's workspace and subagent links, from the global store.
+/// Read with `json_extract` in SQLite; no conversation body is loaded.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CursorComposer {
+    pub composer_id: String,
+    /// `composerData.workspaceIdentifier.id`: a `workspaceStorage` folder name.
+    pub workspace_id: Option<String>,
+    /// `subagentInfo.parentComposerId`, for a subagent composer.
+    pub parent_id: Option<String>,
+    /// `subagentInfo.subagentTypeName`, for a subagent composer.
+    pub subagent_type: Option<String>,
+}
+
+/// The composers and workspace folders a Cursor install knows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CursorWorkspaces {
+    pub composers: HashMap<String, CursorComposer>,
+    /// `workspaceStorage/<id>/workspace.json` `folder`, as a plain path; `None`
+    /// for a multi-root workspace or a folder that is not a local file URI.
+    pub folders: HashMap<String, Option<String>>,
+    /// composer id → workspace id, from each workspace's `allComposers` list.
+    pub listed: HashMap<String, String>,
+}
+
+impl CursorWorkspaces {
+    /// The workspace folder of a composer: its own workspace identifier first,
+    /// then the workspace whose composer list names it.
+    pub fn folder_of(&self, composer_id: &str) -> Option<&str> {
+        let workspace = self
+            .composers
+            .get(composer_id)
+            .and_then(|composer| composer.workspace_id.as_deref())
+            .filter(|id| self.folders.contains_key(*id))
+            .or_else(|| self.listed.get(composer_id).map(String::as_str))?;
+        self.folders.get(workspace)?.as_deref()
+    }
+}
+
+/// Reads the global store's composer links and every workspace folder beside it
+/// (`<User>/workspaceStorage`, the global store living in `<User>/globalStorage`).
+/// A workspace that cannot be read is skipped; an unreadable global store is an error.
+pub fn cursor_workspaces(global_db: &Path) -> Result<CursorWorkspaces, CursorStoreError> {
+    let conn = open_read_only(global_db)?;
+    let mut out = CursorWorkspaces::default();
+    if table_exists(&conn, "cursorDiskKV")? {
+        let mut statement = conn
+            .prepare(
+                "SELECT key, json_extract(value, '$.workspaceIdentifier.id'),
+                        json_extract(value, '$.subagentInfo.parentComposerId'),
+                        json_extract(value, '$.subagentInfo.subagentTypeName')
+                   FROM cursorDiskKV WHERE key LIKE 'composerData:%' AND json_valid(value)",
+            )
+            .map_err(|_| CursorStoreError::Read)?;
+        let mut query = statement.query([]).map_err(|_| CursorStoreError::Read)?;
+        while let Some(row) = query.next().map_err(|_| CursorStoreError::Read)? {
+            let key: String = row.get(0).map_err(|_| CursorStoreError::Read)?;
+            let Some(composer_id) = key.strip_prefix("composerData:").filter(|id| !id.is_empty()) else {
+                continue;
+            };
+            out.composers.insert(
+                composer_id.to_owned(),
+                CursorComposer {
+                    composer_id: composer_id.to_owned(),
+                    workspace_id: cell_text(row, 1)?,
+                    parent_id: cell_text(row, 2)?,
+                    subagent_type: cell_text(row, 3)?,
+                },
+            );
+        }
+    }
+    let user = global_db.parent().and_then(Path::parent);
+    let Some(storage) = user.map(|user| user.join("workspaceStorage")) else { return Ok(out) };
+    let Ok(entries) = std::fs::read_dir(storage) else { return Ok(out) };
+    let mut dirs: Vec<std::path::PathBuf> =
+        entries.filter_map(Result::ok).map(|entry| entry.path()).filter(|path| path.is_dir()).collect();
+    dirs.sort();
+    for dir in dirs {
+        let Some(id) = dir.file_name().map(|name| name.to_string_lossy().into_owned()) else { continue };
+        let folder = std::fs::read(dir.join("workspace.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|value| value.get("folder").and_then(serde_json::Value::as_str).map(str::to_owned))
+            .and_then(|uri| crate::worktree::file_uri_path(&uri));
+        out.folders.insert(id.clone(), folder);
+        let db = dir.join("state.vscdb");
+        if !db.is_file() {
+            continue;
+        }
+        let Ok(workspace) = open_read_only(&db) else { continue };
+        for composer in listed_composers(&workspace).unwrap_or_default() {
+            out.listed.entry(composer).or_insert_with(|| id.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// The composer ids one workspace's `composer.composerData` lists.
+fn listed_composers(workspace: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut statement = workspace.prepare(
+        "SELECT json_extract(composer.value, '$.composerId')
+           FROM ItemTable, json_each(ItemTable.value, '$.allComposers') AS composer
+          WHERE ItemTable.key = 'composer.composerData' AND json_valid(ItemTable.value)",
+    )?;
+    let rows = statement.query_map([], |row| row.get::<_, Option<String>>(0))?;
+    Ok(rows.filter_map(|row| row.ok().flatten()).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

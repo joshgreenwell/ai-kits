@@ -407,6 +407,13 @@ fn acknowledge(
             }
         }
     }
+    // Side records the server could not apply this time: acknowledged, never rejected, and
+    // marked so `doctor` counts them; the weekly resync sends them again.
+    if !response.deferred_record_ids.is_empty() {
+        let deferred: Vec<String> =
+            response.deferred_record_ids.iter().map(|id| id.as_str().to_owned()).collect();
+        state.mark_records_deferred(&deferred, received_at.as_str())?;
+    }
     Ok(())
 }
 
@@ -771,5 +778,32 @@ mod tests {
             assert_eq!(classify(&HttpError::Status(status)), Failure::Terminal(format!("http_{status}")));
         }
         assert_eq!(classify(&HttpError::Decode), Failure::Transient("invalid_receipt".into()));
+    }
+
+    #[test]
+    fn deferred_side_records_are_acknowledged_and_marked_never_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+        let records = saved_records(&state, 2);
+        let bodies = build_bodies(&run(), vec![], records.clone(), vec![]).unwrap();
+        let deferred = records[1].record_id().clone();
+        let response: observatory_contract::UsageResponse = serde_json::from_value(serde_json::json!({
+            "ok": true, "schema_version": 2, "run_id": run().run_id,
+            "accepted": { "buckets": 0, "records": 2 }, "duplicates": 0, "rejected": [],
+            "deferred_record_ids": [deferred],
+        }))
+        .unwrap();
+        acknowledge(&state, &bodies[0], &response, &Stamp::from_timestamp(now())).unwrap();
+        assert!(published(&state, &records[0]) && published(&state, &records[1]));
+        assert_eq!(rejected_reason(&state, &records[1]), None);
+        assert_eq!(state.deferred_counts().unwrap().values().sum::<u64>(), 1);
+        // A later acknowledgement that does not defer it clears the mark.
+        let plain: observatory_contract::UsageResponse = serde_json::from_value(serde_json::json!({
+            "ok": true, "schema_version": 2, "run_id": run().run_id,
+            "accepted": { "buckets": 0, "records": 2 }, "duplicates": 0, "rejected": [],
+        }))
+        .unwrap();
+        acknowledge(&state, &bodies[0], &plain, &Stamp::from_timestamp(now())).unwrap();
+        assert!(state.deferred_counts().unwrap().is_empty());
     }
 }

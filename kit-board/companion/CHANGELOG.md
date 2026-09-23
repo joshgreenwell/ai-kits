@@ -4,6 +4,45 @@ All notable changes to the `observatory` companion. Tags are `observatory-v<vers
 
 ## Unreleased
 
+Ships as 2.2.0 (the workspace version is already 2.2.0; date this section when the tag is pushed).
+
+- App projects and readable names. Each run now builds three side record types after the
+  adapters, on one carrier binding (the smallest binding id the Observatory registered), with
+  parser version `2.2.0+sides1`: `project.catalog` (the projects the owner created in the Codex
+  desktop app, read-only from `state_<N>.sqlite` and `.codex-global-state.json`, keyed by an
+  unkeyed app-project digest; a project that disappears from a successful read becomes a `removed`
+  tombstone), `project.membership` (which app project each ledger session hash and folder key
+  belongs to, session first, following the app's own assignment order; worktrees resolve to their
+  main repository and the answer is kept in `member_paths`, so a deleted worktree keeps its
+  project; Claude and Cursor folders under a Codex project root belong to that project), and
+  `name.label` (the readable name beside each hashed tool, namespace, and custom agent name, the
+  role of each Codex subagent session including `guardian`, and each Cursor composer). Names never
+  enter a ledger record and no key changes. `tool_detail` and `project_attribution` gate them; a
+  store that cannot be read produces none and the previous ones stand. A record the Observatory
+  defers is marked locally and counted by `doctor`; every produced record is sent again weekly. The
+  capability document reports `features.labels`.
+- Codex MCP calls made from inside an `exec` script (`item_completed` `McpToolCall`) are collected
+  as `tool.event` invocations and results linked to the open `exec` (`parent_invocation_key`), only
+  when exactly one `exec` is open. They are marked `nested_mcp` in `local_tool_events.origin` and
+  never count toward a request's `tool_calls` or `tools[]`, so no request record changes.
+- `PowerShell` and `NotebookRead` travel readable in `tool.event` records (their rows are revised
+  once); the request `tools[]` list is unchanged. The classification and upload lists moved to
+  `observatory_core::builtins`, pinned by a golden test against the 2.1.0 functions.
+- `observatory projects --apps [--samples]` prints how app projects, folders, and sessions resolve,
+  as counts. `observatory upgrade-gate --state <copy> --cutoff <rfc3339> [--baseline <copy>]` checks
+  a dry-run copy of the state before an upgrade and exits 3 on any ledger change the release does
+  not allow. With `--baseline`, history is what the previous build had read (a re-keyed instant,
+  or a line at or before where it read that session and agent to), so activity the last run had
+  not read yet, including a `partial` run's backlog, is not a false failure.
+- The parser version moves with the crate version, so the first run replays retained transcripts.
+  That replay is now quick: copying an agent's profile onto its stored requests scanned every
+  request row on each request line (no index on `agent_key`) and rewrote rows that already held the
+  values. Both tables gain an index and the copy touches only rows that differ; stored content is
+  unchanged. On this project's largest state (45,000 requests, 5.7 GB of Codex rollouts) a full
+  replay went from about 0.7 MB/s (hours, over many runs) to under a minute.
+- State schema 9: new tables `agent_labels`, `codex_session_sources`, `member_paths`,
+  `app_projects_seen`; new columns `local_tool_events.origin` and `records.deferred_at`.
+
 ## 2.1.0 — 2026-09-21
 
 - The state database now waits up to four minutes for its write lock instead of five seconds. Adapters run in parallel over one file, and a large re-emission held the lock long enough for the Claude adapters to fail with `state_error` on the first run after upgrading.

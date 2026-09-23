@@ -56,6 +56,12 @@ pub enum ValueError {
     Uuid,
     #[error("expected a finite number")]
     Real,
+    #[error(
+        "expected normalized display text: no Cc, Cf, Cs, Zl or Zp character, trimmed, 1 to the limit in characters"
+    )]
+    DisplayText,
+    #[error("expected a label key: h:<16 hex> or 64 lowercase hex")]
+    LabelKey,
     #[error("expected the literal {0}")]
     Literal(u64),
 }
@@ -650,6 +656,185 @@ impl<const MIN: usize, const MAX: usize> fmt::Debug for Text<MIN, MAX> {
 }
 
 impl<const MIN: usize, const MAX: usize> fmt::Display for Text<MIN, MAX> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// True for the characters section 1.6 removes: general category Cc, Cf, Cs, Zl or Zp
+/// (U+0085, U+2028, U+2029, U+FEFF and U+00AD among them).
+pub fn is_forbidden_display_char(ch: char) -> bool {
+    use unicode_general_category::{GeneralCategory, get_general_category};
+    matches!(
+        get_general_category(ch),
+        GeneralCategory::Control
+            | GeneralCategory::Format
+            | GeneralCategory::Surrogate
+            | GeneralCategory::LineSeparator
+            | GeneralCategory::ParagraphSeparator
+    )
+}
+
+/// The result of `normalize_display_text`: the text, and whether the limit cut it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NormalizedText {
+    pub text: String,
+    pub truncated: bool,
+}
+
+/// Section 1.6: remove every Cc, Cf, Cs, Zl and Zp character, trim, truncate to `max_chars`
+/// code points at a character boundary, and trim again. After the removal, Rust `str::trim`
+/// and JavaScript `trim` both remove exactly the Zs characters, so the server's check agrees.
+/// The result may be empty; the caller decides what an empty name means.
+pub fn normalize_display_text(raw: &str, max_chars: usize) -> NormalizedText {
+    let cleaned: String = raw.chars().filter(|ch| !is_forbidden_display_char(*ch)).collect();
+    let trimmed = cleaned.trim();
+    if trimmed.chars().count() <= max_chars {
+        return NormalizedText { text: trimmed.to_owned(), truncated: false };
+    }
+    let cut: String = trimmed.chars().take(max_chars).collect();
+    NormalizedText { text: cut.trim().to_owned(), truncated: true }
+}
+
+/// True when `text` is already normalized and 1 to `max_chars` code points long: the rule
+/// zod applies (`/^[^\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]+$/u`, `s === s.trim()`, the limit).
+pub fn is_normalized_display_text(text: &str, max_chars: usize) -> bool {
+    !text.is_empty()
+        && text.trim().len() == text.len()
+        && !text.chars().any(is_forbidden_display_char)
+        && text.chars().count() <= max_chars
+}
+
+/// Display text for a side record (section 1.6): at most `MAX` code points, non-empty, trimmed,
+/// and free of Cc, Cf, Cs, Zl and Zp. Deserialization only checks; producers build one through
+/// `normalize`, which applies `normalize_display_text`.
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct DisplayText<const MAX: usize>(String);
+
+/// A `name.label` label: 1 to 200 characters.
+pub type LabelText = DisplayText<200>;
+/// A `project.catalog` name: 1 to 80 characters.
+pub type ProjectName = DisplayText<80>;
+
+/// What an empty project name becomes.
+pub const UNTITLED_PROJECT: &str = "Untitled project";
+
+impl<const MAX: usize> DisplayText<MAX> {
+    pub const MAX_CHARS: usize = MAX;
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Normalizes raw text. `None` when nothing is left (a label that is not produced);
+    /// the flag says whether the limit cut the text, for the run summary.
+    pub fn normalize(raw: &str) -> (Option<Self>, bool) {
+        let normalized = normalize_display_text(raw, MAX);
+        let value = (!normalized.text.is_empty()).then_some(DisplayText(normalized.text));
+        (value, normalized.truncated)
+    }
+}
+
+impl DisplayText<80> {
+    /// A project name from the app's raw name; an empty result becomes `Untitled project`.
+    pub fn project_name(raw: &str) -> (Self, bool) {
+        let (value, truncated) = Self::normalize(raw);
+        (value.unwrap_or_else(|| DisplayText(UNTITLED_PROJECT.to_owned())), truncated)
+    }
+}
+
+impl<const MAX: usize> TryFrom<String> for DisplayText<MAX> {
+    type Error = ValueError;
+    fn try_from(text: String) -> Result<Self, ValueError> {
+        if is_normalized_display_text(&text, MAX) {
+            Ok(DisplayText(text))
+        } else {
+            Err(ValueError::DisplayText)
+        }
+    }
+}
+
+impl<const MAX: usize> FromStr for DisplayText<MAX> {
+    type Err = ValueError;
+    fn from_str(text: &str) -> Result<Self, ValueError> {
+        DisplayText::try_from(text.to_owned())
+    }
+}
+
+impl<const MAX: usize> From<DisplayText<MAX>> for String {
+    fn from(value: DisplayText<MAX>) -> String {
+        value.0
+    }
+}
+
+impl<const MAX: usize> fmt::Debug for DisplayText<MAX> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+impl<const MAX: usize> fmt::Display for DisplayText<MAX> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A `name.label` key: `h:<16 hex>` for tools, namespaces and custom agent names, or 64 hex
+/// for an `agent_key` or a Cursor `session_hash`. Which one a kind requires is checked by
+/// `Record::validate`, as zod checks it in a superRefine.
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct LabelKey(String);
+
+impl LabelKey {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// True for the `h:<16 hex>` form.
+    pub fn is_hashed_name(&self) -> bool {
+        self.0.starts_with("h:")
+    }
+}
+
+impl TryFrom<String> for LabelKey {
+    type Error = ValueError;
+    fn try_from(text: String) -> Result<Self, ValueError> {
+        let ok = match text.strip_prefix("h:") {
+            Some(hash) => hash.len() == 16 && hash.bytes().all(is_lower_hex),
+            None => text.len() == 64 && text.bytes().all(is_lower_hex),
+        };
+        if ok { Ok(LabelKey(text)) } else { Err(ValueError::LabelKey) }
+    }
+}
+
+impl FromStr for LabelKey {
+    type Err = ValueError;
+    fn from_str(text: &str) -> Result<Self, ValueError> {
+        LabelKey::try_from(text.to_owned())
+    }
+}
+
+impl From<LabelKey> for String {
+    fn from(value: LabelKey) -> String {
+        value.0
+    }
+}
+
+impl From<Sha256Hex> for LabelKey {
+    fn from(value: Sha256Hex) -> Self {
+        LabelKey(value.0)
+    }
+}
+
+impl fmt::Debug for LabelKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "LabelKey({})", self.0)
+    }
+}
+
+impl fmt::Display for LabelKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
