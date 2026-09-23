@@ -181,7 +181,10 @@ function localBackend() {
       temporary = await mkdtemp(join(tmpdir(), 'personal-hub-db-'));
       data = join(temporary, 'data'); socket = join(temporary, 'socket');
       await mkdir(socket);
-      await command('initdb', ['-D', data, '-A', 'trust', '--no-locale']);
+      // UTF8 with the C.UTF-8 locale, like production's UTF8 cluster, and sorting by codepoint exactly as
+      // --no-locale did. Plain --no-locale made an SQL_ASCII cluster, where lower() folds only ASCII and
+      // ICU collations do not exist, so a Unicode name derived a different id in SQL than in JS.
+      await command('initdb', ['-D', data, '-A', 'trust', '-E', 'UTF8', '--locale=C.UTF-8']);
       await command('pg_ctl', ['-D', data, '-l', join(temporary, 'postgres.log'), '-o', `-k ${socket} -c listen_addresses='' -p ${port}`, '-w', 'start']);
       started = true;
       return { options: { host: socket, port: Number(port) }, env: { TEST_DATABASE_URL: `postgres://localhost/${databaseName}`, TEST_DATABASE_HOST: socket, TEST_DATABASE_PORT: port } };

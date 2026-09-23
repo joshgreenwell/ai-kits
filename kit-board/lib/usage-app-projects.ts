@@ -9,9 +9,11 @@ import { createHash } from 'node:crypto';
  *
  * `btrim` here strips only U+0020, exactly as Postgres `btrim(text)` does, and names arrive already
  * trimmed by the contract, so the two are the same in practice. `lower` is JS's default Unicode case
- * mapping; it matches Postgres `lower` under an ICU or UTF-8 libc collation for the names the parity
- * test covers. The JS derivation is the one ingest uses, so a collation difference could only ever
- * affect a comparison made in SQL, and nothing in the application derives it there.
+ * mapping. The SQL form pins its case mapping to the ICU root collation, "und-x-icu", rather than the
+ * database default, because Postgres `lower` follows the database's LC_CTYPE and a C-locale database
+ * folds only ASCII: CI's runner initialises its cluster that way, and 'Ünïcode Straße' then derived a
+ * different id there than in JS. Production (en_US.UTF-8) agreed either way, and ingest derives the id
+ * only in JS, so no stored id was ever affected.
  */
 export const APP_PROJECT_ID_PREFIX = 'app-project-name:';
 const btrim = (text: string) => text.replace(/^ +| +$/g, '');
@@ -22,6 +24,6 @@ export function appProjectId(name: string): string {
 
 /** The same derivation in SQL over a text expression, for the parity test and any repair that needs it. */
 export const appProjectIdSql = (name: string) => {
-  const m = `md5('${APP_PROJECT_ID_PREFIX}' || lower(btrim(${name})))`;
+  const m = `md5('${APP_PROJECT_ID_PREFIX}' || lower(btrim(${name}) COLLATE "und-x-icu"))`;
   return `(substr(${m}, 1, 8) || '-' || substr(${m}, 9, 4) || '-4' || substr(${m}, 14, 3) || '-8' || substr(${m}, 18, 3) || '-' || substr(${m}, 21, 12))::uuid`;
 };
