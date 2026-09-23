@@ -774,6 +774,10 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           ${q.machines.length ? `AND i.source_id = ANY(${ip.add(q.machines)}::uuid[])` : ''}
           ${q.agents.length ? `AND (i.account_id, i.caller_agent_key) IN ${agentKeysIn(ip, q.agents)}` : ''}`, ip.values);
       await tx.unsafe(`CREATE INDEX _usage_invocations_caller ON _usage_invocations (account_id, caller_request_key)`);
+      // The nested-parents step looks each parent up by (account_id, invocation_key). Without this index
+      // the planner used the caller index with only account_id bounded and filtered on the key, scanning
+      // every invocation of the account once per parent: past 95 s on production for a month (2026-09-23).
+      await tx.unsafe(`CREATE INDEX _usage_invocations_key ON _usage_invocations (account_id, invocation_key)`);
       await tx.unsafe(`ANALYZE _usage_invocations`);
 
       // Callers are discovered the same way the requests section discovers its keys, by activity in range,
@@ -804,7 +808,13 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         JOIN personal_hub.companion_bindings b ON b.source_id = c.source_id
         LEFT JOIN _usage_invocations s ON s.account_id = w.account_id AND s.invocation_key = w.invocation_key
         WHERE c.inv_revision_id IS NOT NULL`);
+      // Real statistics for the join into the tool rows below, like every other temp table here.
+      await tx.unsafe(`CREATE INDEX _usage_nested_parents_key ON _usage_nested_parents (account_id, invocation_key)`);
+      await tx.unsafe(`ANALYZE _usage_nested_parents`);
 
+      // Pre-aggregated rather than one row per invocation. Both consumers below only count, so this groups by
+      // the union of their keys and carries the count in n. Materialising all ~65,000 invocations for a
+      // month overflowed temp_buffers and cost 5-23 s on production (2026-09-23); a few thousand groups do not.
       await tx.unsafe(`CREATE TEMP TABLE _usage_tool_rows ON COMMIT DROP AS
         WITH joined AS (
           SELECT i.*, b.install_id, b.provider, r.caller_group_id, r.matches,
@@ -820,13 +830,15 @@ export function createUsageQuery(getDatabase?: () => Sql) {
             WHEN j.parent_tool = 'exec' AND j.parent_provider = 'codex' THEN CASE WHEN j.parent_in_scope THEN 'child' ELSE 'orphan' END
             WHEN j.parent_tool IS NULL AND j.provider = 'codex' AND j.tool_class = 'mcp' THEN 'orphan'
             ELSE 'top'
-          END AS nesting
-        FROM joined j ${useRequests ? 'WHERE j.matches' : ''}`);
+          END AS nesting,
+          count(*)::int AS n
+        FROM joined j ${useRequests ? 'WHERE j.matches' : ''}
+        GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12`);
 
       // Aggregate first, then name: labels are joined per (install, tool, namespace), not per invocation.
       const byTool = await tx.unsafe(`WITH agg AS (
           SELECT install_id, provider, tool_name, tool_namespace, tool_class, nesting, outcome,
-            count(*)::int AS invocations, count(*) FILTER (WHERE caller_agent_key IS NOT NULL OR has_caller_request)::int AS with_caller
+            sum(n)::int AS invocations, coalesce(sum(n) FILTER (WHERE caller_agent_key IS NOT NULL OR has_caller_request), 0)::int AS with_caller
           FROM _usage_tool_rows GROUP BY 1, 2, 3, 4, 5, 6, 7)
         SELECT a.*, tl.label AS tool_label, nl.label AS namespace_label, ci.machine_label
         FROM agg a
@@ -838,7 +850,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       // map lacks (its requests fall outside the range) falls back to its `agent` label, then reads as
       // "caller outside range"; a Cursor invocation with no agent key takes its calling request's group.
       const byCaller = await tx.unsafe(`WITH agg AS (
-          SELECT account_id, source_id, install_id, provider, caller_agent_key, caller_group_id, count(*)::int AS invocations
+          SELECT account_id, source_id, install_id, provider, caller_agent_key, caller_group_id, sum(n)::int AS invocations
           FROM _usage_tool_rows GROUP BY 1, 2, 3, 4, 5, 6
         ), by_key AS (
           SELECT DISTINCT ON (account_id, source_id, agent_key) account_id, source_id, agent_key, group_id, provider, display_role, display_name, builtin
