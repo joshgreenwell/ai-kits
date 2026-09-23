@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { schedules, sections } from '@/lib/catalog';
+import { schedules, sectionPath } from '@/lib/catalog';
 import { database, latestByKind } from '@/lib/db';
 import { requireSession } from '@/lib/auth';
 import { PageHeader } from '@/components/page-header';
@@ -61,7 +61,7 @@ export default async function Schedules() {
                 <TableRow key={job.kind} className="even:bg-foreground/[0.03] border-b-0">
                   <TableCell className="py-2">
                     <Link
-                      href={sections.find(section => section.kind === job.kind)!.path}
+                      href={sectionPath(job.kind)}
                       className="hover:text-primary font-semibold underline-offset-4 hover:underline"
                     >
                       {job.name}

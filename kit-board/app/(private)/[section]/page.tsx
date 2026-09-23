@@ -7,7 +7,7 @@ import { defaultReport } from '@/lib/report-selection';
 export default async function Section({ params, searchParams }: { params: Promise<{ section: string }>; searchParams: Promise<{ report?: string }> }) {
   await requireSession();
   const { section: name } = await params;
-  const section = sections.find(item => item.kind === name && name !== 'usage');
+  const section = sections.find(item => item.kind === name && name !== 'usage' && name !== 'tasks');
   if (!section) notFound();
   const history = await reportHistory(section.kind);
   const requested = (await searchParams).report;

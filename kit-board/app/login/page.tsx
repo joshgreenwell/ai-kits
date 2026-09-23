@@ -53,7 +53,7 @@ export default function Login() {
       </Card>
 
       <p className="text-muted-foreground text-center font-mono text-[11px] leading-relaxed">
-        AI usage · Daily tasks · Standup · Readings · Luumen AI
+        AI usage · Daily tasks · Readings · Luumen AI
       </p>
     </main>
   );

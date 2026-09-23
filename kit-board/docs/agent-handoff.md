@@ -27,8 +27,7 @@ One password-protected shell combines five report areas:
 | Tokens | `/usage` | Hourly local token activity (scaffold until USG-017) above the retained monthly report snapshots |
 | Allowances | `/usage/allowances` | Per-account allowance windows and model history from `/api/usage-live`, then the reset calendar and record as their own section (`#reset-calendar`) |
 | Settings | `/settings`, `/settings/collection`, `/settings/projects`, `/settings/sources`, `/settings/feeds` | Connections and health, collection modes, project naming, knowledge-source naming, reset-feed status. `/usage/live`, `/usage/connections`, and `/usage/settings` redirect here |
-| Daily tasks | `/tasks` | Published report envelope; isolated report document |
-| Standup | `/standup` | Published report envelope; isolated report document |
+| Daily tasks | `/tasks` | One day picker (`lib/daily-tasks.ts`): that day's standup as markdown with its copy button, above the briefing's isolated report document. `/standup` redirects here, keeping `?report=` |
 | Readings | `/readings` | Published report envelope; isolated report document |
 | Luumen AI audit | `/audit` | Full audit report plus authenticated linked evidence assets |
 | Schedules | `/schedules` | Static operating/status summary |

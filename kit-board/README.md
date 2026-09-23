@@ -1,6 +1,6 @@
 # Personal Observatory
 
-Private personal dashboard at https://personal-observatory-jg.vercel.app, hosted on Vercel with Supabase Postgres. It combines AI usage, daily tasks, standup, Claude readings, and Luumen AI audits while retaining each report's internal navigation. Palette and fonts match Token Observatory.
+Private personal dashboard at https://personal-observatory-jg.vercel.app, hosted on Vercel with Supabase Postgres. It combines AI usage, daily tasks (the briefing with that day's standup), Claude readings, and Luumen AI audits while retaining each report's internal navigation. Palette and fonts match Token Observatory.
 
 - **[Startup, recovery, external scripts, and Obsidian locations](docs/startup-and-recovery.md)**
 - [Migration provenance and exclusions](docs/repository-migration.md)
