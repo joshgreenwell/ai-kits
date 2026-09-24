@@ -331,10 +331,12 @@ export function createUsageQuery(getDatabase?: () => Sql) {
    * label or membership table is ever looped per request row. `project_key_join` is the key with NULL
    * folded to '' so the join stays hashable.
    */
-  async function createProjectMap(tx: { unsafe: Sql['unsafe'] }, q: UsageQuery, accounts: string[], range: ResolvedRange) {
+  async function createProjectMap(tx: { unsafe: Sql['unsafe'] }, q: UsageQuery, accounts: string[], range: ResolvedRange, fromGroups = false) {
     const p = new Params();
     await tx.unsafe(`CREATE TEMP TABLE _usage_project_map ON COMMIT DROP AS
-      WITH ${projectMapCtes(`SELECT DISTINCT r.project_install_id, r.session_hash, r.effective_project_basis, r.effective_project_key
+      WITH ${projectMapCtes(fromGroups
+        ? `SELECT DISTINCT r.project_install_id, r.session_hash, r.effective_project_basis, r.effective_project_key FROM _usage_request_groups r`
+        : `SELECT DISTINCT r.project_install_id, r.session_hash, r.effective_project_basis, r.effective_project_key
           FROM personal_hub.canonical_requests r
           WHERE r.account_id = ANY(${p.add(accounts)}::text[])
             AND r.activity_at >= ${p.add(new Date(range.start).toISOString())}::timestamptz
@@ -374,17 +376,17 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         AND ${m}.k_basis = coalesce(${a}.agent_identity_basis, '')`;
   const builtinArraysSql = (p: Params, lists: Record<string, readonly string[]>, column: string) => `CASE ${column} ${BUILTIN_PROVIDERS
     .map(provider => `WHEN '${provider}' THEN ${p.add([...(lists[provider] ?? [])])}::text[]`).join(' ')} ELSE '{}'::text[] END`;
-  async function createAgentMap(tx: { unsafe: Sql['unsafe'] }, q: UsageQuery, accounts: string[], range: ResolvedRange) {
+  async function createAgentMap(tx: { unsafe: Sql['unsafe'] }, q: UsageQuery, accounts: string[], range: ResolvedRange, fromGroups = false) {
     const p = new Params();
     await tx.unsafe(`CREATE TEMP TABLE _usage_agent_map ON COMMIT DROP AS
       WITH agg AS (
         SELECT r.account_id, r.source_id, r.provider, r.agent_key, CASE WHEN r.provider = 'cursor' THEN r.session_hash END AS cursor_session,
           r.agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.agent_identity_basis
-        FROM personal_hub.canonical_requests r
+        ${fromGroups ? 'FROM _usage_request_groups r' : `FROM personal_hub.canonical_requests r
         WHERE r.account_id = ANY(${p.add(accounts)}::text[])
           AND r.activity_at >= ${p.add(new Date(range.start).toISOString())}::timestamptz
           AND r.activity_at < ${p.add(new Date(range.end).toISOString())}::timestamptz
-          ${q.machines.length ? `AND r.source_id = ANY(${p.add(q.machines)}::uuid[])` : ''}
+          ${q.machines.length ? `AND r.source_id = ANY(${p.add(q.machines)}::uuid[])` : ''}`}
         GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
       ), labelled AS (
         SELECT a.*, b.install_id,
@@ -426,10 +428,71 @@ export function createUsageQuery(getDatabase?: () => Sql) {
         r.agent_name, r.agent_depth, r.parent_agent_key, r.reasoning_effort, r.surface, r.provider, r.session_hash, r.agent_identity_basis`;
 
   /**
-   * Canonical requests for a key set. Discover in-range keys when `keysCte` is omitted; knowledge passes its
-   * callers. `project` joins `_usage_project_map` and `agents` joins `_usage_agent_map`, which the caller
-   * must have created in the same transaction (`createProjectMap`, `createAgentMap`); the agent join is
-   * needed only for the agent-group and agent-scope filters.
+   * REQUEST GROUPS. The requests section never needs a single request, only sums and distinct counts over
+   * them, so it reads the range ONCE into groups keyed by every column a card groups by, filters on, or
+   * counts distinctly: session, agent evidence, project evidence, model, effort, surface, the pricing
+   * dimensions and the per-request long-context flags, plus a 15-minute activity slot. Every period the
+   * cards show (UTC hours, and days in any zone, whose offsets are all multiples of 15 minutes) is a union
+   * of slots, and a sum of group sums equals the sum over the requests (NULL-ignoring either way).
+   *
+   * Measured on production 2026-09-23: September's 79,947 requests are 2,724 groups at hourly grain. The
+   * section used to scan the month three times (project map, agent map, request table) and aggregate the
+   * 758-byte-wide request table six more; on this throttled instance a single cached 79k-row scan costs
+   * 3.3 s and the wide table overflowed temp_buffers (8.0 s for one GROUP BY). Now one scan, then small.
+   */
+  /**
+   * Runs one grouping statement with a larger `work_mem`, then restores the default for the rest of the
+   * transaction. Both passes below read ~75-80k wide rows for a month and keep only a few thousand groups;
+   * at this instance's 2 MB they sorted (or hash-joined) through temp files, 24-52 MB of throttled disk
+   * each. With 32 MB they hash in memory (11 MB and 4 MB used): request groups 0.7-2.5 s -> 0.20-0.33 s,
+   * tool rows 0.5-3.5 s -> 0.27-0.31 s, measured on production 2026-09-23. Scoped to these two statements
+   * because a raised `work_mem` on the old ledger ranking pass flipped it to a slower parallel plan.
+   */
+  async function withGroupingMemory<T>(tx: { unsafe: Sql['unsafe'] }, run: () => Promise<T>): Promise<T> {
+    await tx.unsafe(`SET LOCAL work_mem = '32MB'`);
+    const result = await run();
+    await tx.unsafe(`SET LOCAL work_mem TO DEFAULT`);
+    return result;
+  }
+
+  async function createRequestGroups(tx: { unsafe: Sql['unsafe'] }, q: UsageQuery, accounts: string[], range: ResolvedRange) {
+    const p = new Params();
+    const thresholds = catalogThresholds();
+    const loggedInput = 'coalesce(r.input_fresh_tokens, 0) + coalesce(r.input_cached_tokens, 0) + coalesce(r.input_cache_write_tokens, 0)';
+    const named = q.models.filter(m => m !== UNKNOWN);
+    const model = [
+      ...(named.length ? [`r.model_actual = ANY(${p.add(named)}::text[])`] : []),
+      ...(q.models.includes(UNKNOWN) ? [`(r.model_actual IS NULL OR r.model_actual = 'unknown')`] : []),
+    ];
+    await withGroupingMemory(tx, () => tx.unsafe(`CREATE TEMP TABLE _usage_request_groups ON COMMIT DROP AS
+      SELECT r.account_id, r.source_id, r.provider, r.session_hash, r.model_actual,
+        date_bin('15 minutes', r.activity_at, TIMESTAMPTZ '2000-01-01 00:00:00+00') AS activity_slot,
+        r.surface, r.reasoning_effort, r.service_tier, r.speed, r.context_window_tokens, r.cache_write_ttl, r.token_state,
+        r.agent_key, r.agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.agent_identity_basis,
+        r.project_install_id, r.effective_project_basis, r.effective_project_key,
+        (${loggedInput} > ${p.add(thresholds.openai)}::bigint) AS over_openai, (${loggedInput} > ${p.add(thresholds.anthropic)}::bigint) AS over_anthropic,
+        (${loggedInput} > ${p.add(thresholds.xai)}::bigint) AS over_xai,
+        sum(r.input_fresh_tokens) AS input_fresh_tokens, sum(r.input_cached_tokens) AS input_cached_tokens,
+        sum(r.input_cache_write_tokens) AS input_cache_write_tokens, sum(r.output_tokens) AS output_tokens,
+        sum(r.reasoning_tokens) AS reasoning_tokens, sum(r.unclassified_tokens) AS unclassified_tokens,
+        sum(r.observed_total_tokens) AS observed_total_tokens, count(*)::int AS calls, max(r.observed_at) AS observed_at
+      FROM personal_hub.canonical_requests r
+      WHERE r.account_id = ANY(${p.add(accounts)}::text[])
+        AND r.activity_at >= ${p.add(new Date(range.start).toISOString())}::timestamptz
+        AND r.activity_at < ${p.add(new Date(range.end).toISOString())}::timestamptz
+        ${model.length ? `AND (${model.join(' OR ')})` : ''}
+        ${q.machines.length ? `AND r.source_id = ANY(${p.add(q.machines)}::uuid[])` : ''}
+      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25`, p.values));
+    await tx.unsafe(`ANALYZE _usage_request_groups`);
+  }
+
+  /**
+   * Canonical requests for a key set, or the request groups. With `columns`, reads personal_hub.canonical_requests
+   * and discovers in-range keys when `keysCte` is omitted (knowledge passes its callers); without, reads
+   * `_usage_request_groups`, which `createRequestGroups` built in the same transaction. `project` joins
+   * `_usage_project_map` and `agents` joins `_usage_agent_map`, which the caller must have created in the
+   * same transaction (`createProjectMap`, `createAgentMap`); the agent join is needed only for the
+   * agent-group and agent-scope filters.
    */
   function requestCte(p: Params, q: UsageQuery, accounts: string[], range: ResolvedRange, keysCte?: string,
     opts: { columns?: string; project?: boolean } = {}) {
@@ -448,7 +511,6 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       if (values.includes(UNKNOWN)) parts.push(`${column} IS NULL`);
       return parts.length ? `(${parts.join(' OR ')})` : null;
     };
-    const model = modelFilter('r.model_actual');
     const withAgents = q.agents.length > 0 || q.agent_scope !== 'all';
     if (q.efforts.length) detail.push(codeFilter('r.reasoning_effort', q.efforts)!);
     if (q.surfaces.length) detail.push(`r.surface = ANY(${p.add(q.surfaces)}::text[])`);
@@ -475,13 +537,11 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // must still relabel past requests. It is resolved once per distinct evidence tuple in
     // `_usage_project_map`, never per row.
     const withProject = opts.project ?? true;
-    const columns = opts.columns ?? `r.revision_id AS id, r.account_id, r.provider, r.semantic_key, r.session_hash, r.model_actual,
-        r.activity_at, r.observed_at, r.surface, r.reasoning_effort, r.service_tier, r.speed,
-        r.context_window_tokens, r.cache_write_ttl, r.token_state, r.outcome,
-        r.input_fresh_tokens, r.input_cached_tokens, r.input_cache_write_tokens, r.output_tokens,
-        r.reasoning_tokens, r.unclassified_tokens, r.observed_total_tokens,
-        r.agent_key, r.agent_class, r.agent_name, r.agent_depth, r.parent_agent_key, r.agent_identity_basis`;
-    const where = [
+    // The grouped source already carries the range, model and machine filters (`createRequestGroups`).
+    const groups = opts.columns === undefined;
+    // The model filter is built only where it is used: an unreferenced bound value has no type (42P18).
+    const model = groups ? null : modelFilter('r.model_actual');
+    const where = groups ? [] : [
       `r.account_id = ANY(${p.add(accounts)}::text[])`,
       `r.activity_at >= ${p.add(new Date(range.start).toISOString())}::timestamptz`,
       `r.activity_at < ${p.add(new Date(range.end).toISOString())}::timestamptz`,
@@ -490,15 +550,15 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       ...(q.machines.length ? [`r.source_id = ANY(${p.add(q.machines)}::uuid[])`] : []),
     ];
     const text = `resolved AS (
-      SELECT ${columns}, r.source_id,
+      SELECT ${groups ? 'r.*' : `${opts.columns}, r.source_id`},
         ${withProject ? `coalesce(pm.project_state, 'unknown') AS project_state, pm.project_id, pm.project_label, coalesce(pm.project_filter, 'unknown') AS project_filter`
           : `NULL::text AS project_state, NULL::uuid AS project_id, NULL::text AS project_label, NULL::text AS project_filter`},
         ${withAgents ? 'am.group_id AS agent_group_id, am.display_role AS agent_display_role' : 'NULL::text AS agent_group_id, NULL::text AS agent_display_role'}
-      FROM personal_hub.canonical_requests r
+      FROM ${groups ? '_usage_request_groups' : 'personal_hub.canonical_requests'} r
       ${keysCte ? `JOIN ${keysCte} k ON k.account_id = r.account_id AND k.semantic_key = r.semantic_key` : ''}
       ${withProject ? projectJoin : ''}
       ${withAgents ? agentJoin : ''}
-      WHERE ${where.join(' AND ')}
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ), requests AS (
       SELECT r.*, ${detail.length ? `(${detail.join(' AND ')})` : 'true'} AS matches FROM resolved r
     )`;
@@ -508,10 +568,11 @@ export function createUsageQuery(getDatabase?: () => Sql) {
   // A parameter is added only when the expression references it: an unreferenced bound value has no type.
   const periodExpr = (column: string, resolution: Resolution, p: Params, tz: string) =>
     resolution === 'day' ? (() => { const z = `${p.add(tz)}::text`; return `date_trunc('day', ${column} AT TIME ZONE ${z}) AT TIME ZONE ${z}`; })() : `date_trunc('hour', ${column})`;
+  // Over request groups: calls is the sum of each group's request count.
   const compositionSelect = (alias = 'r') => `sum(${alias}.input_fresh_tokens)::float8 AS input_fresh, sum(${alias}.input_cached_tokens)::float8 AS input_cached,
       sum(${alias}.input_cache_write_tokens)::float8 AS input_cache_write, sum(${alias}.output_tokens)::float8 AS output,
       sum(${alias}.reasoning_tokens)::float8 AS reasoning, sum(${alias}.unclassified_tokens)::float8 AS unclassified,
-      sum(${alias}.observed_total_tokens)::float8 AS total_tokens, count(*)::int AS calls, count(DISTINCT ${alias}.session_hash)::int AS conversations`;
+      sum(${alias}.observed_total_tokens)::float8 AS total_tokens, sum(${alias}.calls)::int AS calls, count(DISTINCT ${alias}.session_hash)::int AS conversations`;
 
   async function usageQuery(input: UsageQuery, { now = Date.now() }: { now?: number } = {}): Promise<UsageQueryResult> {
     const q = usageQuerySchema.parse(input);
@@ -551,10 +612,11 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // and the browser derive their deadlines from. Postgres cancels with SQLSTATE 57014, which the
     // route reports as 504 with its message, before the queue would destroy the connection.
     const prepareRead = async (tx: { unsafe: Sql['unsafe'] }) => {
-      // `work_mem` is deliberately left alone. Raising it to 16MB was measured on this instance and made the
-      // requests read 2.6x SLOWER: the extra budget flips the ranking pass to a parallel sequential scan and
-      // a hash join whose sort then spills anyway, which costs more CPU than the index-ordered merge it
-      // replaces. Fewer buffers is not the goal; finishing sooner on a shared vCPU is.
+      // `work_mem` is deliberately left alone for the transaction. Raising it to 16MB was measured on this
+      // instance and made the old requests read 2.6x SLOWER: the extra budget flipped its ranking pass to a
+      // parallel sequential scan and a hash join whose sort then spilled anyway. Fewer buffers is not the
+      // goal; finishing sooner on a shared vCPU is. The two grouping passes raise it for themselves alone
+      // (`withGroupingMemory`), where it was measured to remove their temp-file spill.
       await tx.unsafe(`SELECT set_config('statement_timeout', $1, true), set_config('jit', 'off', true),
         CASE WHEN current_setting('server_version_num')::int >= 170000 THEN set_config('transaction_timeout', $1, true) END`, [DATABASE_JOB_BUDGET_INTERVAL]);
     };
@@ -633,10 +695,8 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       notes.push('Provider-reported account usage is included for Cursor and organization API accounts and is not added to local Claude or Codex hourly buckets.');
     }
 
-    // 2–5. Rank only in-range request keys, then cheap group-bys. Tools and knowledge are their own
-    // transactions so they never rebuild the request ledger and can finish independently.
-    const thresholds = catalogThresholds();
-    const loggedInput = 'coalesce(r.input_fresh_tokens, 0) + coalesce(r.input_cached_tokens, 0) + coalesce(r.input_cache_write_tokens, 0)';
+    // 2–5. Group the in-range requests once, then cheap group-bys. Tools and knowledge are their own
+    // transactions so they never rebuild the request groups and can finish independently.
     const rangeStartIso = new Date(range.start).toISOString();
     const rangeEndIso = new Date(range.end).toISOString();
     // The same day-wide revision window the request reads use, for the same measured reason: a tool
@@ -662,20 +722,23 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     };
     const requestDetail = accounts.length && needRequestTable ? await db.begin(async tx => {
       await prepareRead(tx);
-      // The maps are built before the request table and joined on plain equality: resolution runs per
-      // distinct project or agent tuple, never per request row.
+      // The range is read once, into request groups; the maps are built from the groups and joined on plain
+      // equality, so resolution runs per distinct project or agent tuple, never per request row. The joined
+      // table has no index: every read below is a whole-table aggregate, and an index only tempted the
+      // planner into an index-order scan that thrashed temp_buffers (8.0 s for a month, 2026-09-23).
       const needProject = needRequestGroups || q.projects.length > 0;
       const needAgents = needRequestGroups || q.agents.length > 0 || q.agent_scope !== 'all';
-      if (needProject) await createProjectMap(tx, q, accounts, range);
-      if (needAgents) await createAgentMap(tx, q, accounts, range);
+      await createRequestGroups(tx, q, accounts, range);
+      if (needProject) await createProjectMap(tx, q, accounts, range, true);
+      if (needAgents) await createAgentMap(tx, q, accounts, range, true);
       const rp = new Params();
       const cte = requestCte(rp, q, accounts, range, undefined, { project: needProject });
       await tx.unsafe(`CREATE TEMP TABLE _usage_requests ON COMMIT DROP AS WITH ${cte.text} SELECT * FROM requests`, rp.values);
-      await tx.unsafe(`CREATE INDEX _usage_requests_join ON _usage_requests (account_id, semantic_key)`);
+      await tx.unsafe(`ANALYZE _usage_requests`);
 
       const periodP = new Params();
       const requestPeriodRows = needRequestPeriods ? await tx.unsafe(`
-        SELECT r.matches, r.account_id, r.model_actual AS model, ${periodExpr('r.activity_at', q.resolution, periodP, tz)} AS period_start, ${compositionSelect()},
+        SELECT r.matches, r.account_id, r.model_actual AS model, ${periodExpr('r.activity_slot', q.resolution, periodP, tz)} AS period_start, ${compositionSelect()},
           max(r.observed_at) AS last_observed
         FROM _usage_requests r GROUP BY 1, 2, 3, 4 ORDER BY 4, 3`, periodP.values) : [];
 
@@ -691,7 +754,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
             sum(r.input_fresh_tokens) AS input_fresh_tokens, sum(r.input_cached_tokens) AS input_cached_tokens,
             sum(r.input_cache_write_tokens) AS input_cache_write_tokens, sum(r.output_tokens) AS output_tokens,
             sum(r.reasoning_tokens) AS reasoning_tokens, sum(r.unclassified_tokens) AS unclassified_tokens,
-            sum(r.observed_total_tokens) AS observed_total_tokens, count(*) AS calls
+            sum(r.observed_total_tokens) AS observed_total_tokens, sum(r.calls) AS calls
           FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
         SELECT coalesce(m.group_id, '') AS group_id, coalesce(m.provider, r.provider) AS provider,
           coalesce(m.display_role, 'unattributed') AS role, coalesce(m.display_name, 'unattributed') AS name, coalesce(m.builtin, false) AS builtin,
@@ -706,14 +769,14 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       const cp = new Params();
       const requestPricingRows = needRequestPricing ? await tx.unsafe(`
         SELECT r.provider, r.model_actual AS model, r.reasoning_effort, r.service_tier, r.speed, r.context_window_tokens, r.cache_write_ttl, r.token_state,
-          (${loggedInput} > ${cp.add(thresholds.openai)}::bigint) AS over_openai, (${loggedInput} > ${cp.add(thresholds.anthropic)}::bigint) AS over_anthropic, (${loggedInput} > ${cp.add(thresholds.xai)}::bigint) AS over_xai,
-          to_char(r.activity_at AT TIME ZONE ${cp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date, ${compositionSelect()}
+          r.over_openai, r.over_anthropic, r.over_xai,
+          to_char(r.activity_slot AT TIME ZONE ${cp.add(DISPLAY_TIMEZONE)}::text, 'YYYY-MM-DD') AS rate_date, ${compositionSelect()}
         FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 ORDER BY total_tokens DESC NULLS LAST`, cp.values) : [];
 
       const effortP = new Params();
       const effortRows = needRequestGroups ? await tx.unsafe(`
-        SELECT coalesce(r.model_actual, '${UNKNOWN}') AS model, coalesce(r.reasoning_effort, '${UNKNOWN}') AS effort, ${periodExpr('r.activity_at', q.resolution, effortP, tz)} AS period_start,
-          sum(r.observed_total_tokens)::float8 AS total_tokens, count(*)::int AS calls
+        SELECT coalesce(r.model_actual, '${UNKNOWN}') AS model, coalesce(r.reasoning_effort, '${UNKNOWN}') AS effort, ${periodExpr('r.activity_slot', q.resolution, effortP, tz)} AS period_start,
+          sum(r.observed_total_tokens)::float8 AS total_tokens, sum(r.calls)::int AS calls
         FROM _usage_requests r WHERE r.matches GROUP BY 1, 2, 3 ORDER BY 3`, effortP.values) : [];
 
       // Lifecycle events follow the machine filter through their binding and the agent filter through the
@@ -745,9 +808,10 @@ export function createUsageQuery(getDatabase?: () => Sql) {
     // invocation's canonical revision AND its latest result, so there is no DISTINCT ON over tool_events
     // and no per-invocation lookup for the result. That lookup alone was 64,745 index descents for a
     // month and 34-46 s of the card's 56-72 s, measured on production 2026-09-22. The caller requests are
-    // a range scan on canonical_requests. Both are materialised with real statistics, because as one
-    // chained statement the planner once estimated the invocation set at a single row and nested-looped
-    // it against the requests, which ran past 127 s.
+    // a range scan on canonical_requests, materialised with real statistics before the invocation pass
+    // joins them: as one chained statement over the ledgers the planner once estimated the invocation set at
+    // a single row and nested-looped it against the requests, which ran past 127 s. The invocation pass
+    // itself is a plain range scan on a real table, so its estimate is the table's own statistics.
     //
     // What this changes, measured and accepted. The old read ranked both kinds only within
     // REVISION_WINDOW_MS of the range; the projection ranks each invocation's whole history. So an
@@ -763,66 +827,54 @@ export function createUsageQuery(getDatabase?: () => Sql) {
       // the project map only when a project filter reaches invocations through their calling request.
       await createAgentMap(tx, q, accounts, range);
       if (q.projects.length) await createProjectMap(tx, q, accounts, range);
-      const ip = new Params();
-      await tx.unsafe(`CREATE TEMP TABLE _usage_invocations ON COMMIT DROP AS
-        SELECT i.account_id, i.invocation_key, i.tool_name, i.tool_class, i.tool_namespace, i.caller_agent_key, i.caller_request_key,
-          i.outcome, coalesce(i.res_outcome, i.outcome) AS final_outcome, i.session_hash, i.inv_observed_at AS observed_at, i.source_id,
-          i.parent_invocation_key
-        FROM personal_hub.canonical_tool_invocations i
-        WHERE i.account_id = ANY(${ip.add(accounts)}::text[])
-          AND i.inv_observed_at >= ${ip.add(rangeStartIso)}::timestamptz AND i.inv_observed_at < ${ip.add(rangeEndIso)}::timestamptz
-          ${q.machines.length ? `AND i.source_id = ANY(${ip.add(q.machines)}::uuid[])` : ''}
-          ${q.agents.length ? `AND (i.account_id, i.caller_agent_key) IN ${agentKeysIn(ip, q.agents)}` : ''}`, ip.values);
-      await tx.unsafe(`CREATE INDEX _usage_invocations_caller ON _usage_invocations (account_id, caller_request_key)`);
-      // The nested-parents step looks each parent up by (account_id, invocation_key). Without this index
-      // the planner used the caller index with only account_id bounded and filtered on the key, scanning
-      // every invocation of the account once per parent: past 95 s on production for a month (2026-09-23).
-      await tx.unsafe(`CREATE INDEX _usage_invocations_key ON _usage_invocations (account_id, invocation_key)`);
-      await tx.unsafe(`ANALYZE _usage_invocations`);
-
       // Callers are discovered the same way the requests section discovers its keys, by activity in range,
       // not by reading the invocation table for caller keys. Both produce the same set, because a caller
-      // outside the range is filtered out either way.
+      // outside the range is filtered out either way. Without a detail filter a caller supplies only the
+      // agent group of a Cursor request (Cursor invocations carry no agent key), so only Cursor accounts are
+      // read: a request's provider is its account's (ingest refuses any other binding). Reading every caller
+      // for that cost a month-wide scan and a 75k x 77k join that spilled temp_buffers: 10.6-22 s (2026-09-23).
+      const callerAccounts = useRequests ? accounts : selected.filter(a => a.provider === 'cursor').map(a => a.id);
       const tp = new Params();
-      const callers = requestCte(tp, q, accounts, range, undefined, { columns: CALLER_COLUMNS, project: q.projects.length > 0 });
+      const callers = requestCte(tp, q, callerAccounts, range, undefined, { columns: CALLER_COLUMNS, project: q.projects.length > 0 });
       await tx.unsafe(`CREATE TEMP TABLE _usage_tool_callers ON COMMIT DROP AS
         WITH ${callers.text}
-        SELECT r.account_id, r.semantic_key, r.model_actual, cm.group_id AS caller_group_id, r.matches FROM requests r
+        SELECT r.account_id, r.semantic_key, cm.group_id AS caller_group_id, r.matches FROM requests r
         LEFT JOIN _usage_agent_map cm ON r.provider = 'cursor' AND ${agentMapOn('cm', 'r')}`, tp.values);
-      await tx.unsafe(`CREATE INDEX _usage_tool_callers_key ON _usage_tool_callers (account_id, semantic_key)`);
       await tx.unsafe(`ANALYZE _usage_tool_callers`);
 
+      // One pass over the invocation range, aggregated as it is read: no per-invocation temp table.
+      // Materialising the ~75,000 invocations of a month, indexing them, and joining them back cost 6-30 s
+      // on production (2026-09-23); a few thousand groups do not. Both consumers below only count, so the
+      // groups are the union of their keys and carry the count in n.
+      //
       // NESTED CALLS (spec 6.4). A row is a child only when its parent is a Codex `exec`: a nested MCP call
       // the companion (2.2.0) recorded under the exec that ran it. Every other parent link, such as a
-      // Claude parent_tool_use_id, stays a top-level row. Parents are fetched by primary key, whether or
-      // not they fall in the range, so a child whose exec is outside the range (or never arrived) still
-      // counts, under a synthetic "exec (outside range)" row, and never vanishes.
-      // `in_scope` is a join, not a correlated EXISTS: the in-range set has no index on its key, and a
-      // per-parent subplan over it would scan it once per parent.
-      await tx.unsafe(`CREATE TEMP TABLE _usage_nested_parents ON COMMIT DROP AS
-        WITH wanted AS (
-          SELECT DISTINCT account_id, parent_invocation_key AS invocation_key FROM _usage_invocations WHERE parent_invocation_key IS NOT NULL)
-        SELECT c.account_id, c.invocation_key, c.tool_name, b.provider, (s.invocation_key IS NOT NULL) AS in_scope
-        FROM wanted w
-        JOIN personal_hub.canonical_tool_invocations c ON c.account_id = w.account_id AND c.invocation_key = w.invocation_key
-        JOIN personal_hub.companion_bindings b ON b.source_id = c.source_id
-        LEFT JOIN _usage_invocations s ON s.account_id = w.account_id AND s.invocation_key = w.invocation_key
-        WHERE c.inv_revision_id IS NOT NULL`);
-      // Real statistics for the join into the tool rows below, like every other temp table here.
-      await tx.unsafe(`CREATE INDEX _usage_nested_parents_key ON _usage_nested_parents (account_id, invocation_key)`);
-      await tx.unsafe(`ANALYZE _usage_nested_parents`);
-
-      // Pre-aggregated rather than one row per invocation. Both consumers below only count, so this groups by
-      // the union of their keys and carries the count in n. Materialising all ~65,000 invocations for a
-      // month overflowed temp_buffers and cost 5-23 s on production (2026-09-23); a few thousand groups do not.
-      await tx.unsafe(`CREATE TEMP TABLE _usage_tool_rows ON COMMIT DROP AS
+      // Claude parent_tool_use_id, stays a top-level row. A parent is fetched by primary key, whether or not
+      // it falls in the range, so a child whose exec is outside the range (or never arrived) still counts,
+      // under a synthetic "exec (outside range)" row, and never vanishes. `in_scope` is the same predicate
+      // that selects the in-range set, applied to the parent row.
+      const ip = new Params();
+      const inScope = (a: string) => `${a}.account_id = ANY(${ip.add(accounts)}::text[])
+          AND ${a}.inv_observed_at >= ${ip.add(rangeStartIso)}::timestamptz AND ${a}.inv_observed_at < ${ip.add(rangeEndIso)}::timestamptz
+          ${q.machines.length ? `AND ${a}.source_id = ANY(${ip.add(q.machines)}::uuid[])` : ''}
+          ${q.agents.length ? `AND (${a}.account_id, ${a}.caller_agent_key) IN ${agentKeysIn(ip, q.agents)}` : ''}`;
+      await withGroupingMemory(tx, () => tx.unsafe(`CREATE TEMP TABLE _usage_tool_rows ON COMMIT DROP AS
         WITH joined AS (
-          SELECT i.*, b.install_id, b.provider, r.caller_group_id, r.matches,
+          SELECT i.account_id, i.source_id, i.tool_name, i.tool_namespace, i.tool_class, coalesce(i.res_outcome, i.outcome) AS final_outcome,
+            i.caller_agent_key, i.caller_request_key, i.parent_invocation_key,
+            b.install_id, b.provider, r.caller_group_id, r.matches,
             np.tool_name AS parent_tool, np.provider AS parent_provider, np.in_scope AS parent_in_scope
-          FROM _usage_invocations i
+          FROM personal_hub.canonical_tool_invocations i
           LEFT JOIN personal_hub.companion_bindings b ON b.source_id = i.source_id
           LEFT JOIN _usage_tool_callers r ON r.account_id = i.account_id AND r.semantic_key = i.caller_request_key
-          LEFT JOIN _usage_nested_parents np ON np.account_id = i.account_id AND np.invocation_key = i.parent_invocation_key)
+          LEFT JOIN LATERAL (
+            SELECT c.tool_name, pb.provider, (${inScope('c')}) AS in_scope
+            FROM personal_hub.canonical_tool_invocations c
+            JOIN personal_hub.companion_bindings pb ON pb.source_id = c.source_id
+            WHERE i.parent_invocation_key IS NOT NULL
+              AND c.account_id = i.account_id AND c.invocation_key = i.parent_invocation_key AND c.inv_revision_id IS NOT NULL
+          ) np ON true
+          WHERE ${inScope('i')})
         SELECT j.account_id, j.source_id, j.install_id, j.provider, j.tool_name, j.tool_namespace, j.tool_class, j.final_outcome AS outcome,
           j.caller_agent_key, j.caller_group_id, (j.caller_request_key IS NOT NULL) AS has_caller_request,
           CASE
@@ -833,7 +885,7 @@ export function createUsageQuery(getDatabase?: () => Sql) {
           END AS nesting,
           count(*)::int AS n
         FROM joined j ${useRequests ? 'WHERE j.matches' : ''}
-        GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12`);
+        GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12`, ip.values));
 
       // Aggregate first, then name: labels are joined per (install, tool, namespace), not per invocation.
       const byTool = await tx.unsafe(`WITH agg AS (
