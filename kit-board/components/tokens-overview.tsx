@@ -1,5 +1,6 @@
 'use client';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { cn } from 'cn';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -40,6 +41,24 @@ export const TOKENS_SECTIONS = [
 ] as const;
 
 const JUMPS = TOKENS_SECTIONS.flatMap(section => 'anchor' in section ? [{ anchor: section.anchor, label: section.nav }] : []);
+
+/**
+ * Where each card sits below the summary. One column below xl. From xl, twelve columns: the time series
+ * runs across the top and the rest pair up. From 3xl (1800px), models take the wider share of their pair,
+ * and the tools card spans two rows beside the footprint and the coverage. The projects and agents
+ * tables keep half a row each, since their seven columns wrap any narrower. Grid rows stretch, so cards
+ * in a row share a height.
+ */
+const DASHBOARD = {
+  activity: 'xl:col-span-12',
+  models: 'xl:col-span-6 3xl:col-span-7',
+  cost: 'xl:col-span-6 3xl:col-span-5',
+  breakdown: 'xl:col-span-6',
+  tools: 'xl:col-span-12 3xl:col-span-8 3xl:row-span-2',
+  footprint: 'xl:col-span-6 3xl:col-span-4',
+  coverage: 'xl:col-span-6 3xl:col-span-4',
+} as const;
+const place = (card: keyof typeof DASHBOARD) => cn('min-w-0', DASHBOARD[card]);
 
 /** Busiest and typical interval, and tokens per call: three readings the bars imply but never state. */
 function activityStats(points: UsageQueryResult['series']['points'], timezone: string, resolution: TokensFilters['resolution']) {
@@ -122,7 +141,7 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
                 </div>
               </CardHeader>
               {/* The breakdown sits beside the total it divides: one reading, not two cards. */}
-              <div className="border-border grid content-start gap-3 border-t p-4 lg:border-t-0 lg:border-l">
+              <div className="@container/composition border-border grid content-start gap-3 border-t p-4 lg:border-t-0 lg:border-l">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Composition</span>
                   {composition.inconsistent ? <Badge variant="soft-warning">components exceed the total</Badge> : null}
@@ -136,7 +155,7 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
                     ))}
                   </div>
                 )}
-                <dl className="grid gap-y-1.5" data-testid="composition-legend">
+                <dl className="grid gap-x-8 gap-y-1.5 @3xl/composition:grid-cols-2" data-testid="composition-legend">
                   {composition.segments.map(segment => (
                     <div key={segment.key} className="flex items-baseline gap-3">
                       <dt className="flex min-w-0 flex-1 items-center gap-2 text-xs">
@@ -173,70 +192,70 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
 
           <SectionNav label="Tokens sections" jumps={JUMPS} />
 
-          <Card id="tokens-activity" className="scroll-mt-28 gap-0 overflow-hidden py-0" aria-label="Tokens over time">
-            <CardHeader className="p-4">
-              <CardTitle className="text-base">Tokens over time</CardTitle>
-              <CardAction className="flex flex-wrap justify-end gap-1.5">
-                {summary.counts.partial ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild><Badge variant="outline" className="cursor-help">{summary.counts.partial} still observed</Badge></TooltipTrigger>
-                    <TooltipContent className="max-w-[20rem]">
-                      {summary.counts.partial === 1 ? 'One interval has' : `${summary.counts.partial} intervals have`} not finished yet: the collectors have covered part of {summary.counts.partial === 1 ? 'it' : 'them'}, so {summary.counts.partial === 1 ? 'its bar' : 'those bars'} can still rise as the rest of the interval is observed.
-                    </TooltipContent>
-                  </Tooltip>
-                ) : null}
-                {summary.counts.missing ? <Badge variant="soft-warning">{summary.counts.missing} without coverage</Badge> : null}
-              </CardAction>
-            </CardHeader>
-            {activity ? (
+          <div className="grid gap-6 xl:grid-cols-12" data-testid="tokens-dashboard">
+            <Card id="tokens-activity" className={cn('scroll-mt-28 gap-0 overflow-hidden py-0', place('activity'))} aria-label="Tokens over time">
+              <CardHeader className="p-4">
+                <CardTitle className="text-base">Tokens over time</CardTitle>
+                <CardAction className="flex flex-wrap justify-end gap-1.5">
+                  {summary.counts.partial ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild><Badge variant="outline" className="cursor-help">{summary.counts.partial} still observed</Badge></TooltipTrigger>
+                      <TooltipContent className="max-w-[20rem]">
+                        {summary.counts.partial === 1 ? 'One interval has' : `${summary.counts.partial} intervals have`} not finished yet: the collectors have covered part of {summary.counts.partial === 1 ? 'it' : 'them'}, so {summary.counts.partial === 1 ? 'its bar' : 'those bars'} can still rise as the rest of the interval is observed.
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
+                  {summary.counts.missing ? <Badge variant="soft-warning">{summary.counts.missing} without coverage</Badge> : null}
+                </CardAction>
+              </CardHeader>
+              {activity ? (
+                <StatGroup className="border-border border-y">
+                  <Stat label={`Busiest ${unit}`} value={compactTokens(activity.peak.total_tokens)} caption={`${activity.peakLabel} · ${exactTokens(activity.peak.calls)} calls`} />
+                  <Stat label={`Average active ${unit}`} value={compactTokens(activity.average)} caption={`over ${activity.active} ${unit}${activity.active === 1 ? '' : 's'} with activity`} />
+                  <Stat label="Tokens per call" value={activity.perCall === null ? '—' : compactTokens(activity.perCall)} caption="the bars' tokens over their model calls" />
+                </StatGroup>
+              ) : null}
+              <div className="grid gap-4 px-4 pt-4 pb-4">
+                {result.series.points.length ? <IntervalBars points={result.series.points} timezone={shown.timezone} resolution={shown.resolution} /> : <EmptyState title="No intervals in range" />}
+              </div>
+              <p className="border-border text-muted-foreground mt-auto border-t p-3 text-xs leading-relaxed" data-testid="series-summary">
+                {summary.intervals} intervals · {summary.counts.observed} observed · {summary.counts.zero} recorded as zero · {summary.counts.missing} without collector coverage · {summary.counts.partial} still being observed. Bars sum to {exactTokens(summary.total)} tokens{result.series.excludes_snapshot_tokens > 0 ? `; ${exactTokens(result.series.excludes_snapshot_tokens)} snapshot tokens count in the total but cannot be placed on ${shown.resolution === 'day' ? 'days' : 'hours'}` : ''}.
+                {shown.resolution === 'day' ? ' Hourly resolution is offered for ranges up to 14 days.' : ''}
+              </p>
+            </Card>
+
+            <UsageInsightCards result={result} classNames={{ models: place('models'), cost: place('cost') }} />
+            {/* The two breakdown cards join this grid directly; the pair's anchor is on the projects card. */}
+            <ProjectAgentBreakdown result={result} filters={filters} onFiltersChange={onFiltersChange} loading={!!pending?.requests}
+              className="contents" cardClassName={place('breakdown')} id="tokens-projects" />
+            <ToolKnowledgeCard id="tokens-tools" className={place('tools')} result={result} loading={!!pending?.tools} knowledgeLoading={!!pending?.knowledge} />
+            <EnvironmentalImpact id="tokens-footprint" className={place('footprint')} estimate={result.environment} />
+
+            <Card id="tokens-coverage" className={cn('scroll-mt-28 gap-0 overflow-hidden py-0', place('coverage'))} aria-label="Coverage and sources">
+              <CardHeader className="p-4">
+                <CardTitle className="text-base">What this scope covers</CardTitle>
+                <CardDescription>Where the figures come from and what they leave out.</CardDescription>
+              </CardHeader>
               <StatGroup className="border-border border-y">
-                <Stat label={`Busiest ${unit}`} value={compactTokens(activity.peak.total_tokens)} caption={`${activity.peakLabel} · ${exactTokens(activity.peak.calls)} calls`} />
-                <Stat label={`Average active ${unit}`} value={compactTokens(activity.average)} caption={`over ${activity.active} ${unit}${activity.active === 1 ? '' : 's'} with activity`} />
-                <Stat label="Tokens per call" value={activity.perCall === null ? '—' : compactTokens(activity.perCall)} caption="the bars' tokens over their model calls" />
+                <Stat label="Request detail" value={requestDetailPending ? '…' : percent(detail ? detail.coverage.applicable * detail.coverage.complete : null)} caption={requestDetailPending ? 'reading request records in the selected range' : detail ? `${exactTokens(detail.covered_tokens)} of ${exactTokens(detail.coverage.headline)} headline tokens carry request records` : ''} />
+                <Stat label="Monthly snapshots" value={merged.length ? exactTokens(headline.snapshot_tokens) : '0'} caption={merged.length ? `tokens merged from ${merged.length} snapshot${merged.length === 1 ? '' : 's'} where hourly history has nothing` : 'none merged into this scope'} />
+                <Stat label="Range" value={result.scope.range.anchored_to_now ? 'to now' : 'closed'} caption={`${result.scope.range.preset.replaceAll('_', ' ')} · ${result.scope.range.timezone}`} />
               </StatGroup>
-            ) : null}
-            <div className="grid gap-4 px-4 pt-4 pb-4">
-              {result.series.points.length ? <IntervalBars points={result.series.points} timezone={shown.timezone} resolution={shown.resolution} /> : <EmptyState title="No intervals in range" />}
-            </div>
-            <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed" data-testid="series-summary">
-              {summary.intervals} intervals · {summary.counts.observed} observed · {summary.counts.zero} recorded as zero · {summary.counts.missing} without collector coverage · {summary.counts.partial} still being observed. Bars sum to {exactTokens(summary.total)} tokens{result.series.excludes_snapshot_tokens > 0 ? `; ${exactTokens(result.series.excludes_snapshot_tokens)} snapshot tokens count in the total but cannot be placed on ${shown.resolution === 'day' ? 'days' : 'hours'}` : ''}.
-              {shown.resolution === 'day' ? ' Hourly resolution is offered for ranges up to 14 days.' : ''}
-            </p>
-          </Card>
-
-          <UsageInsightCards result={result} />
-          <div id="tokens-projects" className="min-w-0 scroll-mt-28">
-            <ProjectAgentBreakdown result={result} filters={filters} onFiltersChange={onFiltersChange} loading={!!pending?.requests} />
+              <div className="grid gap-3 p-4 text-sm">
+                {merged.length ? (
+                  <ul className="text-muted-foreground grid gap-1 text-xs" data-testid="merged-snapshots">
+                    {merged.map(s => <li key={`${s.subject_key}:${s.month}`}>{s.machine_name ?? s.subject_key} · {s.month} · {s.merged === 'month' ? 'whole month merged' : 'whole source days merged'} · {exactTokens(s.merged_tokens)} tokens · method {s.methodology_version ?? 'not recorded'}</li>)}
+                  </ul>
+                ) : null}
+                {listedOnly.length ? (
+                  <p className="text-muted-foreground text-xs">{listedOnly.length} stored monthly snapshot{listedOnly.length === 1 ? '' : 's'} in this range {listedOnly.length === 1 ? 'is' : 'are'} listed and not counted: {[...new Set(listedOnly.map(s => s.reason ?? 'no reason'))].map(r => r.replaceAll('_', ' ')).join('; ')}.</p>
+                ) : null}
+                {result.unsupported.length ? <ul className="grid gap-1 text-xs" data-testid="unsupported">{result.unsupported.map(note => <li key={note} className="text-warning">{note}</li>)}</ul> : null}
+                {result.notes.length ? <ul className="text-muted-foreground grid gap-1 text-xs" data-testid="notes">{result.notes.map(note => <li key={note}>{note}</li>)}</ul> : null}
+                <p className="text-muted-foreground text-xs">Local logs do not cover browser or cloud conversations; those move account allowances without exposing tokens here. Configure collectors and see how requests map to your app projects under <Link href="/settings" className="underline underline-offset-4">Settings</Link>.</p>
+              </div>
+            </Card>
           </div>
-          <div id="tokens-tools" className="min-w-0 scroll-mt-28">
-            <ToolKnowledgeCard result={result} loading={!!pending?.tools} knowledgeLoading={!!pending?.knowledge} />
-          </div>
-          <EnvironmentalImpact id="tokens-footprint" estimate={result.environment} />
-
-          <Card id="tokens-coverage" className="scroll-mt-28 gap-0 overflow-hidden py-0" aria-label="Coverage and sources">
-            <CardHeader className="p-4">
-              <CardTitle className="text-base">What this scope covers</CardTitle>
-              <CardDescription>Where the figures come from and what they leave out.</CardDescription>
-            </CardHeader>
-            <StatGroup className="border-border border-y">
-              <Stat label="Request detail" value={requestDetailPending ? '…' : percent(detail ? detail.coverage.applicable * detail.coverage.complete : null)} caption={requestDetailPending ? 'reading request records in the selected range' : detail ? `${exactTokens(detail.covered_tokens)} of ${exactTokens(detail.coverage.headline)} headline tokens carry request records` : ''} />
-              <Stat label="Monthly snapshots" value={merged.length ? exactTokens(headline.snapshot_tokens) : '0'} caption={merged.length ? `tokens merged from ${merged.length} snapshot${merged.length === 1 ? '' : 's'} where hourly history has nothing` : 'none merged into this scope'} />
-              <Stat label="Range" value={result.scope.range.anchored_to_now ? 'to now' : 'closed'} caption={`${result.scope.range.preset.replaceAll('_', ' ')} · ${result.scope.range.timezone}`} />
-            </StatGroup>
-            <div className="grid gap-3 p-4 text-sm">
-              {merged.length ? (
-                <ul className="text-muted-foreground grid gap-1 text-xs" data-testid="merged-snapshots">
-                  {merged.map(s => <li key={`${s.subject_key}:${s.month}`}>{s.machine_name ?? s.subject_key} · {s.month} · {s.merged === 'month' ? 'whole month merged' : 'whole source days merged'} · {exactTokens(s.merged_tokens)} tokens · method {s.methodology_version ?? 'not recorded'}</li>)}
-                </ul>
-              ) : null}
-              {listedOnly.length ? (
-                <p className="text-muted-foreground text-xs">{listedOnly.length} stored monthly snapshot{listedOnly.length === 1 ? '' : 's'} in this range {listedOnly.length === 1 ? 'is' : 'are'} listed and not counted: {[...new Set(listedOnly.map(s => s.reason ?? 'no reason'))].map(r => r.replaceAll('_', ' ')).join('; ')}.</p>
-              ) : null}
-              {result.unsupported.length ? <ul className="grid gap-1 text-xs" data-testid="unsupported">{result.unsupported.map(note => <li key={note} className="text-warning">{note}</li>)}</ul> : null}
-              {result.notes.length ? <ul className="text-muted-foreground grid gap-1 text-xs" data-testid="notes">{result.notes.map(note => <li key={note}>{note}</li>)}</ul> : null}
-              <p className="text-muted-foreground text-xs">Local logs do not cover browser or cloud conversations; those move account allowances without exposing tokens here. Configure collectors and see how requests map to your app projects under <Link href="/settings" className="underline underline-offset-4">Settings</Link>.</p>
-            </div>
-          </Card>
         </>
       )}
     </div>

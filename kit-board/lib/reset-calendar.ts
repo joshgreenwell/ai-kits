@@ -30,15 +30,35 @@ export const resetTypes = [
 export function resetKind(item: ResetItem) {
   return item.reset_kind ?? (item.category === 'forecast' ? 'forecast' : /banked/i.test(item.status) ? 'banked' : /global/i.test(item.scope ?? '') ? 'global' : 'reset');
 }
-export function resetMarker(item: ResetItem) {
+/**
+ * What an entry says happened, apart from whether it was reported, announced, or forecast. Each type
+ * keeps one color and one glyph in the record, with the provider as the tile's border, and one shape in
+ * the calendar, where each provider and type pair takes a shade of the provider's family
+ * (components/reset-dot.tsx). Either way an announced Codex global reset and a reported one share a
+ * color and differ only in how certain they look.
+ */
+export type ResetEventType = 'global' | 'banked' | 'window_flush' | 'reset' | 'credits' | 'signal' | 'forecast';
+export const RESET_EVENT_TYPES: readonly ResetEventType[] = ['global', 'banked', 'window_flush', 'reset', 'credits', 'signal', 'forecast'];
+export const RESET_EVENT_LABELS: Record<ResetEventType, string> = {
+  global: 'Global reset', banked: 'Banked reset', window_flush: 'Window flush', reset: 'Other reset', credits: 'Credits', signal: 'Watch / signal', forecast: 'Forecast',
+};
+export function resetEventType(item: ResetItem): ResetEventType {
   const kind = resetKind(item);
-  if (kind === 'banked' || kind === 'credits' || kind === 'window_flush') return kind;
-  if (item.category === 'forecast') return 'forecast';
-  if (kind === 'watch' || kind === 'signal') return 'signal';
-  return item.category === 'announcement' ? 'announcement' : kind;
+  return kind === 'watch' ? 'signal' : kind;
 }
-export function resetTypeLabel(item: ResetItem) {
-  return resetTypes.find(type => type.value === resetKind(item))?.label ?? 'Watch / signal';
+/** The providers a reset feed can name, in the order the filter, the calendar, and the legend list them. */
+export const RESET_PROVIDERS = ['claude', 'codex', 'cursor'] as const;
+const RESET_PROVIDER_LABELS: Record<string, string> = { claude: 'Claude', codex: 'Codex', cursor: 'Cursor' };
+export function resetProviderLabel(provider: string) {
+  return RESET_PROVIDER_LABELS[provider] ?? provider;
+}
+export function resetProviderOrder(provider: string) {
+  const index = (RESET_PROVIDERS as readonly string[]).indexOf(provider);
+  return index === -1 ? RESET_PROVIDERS.length : index;
+}
+/** Announced and forecast entries have not happened yet; they draw fainter than a reported one. */
+export function resetPlanned(item: ResetItem) {
+  return item.category !== 'history';
 }
 export function matchesResetType(item: ResetItem, filter: string) {
   if (filter === 'all') return true;

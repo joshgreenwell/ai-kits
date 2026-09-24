@@ -167,14 +167,15 @@ test('project and agent cards read their rows, coverage, and selection from the 
   assert.match(body, /Named projects 1 4 state buckets kept inside the total/);
   assert.match(body, /Attribution coverage 21% 420 of 2,000 headline tokens carry a project/);
   assert.match(body, /In an app project 71% 300 of 420 placed tokens land in a project an app defines/);
-  assert.match(body, /Kit board 300 60% 1 1/); assert.match(body, /No project 120 24% 1 1/); assert.match(body, /Unknown 80 16% 0 0/, 'No project and Unknown stay separate rows');
-  assert.match(body, /Chats \/ no project 0 0\.0% 0 0/, 'a projectless app chat reads as its own row');
-  assert.match(body, /desk: companion update needed 0 0\.0% 0 0/, 'a machine that has not reported projects is named');
+  assert.match(body, /1 Kit board 1 conversation 300 tokens 60% 1 call/); assert.match(body, /2 No project 1 conversation 120 tokens 24% 1 call/); assert.match(body, /3 Unknown 0 conversations 80 tokens 16% 0 calls/, 'No project and Unknown stay separate rows, ranked by tokens');
+  assert.match(body, /Chats \/ no project 0 conversations 0 tokens 0\.0% 0 calls/, 'a projectless app chat reads as its own row');
+  assert.match(body, /desk: companion update needed 0 conversations 0 tokens 0\.0% 0 calls/, 'a machine that has not reported projects is named');
   assert.match(body, /Main agent 380 76% of attributable tokens/); assert.match(body, /Subagents 80 16% · 1 distinct observed child/); assert.match(body, /Unattributed 40 8\.0%/); assert.match(body, /Spawn events 2/);
-  assert.match(body, /Role classes Main 380 Built-in 80 Unattributed 40/);
-  assert.match(body, /Claude Code main agent Main 1 1 380 76% 1/, 'one row per provider, role and name');
-  assert.match(body, /Claude Code Explore built-in Subagent 2 1 80 16% 1/, 'a group counts its instances and sessions and tags a built-in');
-  assert.match(body, /Cursor unattributed Unattributed 0 1 40 8\.0% 0/, 'missing identity stays unattributed with nothing invented');
+  assert.match(body, /Role classes Main 380 76% Built-in 80 16% Unattributed 40 8\.0%/);
+  assert.match(body, /1 main agent Claude Code · 1 instance · 1 session 380 tokens 76% 1 call/, 'one row per provider, role and name');
+  assert.match(body, /2 Explore Subagent built-in Claude Code · 2 instances · 1 session 80 tokens 16% 1 call/, 'a group counts its instances and sessions and tags a built-in');
+  assert.match(body, /3 unattributed Unattributed Cursor · 0 instances · 1 session 40 tokens 8\.0% 0 calls/, 'missing identity stays unattributed with nothing invented');
+  assert.match(html, /border-color:#D97757/i, 'an agent row carries its provider ring');
   assert.match(body, /Forked Codex subagent rollouts record their parent session and agent, so their tokens count under Codex main/, 'the forked-rollout gap is stated');
   assert.match(body, /do not say whether a user or a model asked for the delegation/);
   assert.match(html, /aria-pressed="false"[^>]*>Main agents</); assert.match(html, /aria-pressed="false"[^>]*>Subagents</);
@@ -185,8 +186,8 @@ test('project and agent cards read their rows, coverage, and selection from the 
 
   const filters = { ...DEFAULT_FILTERS, projects: ['no_project'], agents: [CHILD_GROUP], agent_scope: 'subagent' as const };
   const selectedHtml = render({ filters });
-  assert.match(selectedHtml, /data-state="selected"[^>]*>(?:(?!<\/tr>).)*No project/s, 'the state bucket row shows as selected');
-  assert.match(selectedHtml, /data-state="selected"[^>]*>(?:(?!<\/tr>).)*Explore/s, 'the agent row shows as selected');
+  assert.match(selectedHtml, /data-state="selected"[^>]*>(?:(?!<\/li>).)*No project/s, 'the state bucket row shows as selected');
+  assert.match(selectedHtml, /data-state="selected"[^>]*>(?:(?!<\/li>).)*Explore/s, 'the agent row shows as selected');
   assert.match(selectedHtml, /aria-pressed="false"[^>]*>Subagents</, 'the card role buttons are a local view, independent of the page-wide agent scope');
   const selectedBody = text(selectedHtml);
   assert.match(selectedBody, /filtering: No project/); assert.match(selectedBody, /filtering: Claude Code · Explore/);
@@ -199,7 +200,7 @@ test('project and agent cards read their rows, coverage, and selection from the 
   for (const [value, name] of [['projectless', 'Chats / no project'], [`not_reported:${DESK_INSTALL}`, 'desk: companion update needed']]) {
     const rowHtml = render({ filters: { ...DEFAULT_FILTERS, projects: [value] } });
     assert.equal((rowHtml.match(/data-state="selected"/g) ?? []).length, 1, `${name} selects one row`);
-    assert.match(rowHtml, new RegExp(`data-state="selected"[^>]*>(?:(?!</tr>).)*${name.replace('/', '\\/')}`, 's'));
+    assert.match(rowHtml, new RegExp(`data-state="selected"[^>]*>(?:(?!</li>).)*${name.replace('/', '\\/')}`, 's'));
     assert.match(text(rowHtml), new RegExp(`filtering: ${name.replace('/', '\\/')}`));
     assert.match(text(rowHtml), new RegExp(`Project: ${name.replace('/', '\\/')}`), 'the chip names the row, not a wider bucket');
   }
@@ -226,13 +227,17 @@ test('the tool card keeps invocations, model calls, and spawns apart and lists k
   assert.match(body, /Caller attribution 60% 3 of 5 invocations name their caller/);
   assert.match(body, /Outcomes succeeded 3 failed 1 unknown 1 · 1 without a recorded outcome/);
   assert.match(body, /model filter not applied to tools/);
-  assert.match(body, /Read built-in built-in 3 60%/); assert.match(body, /search_notes MCP · obsidian 2 40%/);
-  assert.match(body, /Claude Code · Explore built-in Subagent 3/); assert.match(body, /No caller recorded not recorded 2/);
+  assert.match(body, /Top tools 2 tools · 1 server, ranked by their own invocations/);
+  assert.match(body, /1 Read built-in 3 invocations 60%/); assert.match(body, /2 search_notes MCP · obsidian 2 invocations 40%/);
+  assert.match(html, /aria-pressed="true"[^>]*>By tool</, 'top tools open by tool');
+  assert.match(body, /1 Explore Subagent built-in Claude Code 3 invocations 60%/); assert.match(body, /2 No caller recorded not recorded 2 invocations 40%/);
+  assert.doesNotMatch(body, /Inside exec/, 'no exec breakdown without nested calls');
   assert.match(body, /Knowledge sources Tool calls that touched a configured vault or connector/);
   assert.match(body, /model filter not applied to knowledge access 1 configured source 2 distinct tool calls Configure sources/, 'the knowledge area reports its own unapplied filters');
   assert.match(html, /href="\/settings\/sources"/, 'the card links to source configuration in global Settings');
-  assert.match(body, /Fixture vault 3 2 1 1 2 1 0 0 1/, 'accesses, distinct tool calls, sessions, agents, read/search/write/unknown, earlier-configuration accesses');
-  assert.match(body, /Unassigned identity not yet named 1 1 1 1 0 0 0 1 —/);
+  assert.match(body, /Fixture vault read 2 · search 1 · 1 under an earlier configuration 3 accesses 2 tool calls 1 session 1 agent/, 'access kinds and earlier-configuration accesses, then accesses, distinct tool calls, sessions, agents');
+  assert.match(body, /Unassigned identity not yet named unknown 1 1 access 1 tool call 1 session 1 agent/);
+  assert.match(body, /Bars split by access kind: read search unknown/, 'the legend names only the kinds present');
   assert.match(body, /Per-source access counts overlap when one invocation touches several sources/);
   assert.match(body, /shows access, not that the answer used its contents, and no token cost is assigned to a source/);
   assert.match(body, /Tool invocations, model calls, and agent spawns are three different counts and are never summed/);
@@ -246,7 +251,7 @@ test('the tool card keeps invocations, model calls, and spawns apart and lists k
   assert.match(bareBody, /Caller attribution —/, 'coverage over nothing is withheld, not shown as complete');
 });
 
-test('an exec row expands to the nested calls it ran, and a child whose exec is outside the range keeps its own row', () => {
+test('what ran inside exec is broken down by server and tool, including a child whose exec is outside the range', () => {
   const result = synthetic();
   result.tools = { ...result.tools, invocations: 9, by_tool: [
     { name: 'exec', class: 'builtin', namespace: null, builtin: true, machine: null, synthetic: false, invocations: 2, share: 2 / 9,
@@ -255,10 +260,17 @@ test('an exec row expands to the nested calls it ran, and a child whose exec is 
       children: [{ name: 'list_items', namespace: 'fixture-server', invocations: 1, outcomes: { succeeded: 1 } }] },
     { name: 'h:0123…', class: 'mcp', namespace: null, builtin: false, machine: 'desk', synthetic: false, invocations: 2, share: 2 / 9, children: [] },
   ] };
-  const body = text(renderToStaticMarkup(<ToolKnowledgeCard result={result} />));
-  assert.match(body, /exec built-in built-in 4 nested calls · 1 tool/, 'the exec row offers its children');
-  assert.match(body, /exec \(outside range\) built-in built-in 1 nested call · 1 tool/);
-  assert.match(body, /h:0123… MCP · unnamed on desk 2/, 'an unlabeled hash reads as a short hash with its machine');
+  const html = renderToStaticMarkup(<ToolKnowledgeCard result={result} />);
+  const body = text(html);
+  assert.match(body, /1 exec built-in \+ 4 nested calls across 1 server 2 invocations 22%/, 'the exec row names what it ran');
+  assert.doesNotMatch(body, /exec \(outside range\)/, 'the synthetic parent is not ranked as a tool of its own');
+  assert.match(body, /h:0123… MCP · unnamed on desk 2 invocations/, 'an unlabeled hash reads as a short hash with its machine');
+  assert.match(html, /data-testid="tool-children"/);
+  assert.match(body, /Inside exec 5 nested calls · 2 tools · 2 servers · 1 failed · 1 under an exec that started before the range\. Shares are of the nested calls\./);
+  assert.match(html, /aria-label="Inside exec view"[^]*?aria-pressed="true"[^>]*>By server</, 'the exec breakdown opens by server');
+  assert.match(body, /1 Fixture DB connector 1 tool · run_query 4 4 calls 80% 1 failed/, 'a connector reads by its app, with its tool count, busiest tools, share of nested calls and failures');
+  assert.match(body, /2 fixture-server 1 tool · list_items 1 1 call 20% 0 failed/, 'a child outside the range keeps its own server row');
+  assert.match(body, /Bars split by outcome: succeeded failed/);
 });
 
 test('detail filters, unfilterable buckets, and a failed refresh are explained without dropping the last good result', () => {

@@ -14,6 +14,12 @@
 @source not "../public";
 @custom-variant dark (&:is(.dark *));
 
+/* A dashboard step past 2xl, for a third card to a row. It is in rem so it sorts after xl: an
+   arbitrary min-[1800px] sorts before the rem breakpoints, and xl then overrides it. */
+@theme {
+  --breakpoint-3xl: 112.5rem;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

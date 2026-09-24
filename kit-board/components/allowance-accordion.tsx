@@ -40,7 +40,7 @@ export function AllowanceAccordion({ views, expanded, onExpandedChange, now, tim
   views: AccountView[]; expanded: string[]; onExpandedChange: (ids: string[]) => void; now: number; timezone: string;
 }) {
   return (
-    <Accordion type="multiple" value={expanded} onValueChange={onExpandedChange} className="grid gap-4">
+    <Accordion type="multiple" value={expanded} onValueChange={onExpandedChange} className="@container/accounts grid gap-4">
       {views.map(view => (
         <AccordionItem key={view.account.id} value={view.account.id} data-testid={`account-${view.account.id}`} id={allowanceAnchor(view.account.id)}
           className="scroll-mt-28 bg-card text-card-foreground border-border overflow-hidden rounded-xl border shadow-sm last:border-b">
@@ -69,7 +69,7 @@ export function AllowanceAccordion({ views, expanded, onExpandedChange, now, tim
               <p className="bg-card text-muted-foreground p-4 text-sm">{view.windows.length ? 'Only Spark windows exist for this account; use the toggle above to show them.' : 'No allowance readings collected yet.'}</p>
             )}
           </div>
-          <AccordionContent className="border-border grid gap-6 border-t p-4 xl:grid-cols-2">
+          <AccordionContent className="border-border grid gap-6 border-t p-4 @4xl/accounts:grid-cols-2">
             {view.visible.map(window => <WindowDetail key={window.key} account={view.account} window={window} now={now} timezone={timezone} />)}
           </AccordionContent>
         </AccordionItem>

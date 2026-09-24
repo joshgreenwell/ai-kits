@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isSparkWindow, quotaOutlook, quotaPace, tokenPace, telemetrySchema, connectionSchema } from '../lib/telemetry-contract';
 import { readingFreshness } from '../lib/allowance-freshness';
-import { calendarDays, matchesResetType, resetDay, resetEntryKey, resetMarker, shiftMonth } from '../lib/reset-calendar';
+import { RESET_EVENT_TYPES, RESET_PROVIDERS, calendarDays, matchesResetType, resetDay, resetEntryKey, resetEventType, resetPlanned, shiftMonth } from '../lib/reset-calendar';
+import { providerTypeColor } from '../lib/provider-colors';
 import type { ResetItem } from '../lib/reset-feeds';
 import { normalizeFeed } from '../lib/reset-feeds';
 import { resetFeedFailure, resetFeedFailureLabel } from '../lib/reset-feed-errors';
@@ -154,9 +155,19 @@ test('Claude counter events are allowance-window flushes, not global resets', ()
   const flush = radar.items[0];
   assert.equal(flush.reset_kind, 'window_flush');
   assert.equal(flush.scope, 'broadly reported window flush');
-  assert.equal(resetMarker(flush), 'window_flush');
+  assert.equal(resetEventType(flush), 'window_flush'); assert.equal(resetPlanned(flush), false);
   assert.equal(matchesResetType(flush, 'window_flush'), true);
   assert.equal(matchesResetType(flush, 'global'), false);
+});
+test('each provider shades every reset type in its own color, and an unknown provider has none', () => {
+  for (const provider of RESET_PROVIDERS) {
+    const colors = RESET_EVENT_TYPES.map(type => providerTypeColor(provider, type));
+    assert.ok(colors.every(Boolean), `${provider} names a color for every type`);
+    assert.equal(new Set(colors).size, RESET_EVENT_TYPES.length, `${provider} gives no two types one color`);
+  }
+  assert.notEqual(providerTypeColor('claude', 'forecast'), providerTypeColor('codex', 'forecast'));
+  assert.equal(providerTypeColor('someone-else', 'global'), null);
+  assert.equal(providerTypeColor(null, 'global'), null);
 });
 test('browser adapter exports only numeric quota windows, not account or conversation data', () => {
   const rows = normalizeQuota({ five_hour: { utilization: 23, resets_at: '2026-09-09T20:00:00Z' }, seven_day_sonnet: { utilization: 60, resets_at: '2026-09-12T00:00:00Z' }, account: { email: 'private' }, extra_usage: { monthly_limit: 100 } }, '2026-09-09T18:00:00Z');
@@ -166,23 +177,25 @@ test('browser adapter exports only numeric quota windows, not account or convers
 });
 
 
-test('saved banked lifecycle, global scope and announcements retain independent markers', () => {
+test('saved banked lifecycle, global scope and announcements keep their type apart from how certain they are', () => {
   // Synthetic normalized records also cover historical snapshots from retired sources.
   const banked: ResetItem = { id: 'bank', provider: 'codex', title: 'Banked credit update', reset_kind: 'banked',
     banked_state: 'arriving', scope: 'global', at: '2026-09-05T00:00:00Z', url: 'https://example.com/bank',
     verification_status: 'pending', status: 'arriving', category: 'announcement', confidence: null, effective_at: null };
-  assert.equal(resetMarker(banked), 'banked');
+  assert.equal(resetEventType(banked), 'banked'); assert.equal(resetPlanned(banked), true);
   assert.ok(matchesResetType(banked, 'banked')); assert.ok(matchesResetType(banked, 'announcement'));
   assert.equal(matchesResetType(banked, 'global'), false);
   const global: ResetItem = { ...banked, id: 'reset', reset_kind: 'global', banked_state: null, category: 'history' };
-  assert.equal(resetMarker(global), 'global');
+  assert.equal(resetEventType(global), 'global'); assert.equal(resetPlanned(global), false);
   const announced: ResetItem = { ...global, category: 'announcement' };
-  assert.equal(resetMarker(announced), 'announcement');
+  // An announced global reset keeps the global type and color; only its certainty differs.
+  assert.equal(resetEventType(announced), 'global'); assert.equal(resetPlanned(announced), true);
   assert.ok(matchesResetType(announced, 'global'));
   assert.notEqual(resetEntryKey(global), resetEntryKey(announced));
   for (const kind of ['watch', 'signal'] as const) {
     const signal = { ...banked, reset_kind: kind };
-    assert.equal(resetMarker(signal), 'signal'); assert.ok(matchesResetType(signal, 'signal'));
+    assert.equal(resetEventType(signal), 'signal'); assert.ok(matchesResetType(signal, 'signal'));
   }
-  assert.equal(resetMarker({ ...banked, reset_kind: 'credits' }), 'credits');
+  assert.equal(resetEventType({ ...banked, reset_kind: 'credits' }), 'credits');
+  assert.equal(resetEventType({ ...banked, reset_kind: undefined, category: 'forecast' }), 'forecast');
 });

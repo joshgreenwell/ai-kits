@@ -14,7 +14,7 @@ import { Workspace } from "@/components/workspace";
  */
 export default function TokensPage() {
   return (
-    <Workspace>
+    <Workspace width="dashboard">
       <TokensOverviewLive />
     </Workspace>
   );

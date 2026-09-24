@@ -1,4 +1,5 @@
 import { InfoIcon } from 'lucide-react';
+import { cn } from 'cn';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,7 +21,7 @@ export const carbon = (value: number) => value < 1 && value > 0 ? `${quantity(va
 /** One cell of a divided band, not a card inside a card: three readings of one estimate. */
 function ImpactSummary({ label, value, range, comparison }: { label: string; value: string; range: string; comparison: React.ReactNode }) {
   return (
-    <div className="border-border grid content-start gap-2 border-t p-4 first:border-t-0 md:border-t-0 md:border-l md:first:border-l-0">
+    <div className="border-border grid content-start gap-2 border-t p-4 first:border-t-0 @xl/impact:border-t-0 @xl/impact:border-l @xl/impact:first:border-l-0">
       <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">{label} · planning</span>
       <span className="font-mono text-2xl leading-none font-medium tracking-tight tabular-nums">{value}</span>
       <p className="text-muted-foreground text-sm leading-relaxed">{comparison}</p>
@@ -38,7 +39,7 @@ function ActionCell({ action }: { action: (typeof ENVIRONMENTAL_ACTIONS)[number]
     ['Delivery / evidence', `${action.delivery} ${action.evidence}`],
   ];
   return (
-    <div className="border-border grid content-start gap-3 border-t p-4 text-xs first:border-t-0 lg:border-t-0 lg:border-l lg:first:border-l-0">
+    <div className="border-border grid content-start gap-3 border-t p-4 text-xs first:border-t-0 @3xl/impact:border-t-0 @3xl/impact:border-l @3xl/impact:first:border-l-0">
       <div className="grid gap-1.5">
         <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">{action.category}</span>
         <h4 className="text-sm leading-snug font-semibold">{action.title}</h4>
@@ -74,7 +75,7 @@ export function EnvironmentalActions({ estimate }: { estimate: EnvironmentalEsti
           <p>Under the same workload mix and planning factors, that models savings of {energy(reduction.energy_kwh_avoided)}, {water(reduction.direct_water_liters_avoided)}, and {carbon(reduction.operational_co2_kg_avoided)}. A changed workload mix can produce different savings.</p>
         </AlertDescription>
       </Alert>
-      <div className="border-border grid overflow-hidden rounded-[var(--radius-card)] border lg:grid-cols-3">
+      <div className="border-border grid overflow-hidden rounded-[var(--radius-card)] border @3xl/impact:grid-cols-3">
         {ENVIRONMENTAL_ACTIONS.map(action => <ActionCell key={action.key} action={action} />)}
       </div>
       <p className="text-muted-foreground text-xs leading-relaxed">Program details checked {checked}. Recheck availability, terms, project, price, and certificate or delivery evidence at the destination before acting. The upper operational scenario is {carbon(estimate.compensation_planning.operational_co2_kg_to_cover)}; it is a conservative planning quantity, not a neutrality claim or proof of completed compensation.</p>
@@ -83,15 +84,16 @@ export function EnvironmentalActions({ estimate }: { estimate: EnvironmentalEsti
 }
 
 /** USG-020: the selected scope's physical estimates, read at a glance; actions and method sit one disclosure away. */
-export function EnvironmentalImpact({ estimate, id }: { estimate: EnvironmentalEstimate; id?: string }) {
+export function EnvironmentalImpact({ estimate, id, className }: { estimate: EnvironmentalEstimate; id?: string; className?: string }) {
   const comparisons = estimate.comparisons_at_planning_scenario;
   const scenarioColumns: Column<EnvironmentalEstimate['scenarios'][number]>[] = [
     { id: 'label', header: 'Scenario', sortValue: row => row.label, cell: row => row.label },
     { id: 'unit', header: 'Unit', sortValue: row => row.unit, cell: row => <span className="font-mono text-xs">{row.unit}</span> },
     { id: 'factor', header: 'Factor', sortValue: row => row.factor, cell: row => row.factor },
   ];
+  // The readings and actions split into columns by the card's own width, so they hold up in a narrow grid cell.
   return (
-    <Card id={id} className="scroll-mt-28 gap-0 overflow-hidden py-0" aria-label="Environmental impact">
+    <Card id={id} className={cn('@container/impact scroll-mt-28 gap-0 overflow-hidden py-0', className)} aria-label="Environmental impact">
       <CardHeader className="p-4">
         <CardTitle className="text-base">Environmental impact</CardTitle>
         <CardDescription className="max-w-[90ch]">Inference-equivalent scenarios for the same selected activity and filters. These are modeled physical quantities, not measurements from provider datacenters.</CardDescription>
@@ -101,7 +103,7 @@ export function EnvironmentalImpact({ estimate, id }: { estimate: EnvironmentalE
         </CardAction>
       </CardHeader>
 
-      <div className="border-border grid border-t md:grid-cols-3">
+      <div className="border-border grid border-t @xl/impact:grid-cols-3">
         <ImpactSummary label="Electricity" value={energy(estimate.energy_kwh.planning)}
           range={`${energy(estimate.energy_kwh.efficient_production_floor)} – ${energy(estimate.energy_kwh.long_context_upper)}`}
           comparison={<>About <b className="text-foreground">{quantity(comparisons.us_home_days_of_electricity)}</b> U.S. home-days or <b className="text-foreground">{quantity(comparisons.smartphone_full_charges, 0)}</b> smartphone charges.</>} />
@@ -141,7 +143,7 @@ export function EnvironmentalImpact({ estimate, id }: { estimate: EnvironmentalE
         </Disclosure>
       </div>
 
-      <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed">
+      <p className="border-border text-muted-foreground mt-auto border-t p-3 text-xs leading-relaxed">
         Method {estimate.methodology_version}. Planning values apply published per-call reference factors to classified source-month cohorts; actual hardware, datacenter location, grid mix, cooling, and water source are unknown. The floor-to-upper span compares scenarios; it is not a confidence interval or a guarantee that the real footprint lies inside it.
       </p>
     </Card>

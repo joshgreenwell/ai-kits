@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { cn } from 'cn';
 import { Workspace } from '@/components/workspace';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -96,7 +97,7 @@ export function AllowancesOverview({ data, error, now, onRetry, installs, settin
   };
 
   return (
-    <Workspace>
+    <Workspace width="dashboard">
       {oauthNotices.length > 0 && (
         <Alert variant="warning">
           <AlertTitle>Claude OAuth usage failed</AlertTitle>
@@ -135,38 +136,49 @@ export function AllowancesOverview({ data, error, now, onRetry, installs, settin
 
       {!data ? (
         !error && <p className="text-muted-foreground text-sm">Loading allowances…</p>
-      ) : (
-        <>
-          {views.length ? <SectionNav label="Allowances sections" jumps={JUMPS} /> : null}
-          <section id="allowances-outlook" className="grid min-w-0 scroll-mt-28 gap-4" aria-label="Outlook">
-            <AllowanceOutlook views={views} now={now} timezone={DISPLAY_TIMEZONE} onSelect={openWindow} />
-          </section>
-
-          <section id="allowances-accounts" className="grid min-w-0 scroll-mt-28 gap-4" aria-label="Accounts">
-            {views.length ? (
-              <AllowanceAccordion views={views} expanded={expanded} onExpandedChange={ids => update({ expanded: rememberExpanded(active, data.accounts, carried, ids) })} now={now} timezone={DISPLAY_TIMEZONE} />
-            ) : (
-              <EmptyState
-                title={narrowed ? 'No matching accounts' : 'No accounts connected'}
-                description={narrowed ? 'The accounts carried from Tokens are not in this Observatory.' : 'Allowance readings will appear after a Codex log update or a Claude browser/statusline collection.'}
-                actions={narrowed ? <Button size="sm" variant="outline" asChild><Link href="/usage/allowances">Show all accounts</Link></Button> : <Button size="sm" asChild><Link href="/settings">Connect an account</Link></Button>}
-              />
-            )}
-          </section>
-
-          <section id="allowances-models" className="grid min-w-0 scroll-mt-28 gap-4" aria-label="Model history">
-            <ModelUsageHistory data={data} windows={modelWindows} now={now} />
-          </section>
-        </>
-      )}
+      ) : views.length ? <SectionNav label="Allowances sections" jumps={JUMPS} /> : null}
 
       {/*
-        The calendar reads the public feeds, not this Observatory's own readings, so it does not wait
-        on live allowance data; /usage/resets now redirects to this anchor.
+        From 3xl (1800px) the page runs as two columns: what is left and each account on the left, model
+        history and the reset record beside them. Narrower, the same sections stack in the same order.
       */}
-      <section id="reset-calendar" className="grid min-w-0 scroll-mt-28 gap-4" aria-label="Reset calendar">
-        <ResetRecord />
-      </section>
+      <div className={cn('grid min-w-0 gap-8', data && '3xl:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] 3xl:items-start')}>
+        {data ? (
+          <div className="grid min-w-0 gap-8">
+            <section id="allowances-outlook" className="grid min-w-0 scroll-mt-28 gap-4" aria-label="Outlook">
+              <AllowanceOutlook views={views} now={now} timezone={DISPLAY_TIMEZONE} onSelect={openWindow} />
+            </section>
+
+            <section id="allowances-accounts" className="grid min-w-0 scroll-mt-28 gap-4" aria-label="Accounts">
+              {views.length ? (
+                <AllowanceAccordion views={views} expanded={expanded} onExpandedChange={ids => update({ expanded: rememberExpanded(active, data.accounts, carried, ids) })} now={now} timezone={DISPLAY_TIMEZONE} />
+              ) : (
+                <EmptyState
+                  title={narrowed ? 'No matching accounts' : 'No accounts connected'}
+                  description={narrowed ? 'The accounts carried from Tokens are not in this Observatory.' : 'Allowance readings will appear after a Codex log update or a Claude browser/statusline collection.'}
+                  actions={narrowed ? <Button size="sm" variant="outline" asChild><Link href="/usage/allowances">Show all accounts</Link></Button> : <Button size="sm" asChild><Link href="/settings">Connect an account</Link></Button>}
+                />
+              )}
+            </section>
+          </div>
+        ) : null}
+
+        <div className="grid min-w-0 gap-8">
+          {data ? (
+            <section id="allowances-models" className="grid min-w-0 scroll-mt-28 gap-4" aria-label="Model history">
+              <ModelUsageHistory data={data} windows={modelWindows} now={now} />
+            </section>
+          ) : null}
+
+          {/*
+            The calendar reads the public feeds, not this Observatory's own readings, so it does not wait
+            on live allowance data; /usage/resets now redirects to this anchor.
+          */}
+          <section id="reset-calendar" className="grid min-w-0 scroll-mt-28 gap-4" aria-label="Reset calendar">
+            <ResetRecord />
+          </section>
+        </div>
+      </div>
     </Workspace>
   );
 }

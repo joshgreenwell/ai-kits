@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import { sections } from '@/lib/catalog';
 import { Button } from './ui/button';
 import { cn } from 'cn';
+import { pageFrame } from './workspace';
 
 export function Navigation() {
   const pathname = usePathname();
@@ -12,7 +13,8 @@ export function Navigation() {
 
   return (
     <header data-app-header className="bg-background/85 border-border sticky top-0 z-40 border-b backdrop-blur">
-      <div className="mx-auto flex max-w-[1200px] flex-wrap items-center gap-x-6 gap-y-3 px-6 py-3">
+      {/* The header spans the dashboard frame on every view, so it holds still when a section changes width. */}
+      <div className={cn(pageFrame('dashboard'), 'flex flex-wrap items-center gap-x-6 gap-y-3 py-3')}>
         <Link
           href="/usage"
           scroll={false}
@@ -48,6 +50,20 @@ export function Navigation() {
               {section.title}
             </Link>
           ))}
+          <Link
+            href="/reviews"
+            scroll={false}
+            onNavigate={startSection}
+            aria-current={isCurrent('/reviews') ? 'page' : undefined}
+            className={cn(
+              'focus-visible:ring-ring/50 rounded-md px-2.5 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-[3px]',
+              isCurrent('/reviews')
+                ? 'bg-secondary text-foreground'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+            )}
+          >
+            PR watch
+          </Link>
         </nav>
 
         <div className="ml-auto flex items-center gap-2">

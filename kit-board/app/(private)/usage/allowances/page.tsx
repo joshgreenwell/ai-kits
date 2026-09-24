@@ -34,5 +34,5 @@ function AllowancesInner() {
 
 /** The Allowances subtab: one expandable card per account (USG-023), then model history. */
 export default function Allowances() {
-  return <Suspense fallback={<Workspace><p className="text-muted-foreground text-sm">Loading allowances…</p></Workspace>}><AllowancesInner /></Suspense>;
+  return <Suspense fallback={<Workspace width="dashboard"><p className="text-muted-foreground text-sm">Loading allowances…</p></Workspace>}><AllowancesInner /></Suspense>;
 }

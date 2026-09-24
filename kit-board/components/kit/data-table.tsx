@@ -124,8 +124,10 @@ export function DataTable<T>({
     return <div className={cn(className)}>{empty}</div>
   }
 
+  // min-w-0: in a grid or flex parent, a wide table scrolls inside its own container instead of
+  // stretching the parent past the card, where the card's overflow would clip the last columns.
   return (
-    <div className={cn(className)} {...props}>
+    <div className={cn("min-w-0", className)} {...props}>
       <Table>
         {caption ? <TableCaption>{caption}</TableCaption> : null}
         <TableHeader>

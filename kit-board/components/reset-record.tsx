@@ -6,10 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/kit';
-import { ResetDot } from '@/components/reset-dot';
+import { ResetIcon, RESET_TYPE_STYLES } from '@/components/reset-dot';
 import { Choice, when } from '@/components/telemetry-shared';
 import { ResetCalendar } from '@/components/reset-calendar';
-import { matchesResetType, resetDay, resetEntryKey, resetMarker, resetTypeLabel, resetTypes } from '@/lib/reset-calendar';
+import { RESET_EVENT_LABELS, RESET_PROVIDERS, matchesResetType, resetDay, resetEntryKey, resetEventType, resetPlanned, resetProviderLabel, resetProviderOrder, resetTypes } from '@/lib/reset-calendar';
+import { providerColor } from '@/lib/provider-colors';
 import { resetFeedFailureLabel } from '@/lib/reset-feed-errors';
 import { resetFeedCoverageNotes } from '@/lib/nextreset-feeds';
 import type { ResetDocument } from '@/lib/reset-feeds';
@@ -56,13 +57,17 @@ export function ResetRecord() {
   for (const feed of [...feeds].sort((a, b) => Number(a.source === 'nextreset-timeline') - Number(b.source === 'nextreset-timeline'))) {
     for (const item of feed.payload?.items ?? []) byUrl.set(resetEntryKey(item), { item, feed });
   }
+  // Every provider a feed can name is offered, plus any other one an entry carries, so a new feed shows up in the filter.
+  const providers = [...new Set([...RESET_PROVIDERS.filter(name => feeds.some(feed => feed.provider === name)), ...[...byUrl.values()].map(({ item }) => item.provider)])].sort((a, b) => resetProviderOrder(a) - resetProviderOrder(b));
   const items = [...byUrl.values()].filter(({ item }) => (provider === 'all' || item.provider === provider) && matchesResetType(item, kind)).sort((a, b) => resetDay(b.item).localeCompare(resetDay(a.item)) || b.item.at.localeCompare(a.item.at));
   const visibleItems = selectedDay ? items.filter(({ item }) => resetDay(item) === selectedDay) : items;
   const stale = (f: Feed) => !!f.error || !f.succeeded_at || Date.now() - Date.parse(f.succeeded_at) > 26 * 3_600_000 || !!f.payload?.upstream_stale || (f.payload?.coverage && Date.now() - Date.parse(f.payload.coverage.checked_at) > 45 * 60_000);
   const coverageNotes = [...new Set(feeds.flatMap(f => resetFeedCoverageNotes(f.payload)))];
 
+  // The calendar sits beside the record once both have room; narrower, it runs above the record with its
+  // legend beside the month, and on a phone the legend wraps under it.
   return (
-    <div className="grid gap-4">
+    <div className="@container/reset grid gap-4">
       {error && (
         <Alert variant="warning" role="alert">
           <AlertTitle>Some feeds are stale</AlertTitle>
@@ -79,14 +84,15 @@ export function ResetRecord() {
 
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-wrap gap-4">
-          <Choice label="Provider" value={provider} onChange={value => { setProvider(value); setSelectedDay(null); setLimit(10); }} options={[{ value: 'all', label: 'Codex & Claude' }, { value: 'codex', label: 'Codex' }, { value: 'claude', label: 'Claude' }]} />
+          <Choice label="Provider" value={provider} onChange={value => { setProvider(value); setSelectedDay(null); setLimit(10); }} options={[{ value: 'all', label: 'All providers' }, ...providers.map(name => ({ value: name, label: resetProviderLabel(name) }))]} />
           <Choice label="Show" value={kind} onChange={value => { setKind(value); setSelectedDay(null); setLimit(10); }} options={[{ value: 'all', label: 'All reset types' }, ...resetTypes]} />
         </div>
         <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>{busy ? 'Checking…' : 'Check feeds'}</Button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-        <div>
+      <div className="grid gap-4 @6xl/reset:grid-cols-[minmax(0,40rem)_minmax(0,1fr)] @6xl/reset:items-start">
+        {/* Beside the record the calendar stays in view while the record scrolls, below the sticky header and jump links. */}
+        <div className="min-w-0 @6xl/reset:sticky @6xl/reset:top-28">
           <ResetCalendar items={items.map(entry => entry.item)} selectedDay={selectedDay} onSelectDay={day => { setSelectedDay(day); setLimit(10); }} busy={busy} />
         </div>
 
@@ -115,23 +121,25 @@ export function ResetRecord() {
             ) : (
               <div className="grid gap-3">
                 {visibleItems.slice(0, limit).map(({ item, feed }) => (
-                  <article key={resetEntryKey(item)} className="border-border grid grid-cols-[52px_minmax(0,1fr)] gap-3 border-b pb-3 last:border-b-0 last:pb-0">
-                    <div className="text-center">
+                  <article key={resetEntryKey(item)} className="border-border grid grid-cols-[40px_32px_minmax(0,1fr)] gap-3 border-b pb-3 last:border-b-0 last:pb-0">
+                    <div className="pt-0.5 text-center">
                       <span className="block font-mono text-xs font-medium">
                         {new Date(`${resetDay(item)}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}
                       </span>
                       <span className="text-muted-foreground block font-mono text-[10px]">{resetDay(item).slice(0, 4)}</span>
                     </div>
+                    <ResetIcon type={resetEventType(item)} provider={item.provider} planned={resetPlanned(item)} />
                     <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge variant="secondary">{item.provider === 'codex' ? 'Codex' : 'Claude'}</Badge>
-                        <Badge variant="outline"><ResetDot marker={resetMarker(item)} />{resetTypeLabel(item)}</Badge>
-                        <Badge variant="outline">{item.category === 'history' ? 'Reported' : item.category === 'announcement' ? 'Announced / update' : 'Forecast'}</Badge>
+                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+                        <span className="font-semibold" style={{ color: providerColor(item.provider) }}>{resetProviderLabel(item.provider)}</span>
+                        <span aria-hidden="true" className="text-muted-foreground">·</span>
+                        <span className="font-medium" style={{ color: RESET_TYPE_STYLES[resetEventType(item)].color }}>{RESET_EVENT_LABELS[resetEventType(item)]}</span>
+                        <Badge variant="outline" className="ml-0.5">{item.category === 'history' ? 'Reported' : item.category === 'announcement' ? 'Announced / update' : 'Forecast'}</Badge>
                         <span className="text-muted-foreground font-mono text-[11px]">
                           {item.status.replaceAll('_', ' ')}{stale(feed) ? ' · stale source' : ''}
                         </span>
                       </div>
-                      <a href={item.url} target="_blank" rel="noreferrer" className="hover:text-primary mt-1.5 block text-sm font-semibold underline-offset-4 hover:underline">
+                      <a href={item.url} target="_blank" rel="noreferrer" className="hover:text-primary mt-1 block text-sm font-semibold underline-offset-4 hover:underline">
                         {item.title.split('\n')[0]}
                       </a>
                       {item.title.includes('\n') && (

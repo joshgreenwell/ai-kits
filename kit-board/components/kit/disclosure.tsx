@@ -27,13 +27,14 @@ export function Disclosure({
   children: React.ReactNode
 }) {
   return (
-    <Collapsible defaultOpen={defaultOpen} className={cn("group/disclosure", className)} {...props}>
+    <Collapsible defaultOpen={defaultOpen} className={cn("group/disclosure min-w-0", className)} {...props}>
+      {/* A long title wraps under its chevron on a narrow screen rather than running out of the card. */}
       <CollapsibleTrigger asChild>
         <Button
           type="button"
           variant="ghost"
           size="xs"
-          className="text-muted-foreground hover:text-foreground -ml-1.5 gap-1.5 px-1.5 font-normal"
+          className="text-muted-foreground hover:text-foreground -ml-1.5 h-auto min-h-6 max-w-full justify-start gap-1.5 px-1.5 py-1 text-left leading-4 font-normal whitespace-normal"
         >
           <ChevronRightIcon className="size-3 shrink-0 transition-transform group-data-[state=open]/disclosure:rotate-90" />
           {title}

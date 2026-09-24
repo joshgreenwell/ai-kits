@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
+import { cn } from 'cn';
 import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -196,7 +197,7 @@ export function CostByDayChart({ cost, colors, empty }: { cost: UsageQueryResult
   return <UsageSeriesChart categories={categories} series={series} unit="estimated USD" formatValue={formatUsd} formatAxis={formatUsd} />;
 }
 
-export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colors: Map<string, ModelLineStyle> }) {
+export function ApiCostCard({ result, colors, className }: { result: UsageQueryResult; colors: Map<string, ModelLineStyle>; className?: string }) {
   const [view, setView] = useViewPreference('observatory.tokens.cost-view.v2', COST_VIEWS);
   const cost = result.cost;
   const unpricedReasons = Object.entries(cost.unpriced_reasons);
@@ -213,9 +214,9 @@ export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colo
   );
 
   return (
-    <Card id="tokens-cost" className="scroll-mt-28 gap-0 overflow-hidden py-0" aria-label="API-equivalent cost estimate">
+    <Card id="tokens-cost" className={cn('scroll-mt-28 gap-0 overflow-hidden py-0', className)} aria-label="API-equivalent cost estimate">
       {/* The tabs own the card, so the header, the figures, and the plot stay one reading rather than stacked panels. */}
-      <Tabs value={view} onValueChange={setView} className="gap-0">
+      <Tabs value={view} onValueChange={setView} className="flex-1 gap-0">
         <CardHeader className="p-4">
           <CardTitle className="text-base">API-equivalent cost estimate</CardTitle>
           <CardDescription>Public list-price estimate for the selected scope. It is not subscription spend, credits, an invoice, or an actual bill.</CardDescription>
@@ -252,7 +253,7 @@ export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colo
             <div className="flex flex-wrap gap-2">{cost.pricing_catalog.sources.map(source => <Button key={`${source.label}:${source.url}`} variant="outline" size="xs" asChild><a href={source.url} target="_blank" rel="noreferrer">{source.label}</a></Button>)}</div>
           </Disclosure>
         </div>
-        <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed">Cost lines use the Chicago calendar date of each hourly bucket, or each request&apos;s activity when a detail filter makes requests the headline. A missing date is a gap, not a zero-cost day. Hiding a line or switching this view does not change the selected scope or the token headline.</p>
+        <p className="border-border text-muted-foreground mt-auto border-t p-3 text-xs leading-relaxed">Cost lines use the Chicago calendar date of each hourly bucket, or each request&apos;s activity when a detail filter makes requests the headline. A missing date is a gap, not a zero-cost day. Hiding a line or switching this view does not change the selected scope or the token headline.</p>
       </Tabs>
     </Card>
   );
@@ -311,10 +312,10 @@ export function ModelRanking({ rows, colors }: { rows: RankedModel[]; colors: Ma
   const [all, setAll] = useState(false);
   const top = rows[0]?.tokens || 1;
   const shown = all ? rows : rows.slice(0, RANKED_PREVIEW);
-  const columns = 'sm:grid-cols-[minmax(0,15rem)_minmax(3rem,1fr)_4.5rem_3.5rem_5rem_7rem]';
+  const columns = '@min-[38rem]/ranking:grid-cols-[minmax(0,15rem)_minmax(3rem,1fr)_4.5rem_3.5rem_5rem_7rem]';
   return (
-    <div className="grid" data-testid="model-ranking">
-      <div aria-hidden="true" className={`text-muted-foreground hidden gap-x-4 px-4 pb-2 text-[10px] font-semibold tracking-wider uppercase sm:grid ${columns}`}>
+    <div className="@container/ranking grid" data-testid="model-ranking">
+      <div aria-hidden="true" className={`text-muted-foreground hidden gap-x-4 px-4 pb-2 text-[10px] font-semibold tracking-wider uppercase @min-[38rem]/ranking:grid ${columns}`}>
         <span>Model</span><span>Relative volume</span><span className="text-right">Tokens</span><span className="text-right">Share</span><span className="text-right">Calls</span><span className="text-right">Estimate</span>
       </div>
       <ol className="border-border divide-border divide-y border-t">
@@ -327,15 +328,15 @@ export function ModelRanking({ rows, colors }: { rows: RankedModel[]; colors: Ma
                 <i aria-hidden className="inline-block size-2 shrink-0 rounded-xs" style={{ background: lineStyle(colors, row.model).color }} />
                 <span className="truncate font-mono text-xs">{modelLabel(row.model)}</span>
               </span>
-              <span aria-hidden="true" className="bg-muted order-2 col-span-2 h-1.5 overflow-hidden rounded-full sm:order-none sm:col-span-1">
+              <span aria-hidden="true" className="bg-muted order-2 col-span-2 h-1.5 overflow-hidden rounded-full @min-[38rem]/ranking:order-none @min-[38rem]/ranking:col-span-1">
                 <span className="bg-primary/70 block h-full rounded-full" style={{ width: `${Math.max(0.5, (row.tokens / top) * 100)}%` }} />
               </span>
-              <span className="text-muted-foreground order-3 col-span-2 flex gap-3 font-mono text-[10.5px] tabular-nums sm:order-none sm:col-span-1 sm:contents sm:text-xs">
-                <span className="sm:text-foreground sm:text-right" title={`${exactTokens(row.tokens)} tokens`}>{compactTokens(row.tokens)}<span className="sm:hidden"> tokens</span></span>
-                <span className="sm:text-right">{percent(row.share)}</span>
-                <span className="sm:text-right">{exactTokens(row.calls)}<span className="sm:hidden"> calls</span></span>
+              <span className="text-muted-foreground order-3 col-span-2 flex gap-3 font-mono text-[10.5px] tabular-nums @min-[38rem]/ranking:order-none @min-[38rem]/ranking:col-span-1 @min-[38rem]/ranking:contents @min-[38rem]/ranking:text-xs">
+                <span className="@min-[38rem]/ranking:text-foreground @min-[38rem]/ranking:text-right" title={`${exactTokens(row.tokens)} tokens`}>{compactTokens(row.tokens)}<span className="@min-[38rem]/ranking:hidden"> tokens</span></span>
+                <span className="@min-[38rem]/ranking:text-right">{percent(row.share)}</span>
+                <span className="@min-[38rem]/ranking:text-right">{exactTokens(row.calls)}<span className="@min-[38rem]/ranking:hidden"> calls</span></span>
               </span>
-              <span className="order-1 grid justify-items-end text-right sm:order-none">
+              <span className="order-1 grid justify-items-end text-right @min-[38rem]/ranking:order-none">
                 {priced
                   ? <span className="font-mono text-xs font-semibold tabular-nums">{formatUsd(row.usd)}</span>
                   : <span className="text-muted-foreground text-xs">not priced</span>}
@@ -382,7 +383,7 @@ export function ModelOverTimeChart({ result, colors, empty }: { result: UsageQue
   return <UsageSeriesChart categories={categories} series={series} unit="tokens" formatValue={value => `${exactTokens(value)} tokens`} formatAxis={compactTokens} />;
 }
 
-export function TokensByModelCard({ result, colors }: { result: UsageQueryResult; colors: Map<string, ModelLineStyle> }) {
+export function TokensByModelCard({ result, colors, className }: { result: UsageQueryResult; colors: Map<string, ModelLineStyle>; className?: string }) {
   const [view, setView] = useViewPreference('observatory.tokens.model-view.v2', MODEL_VIEWS);
   const ranked = rankedModels(result);
   const attributed = result.by_model.reduce((sum, row) => sum + row.total_tokens, 0);
@@ -390,8 +391,8 @@ export function TokensByModelCard({ result, colors }: { result: UsageQueryResult
   const empty = <EmptyState title="No model attribution in this scope" description="The selected token total remains visible above, but these records do not carry a model breakdown." />;
 
   return (
-    <Card id="tokens-models" className="scroll-mt-28 gap-0 overflow-hidden py-0" aria-label="Tokens by model">
-      <Tabs value={view} onValueChange={setView} className="gap-0">
+    <Card id="tokens-models" className={cn('scroll-mt-28 gap-0 overflow-hidden py-0', className)} aria-label="Tokens by model">
+      <Tabs value={view} onValueChange={setView} className="flex-1 gap-0">
         <CardHeader className="p-4">
           <CardTitle className="text-base">Tokens by model</CardTitle>
           <CardDescription>{ranked.length ? `${ranked.length} ${ranked.length === 1 ? 'model' : 'models'}, ranked by tokens, with the API-equivalent estimate beside each.` : 'Which models the selected tokens went to.'}</CardDescription>
@@ -413,7 +414,7 @@ export function TokensByModelCard({ result, colors }: { result: UsageQueryResult
         <TabsContent value="table">
           <ModelSummaryTable result={result} colors={colors} />
         </TabsContent>
-        <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed">
+        <p className="border-border text-muted-foreground mt-auto border-t p-3 text-xs leading-relaxed">
           {exactTokens(attributed)} of {exactTokens(result.headline.total_tokens)} headline tokens are attributed to a recorded model.
           {unattributed > 0 ? ` ${exactTokens(unattributed)} tokens remain outside this breakdown, including snapshots without model detail.` : ' The model rows reconcile to the headline.'}
           {' '}Estimates are public list price, not spend; a model without price inputs is marked rather than counted as free. A missing point on the graph means model detail is unavailable for that interval; it is not drawn as zero.
@@ -423,8 +424,11 @@ export function TokensByModelCard({ result, colors }: { result: UsageQueryResult
   );
 }
 
-/** Where the tokens went, then what they would cost at list price: the model card leads because the cost card's parts refer back to it. */
-export function UsageInsightCards({ result }: { result: UsageQueryResult }) {
+/**
+ * Where the tokens went, then what they would cost at list price: the model card leads because the cost card's parts refer back to it.
+ * `classNames` places each card in a parent grid.
+ */
+export function UsageInsightCards({ result, classNames }: { result: UsageQueryResult; classNames?: { models?: string; cost?: string } }) {
   const colors = modelColors([...result.by_model.map(row => row.model), ...result.cost.by_model.map(row => row.model)]);
-  return <><TokensByModelCard result={result} colors={colors} /><ApiCostCard result={result} colors={colors} /></>;
+  return <><TokensByModelCard result={result} colors={colors} className={classNames?.models} /><ApiCostCard result={result} colors={colors} className={classNames?.cost} /></>;
 }
