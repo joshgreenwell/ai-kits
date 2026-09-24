@@ -158,3 +158,37 @@ export const projectedRemaining = (pace: Outlook | null) => (pace && pace.projec
  * mirror - passes through here rather than inverting by hand at each call site.
  */
 export const sampleRemaining = (usedPercent: number) => 100 - usedPercent;
+
+/**
+ * How urgent a window is, most urgent first: a forecast that runs out before the reset, an allowance
+ * already spent, one with little left, then the rest. A window with no current reading has nothing to
+ * rank and goes last. A stale reading keeps the tier its level earns; the row says the projection is paused.
+ */
+export type UrgencyTier = 'short' | 'exhausted' | 'tight' | 'steady' | 'history';
+const TIER_ORDER: Record<UrgencyTier, number> = { short: 0, exhausted: 1, tight: 2, steady: 3, history: 4 };
+/** Below this much left, at reset or now when there is no projection, a window reads as tight. */
+export const TIGHT_REMAINING = 20;
+
+export type UrgencyRow = { account: LiveAccount; window: WindowView; tier: UrgencyTier; left: number | null };
+
+export function urgencyTier(pace: Outlook | null): UrgencyTier {
+  if (!pace) return 'history';
+  const left = projectedRemaining(pace);
+  if (left !== null && left < 0 && pace.remaining > 0) return 'short';
+  if (meterRemaining(pace) === 0) return 'exhausted';
+  return (left ?? pace.remaining) < TIGHT_REMAINING ? 'tight' : 'steady';
+}
+
+/**
+ * Every visible window across the accounts in one list. Within a tier, the sooner exhaustion leads for
+ * shortfalls, the smaller level for the rest, and the sooner reset breaks a tie.
+ */
+export function urgencyRows(views: AccountView[]): UrgencyRow[] {
+  const at = (value: string | null | undefined) => (value ? Date.parse(value) : Infinity);
+  return views.flatMap(view => view.visible.map(window => ({ account: view.account, window, tier: urgencyTier(window.pace), left: projectedRemaining(window.pace) })))
+    .sort((a, b) => TIER_ORDER[a.tier] - TIER_ORDER[b.tier]
+      || (a.tier === 'short' ? at(a.window.pace?.exhaustionAt) - at(b.window.pace?.exhaustionAt) : 0)
+      || (a.left ?? a.window.pace?.remaining ?? Infinity) - (b.left ?? b.window.pace?.remaining ?? Infinity)
+      || at(a.window.pace?.resets_at) - at(b.window.pace?.resets_at)
+      || a.account.label.localeCompare(b.account.label) || a.window.title.localeCompare(b.window.title));
+}

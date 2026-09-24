@@ -11,6 +11,9 @@ const tone: Record<WindowView['state'], 'soft' | 'soft-info' | 'soft-warning' | 
   measured: 'soft', blended: 'soft', historical: 'soft-info', learning: 'outline', stale: 'soft-warning', expired: 'soft-warning', history_only: 'outline',
 };
 
+/** The in-page target for an account card, or for one window's detail inside it. */
+export const allowanceAnchor = (accountId: string, windowKey?: string) => `allowance-${accountId}${windowKey ? `-${windowKey}` : ''}`;
+
 function AlertBadges({ alerts }: { alerts: string[] }) {
   const oauth = alerts.filter(alert => alert.startsWith('Claude OAuth'));
   const identity = alerts.filter(alert => !alert.startsWith('Claude OAuth'));
@@ -39,8 +42,8 @@ export function AllowanceAccordion({ views, expanded, onExpandedChange, now, tim
   return (
     <Accordion type="multiple" value={expanded} onValueChange={onExpandedChange} className="grid gap-4">
       {views.map(view => (
-        <AccordionItem key={view.account.id} value={view.account.id} data-testid={`account-${view.account.id}`}
-          className="bg-card text-card-foreground border-border overflow-hidden rounded-xl border shadow-sm last:border-b">
+        <AccordionItem key={view.account.id} value={view.account.id} data-testid={`account-${view.account.id}`} id={allowanceAnchor(view.account.id)}
+          className="scroll-mt-28 bg-card text-card-foreground border-border overflow-hidden rounded-xl border shadow-sm last:border-b">
           <AccordionTrigger className="items-center gap-3 p-4 hover:no-underline">
             <span className="grid min-w-0 gap-1">
               <span className="flex flex-wrap items-center gap-2">
@@ -139,7 +142,7 @@ function WindowDetail({ account, window, now, timezone }: { account: AccountView
       : p.remaining === 0 ? 'This allowance is fully used. Waiting for the next reset.'
         : over ? `Allowance runs out ${whenIn(p.exhaustionAt, timezone)} at this forecast pace.` : 'Your allowance lasts through this reset at the forecast pace.';
   return (
-    <section className="grid content-start gap-3" aria-label={`${account.label} ${window.title}`} data-testid={`detail-${window.key}`}>
+    <section className="grid scroll-mt-28 content-start gap-3" aria-label={`${account.label} ${window.title}`} data-testid={`detail-${window.key}`} id={allowanceAnchor(account.id, window.key)}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-sm font-semibold">{window.title}</h3>
         <span className="text-muted-foreground font-mono text-[10.5px]">{window.label}{window.latestReader && window.latestReader !== 'v1' ? ` · via ${window.latestReader}` : ''} · {window.windowMinutes >= 1440 ? `${Math.round(window.windowMinutes / 1440)}-day` : `${Math.round(window.windowMinutes / 60)}-hour`} window{window.historyOnlyRows ? ` · ${window.historyOnlyRows} history-only readings` : ''}</span>
