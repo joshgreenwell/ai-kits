@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { TokensOverview } from '@/components/tokens-overview';
 import { ProjectAgentBreakdown, ToolKnowledgeCard, agentLabel, projectFilterValue } from '@/components/usage-breakdown-cards';
-import { CostModelTable, ModelSummaryTable } from '@/components/usage-insight-cards';
+import { CostBreakdown, CostByDayChart, CostModelTable, ModelOverTimeChart, ModelRanking, ModelSummaryTable, rankedModels } from '@/components/usage-insight-cards';
+import { EnvironmentalActions } from '@/components/environmental-impact';
+import { DataTable } from '@/components/kit';
 import { UsageSeriesChart } from '@/components/usage-series-chart';
+import type { ModelLineStyle } from '@/lib/model-colors';
 import type { UsageQueryResult } from '@/lib/usage-query';
 import { DEFAULT_FILTERS, activeFilterChips, compositionView, seriesSummary } from '@/lib/usage-view';
 
@@ -127,17 +130,32 @@ test('the rendered headline, composition, and series agree with the query result
   assert.match(body, /Monthly snapshots cannot be placed on an hourly series/); assert.match(body, /straddling a range edge/);
   assert.match(body, /Request detail 25% 500 of 2,000 headline tokens carry request records/);
   assert.match(body, /API-equivalent cost estimate Public list-price estimate/);
-  assert.match(body, /Tokens by model Graph Table/, 'the model card offers both the plot and the ledger');
-  assert.match(body, /Environmental impact Inference-equivalent scenarios/);
-  assert.match(body, /Actions you can take/);
+  assert.match(body, /API equivalent \$1\.25 list-price estimate, not spend · 86% priced/, 'the summary sets the estimate beside the tokens and calls it an estimate');
+  assert.match(body, /Busiest day 1K Tue, Sep 1 · 4 calls Average active day 666\.7 over 3 days with activity Tokens per call 222\.2/, 'the activity figures are read from the same bars they sit above');
+  assert.match(body, /Tokens by model 1 model, ranked by tokens, with the API-equivalent estimate beside each\. Ranked Graph Table/, 'the model card leads with the ranking and keeps the plot and the ledger');
+  assert.match(body, /1 m1 1\.4K tokens 70% 7 calls \$1\.25 \$1,041\.67 \/ 1M · partial/, 'a ranked model carries its estimate and says when part of it is unpriced');
+  assert.match(body, /API-equivalent cost estimate Public list-price estimate/);
   assert.match(body, /Estimated API equivalent \$1\.25/);
-  assert.match(html, /aria-label="m1, Sep 1, 2026: \$0\.80, 1,000 tokens · 4 calls · 100 unpriced tokens"/, 'cost graph exposes exact model/day evidence');
-  assert.match(html, /aria-label="m1, Tue, Sep 1: 1,000 tokens, 4 calls"/, 'model graph exposes exact interval values');
+  assert.match(body, /What the estimate is made of \$1,041\.67 per 1M priced tokens, blended/);
+  assert.match(body, /Fresh input \$0\.50 40% Cached input \$0\.10 8\.0% Cache-write input \$0\.15 12% Output · reasoning \$0\.25 20% Output · other \$0\.25 20%/, 'the components are the parts of the one estimate');
+  assert.match(body, /Fresh input carries the largest share of the estimate, 40%\. Components are list-price parts/);
+  assert.doesNotMatch(body, /Of priced tokens/, 'token shares are withheld while a priced row is only partly priced');
+  const colors = new Map([['m1', { color: 'var(--chart-1)' }]]);
+  assert.match(renderToStaticMarkup(<CostByDayChart cost={result.cost} colors={colors} empty={null} />), /aria-label="m1, Sep 1, 2026: \$0\.80, 1,000 tokens · 4 calls · 100 unpriced tokens"/, 'cost graph exposes exact model/day evidence');
+  assert.match(renderToStaticMarkup(<ModelOverTimeChart result={result} colors={colors} empty={null} />), /aria-label="m1, Tue, Sep 1: 1,000 tokens, 4 calls"/, 'model graph exposes exact interval values');
+  assert.match(body, /Environmental impact Inference-equivalent scenarios/);
   assert.match(body, /Electricity · planning 3\.06 Wh/); assert.match(body, /Direct water · planning 0\.918 mL/); assert.match(body, /Operational carbon · planning 1\.206 g CO₂e/);
-  assert.match(body, /Avoid about 0\.9 comparable calls/);
-  assert.match(html, /href="https:\/\/climeworks\.com\/actnow"/); assert.match(html, /href="https:\/\/store\.b-e-f\.org\/household\/"/); assert.match(html, /href="https:\/\/donate\.rewiringamerica\.org\/campaign\/641970\/donate"/);
-  assert.match(body, /none changes the footprint displayed above/);
-  assert.match(body, /none changes the footprint displayed above.*Projects Tokens by the project.*Agents How the same tokens divide.*Tool calls and knowledge sources.*What this scope covers/s, 'the breakdowns follow the environmental card and precede the coverage card');
+  assert.match(body, /CO₂e scenario comparison Actions you can take Scenario factors, scope, methodology, and sources Method 2026-08-20\.1\./, 'actions and method detail wait behind two disclosures under the three figures');
+  const actionsHtml = renderToStaticMarkup(<EnvironmentalActions estimate={result.environment} />);
+  assert.match(text(actionsHtml), /Avoid about 0\.9 comparable calls/);
+  assert.match(actionsHtml, /href="https:\/\/climeworks\.com\/actnow"/); assert.match(actionsHtml, /href="https:\/\/store\.b-e-f\.org\/household\/"/); assert.match(actionsHtml, /href="https:\/\/donate\.rewiringamerica\.org\/campaign\/641970\/donate"/);
+  assert.match(text(actionsHtml), /none changes the footprint displayed above/);
+  assert.match(html, /<nav aria-label="Tokens sections"/);
+  for (const anchor of ['activity', 'models', 'cost', 'projects', 'tools', 'footprint', 'coverage']) {
+    assert.match(html, new RegExp(`href="#tokens-${anchor}"`), `the jump bar links ${anchor}`);
+    assert.match(html, new RegExp(`id="tokens-${anchor}"`), `and ${anchor} is there to land on`);
+  }
+  assert.match(body, /Tokens over time.*Tokens by model.*API-equivalent cost estimate.*Projects Tokens by the project.*Agents How the same tokens divide.*Tool calls and knowledge sources.*Environmental impact.*What this scope covers/s, 'the sections run in the order the jump bar names them');
   assert.match(body, /All accounts and projects/, 'the landing view shows no active chips');
   assert.match(body, /America\/Chicago/, 'one display zone is named');
 });
@@ -306,4 +324,44 @@ test('cost/model tables preserve exact values and a large legend starts readable
     unit="tokens" formatValue={value => `${value} tokens`} formatAxis={String} />);
   assert.match(legend, /aria-pressed="false"[^>]*>.*Model 5/s, 'the sixth line remains discoverable in the legend without crowding the initial graph');
   assert.match(legend, /Show all/);
+});
+
+test('the model ranking joins each model to its estimate, marks what is unpriced, and shows the top eight first', () => {
+  const result = synthetic();
+  result.by_model = [
+    { model: 'm1', total_tokens: 1_400, calls: 7, composition: composition(1_400, 0, 0, 0, null), share: 0.7, basis: 'buckets' },
+    { model: 'unpriced-model', total_tokens: 400, calls: 2, composition: composition(400, 0, 0, 0, null), share: 0.2, basis: 'buckets' },
+    ...Array.from({ length: 8 }, (_, index) => ({ model: `tail-${index}`, total_tokens: 20 - index, calls: 1, composition: composition(20 - index, 0, 0, 0, null), share: 0.01, basis: 'buckets' as const })),
+  ];
+  const ranked = rankedModels(result);
+  assert.deepEqual(ranked.slice(0, 2).map(row => [row.model, row.tokens, row.usd, row.priced, row.unpriced]), [['m1', 1_400, 1.25, 1_200, 200], ['unpriced-model', 400, 0, 0, 400]], 'a model without price rows keeps its tokens and counts them unpriced');
+  const colors = new Map<string, ModelLineStyle>();
+  const body = text(renderToStaticMarkup(<ModelRanking rows={ranked} colors={colors} />));
+  assert.match(body, /2 unpriced-model 400 tokens 20% 2 calls not priced/, 'no price reads as not priced, never as \$0.00');
+  assert.match(body, /8 tail-5/); assert.doesNotMatch(body, /tail-6/, 'the ninth model waits behind the toggle');
+  assert.match(body, /Show all 10 models/);
+});
+
+test('the cost breakdown shows token shares only when every priced row is priced in full', () => {
+  const result = synthetic();
+  const whole = { ...result.cost, component_costs_usd: { input_cost_usd: 1, cached_input_cost_usd: 3, cache_write_input_cost_usd: 0.5, reasoning_output_cost_usd: 0, other_output_cost_usd: 1.5 }, estimated_cost_usd: 6,
+    by_model: [priced({ unpriced_tokens: 0, priced_tokens: 1_400, estimated_cost_usd: 6, reasoning_output_tokens: 0 })] };
+  const html = renderToStaticMarkup(<CostBreakdown cost={whole} />);
+  const body = text(html);
+  assert.match(body, /Component Estimate Of estimate Of priced tokens/);
+  assert.match(body, /Fresh input \$1\.00 17% 50% Cached input \$3\.00 50% 14% Cache-write input \$0\.50 8\.3% 7\.1% Output \$1\.50 25% 29%/, 'fresh is input less cached and cache-write; output is one row when no reasoning cost is reported');
+  assert.match(body, /Cached input carries the largest share of the estimate, 50%, from 14% of 1,400 priced tokens/);
+  assert.match(html, /role="img" aria-label="Fresh input 17% of the estimate, Cached input 50% of the estimate, Cache-write input 8\.3% of the estimate, Output 25% of the estimate"/);
+  assert.equal(renderToStaticMarkup(<CostBreakdown cost={{ ...whole, component_costs_usd: { input_cost_usd: 0, cached_input_cost_usd: 0, cache_write_input_cost_usd: 0, reasoning_output_cost_usd: 0, other_output_cost_usd: 0 } }} />), '', 'nothing to break down renders nothing');
+});
+
+test('a limited ledger shows its first rows, keeps a selected row past the limit, and offers the rest', () => {
+  const rows = Array.from({ length: 12 }, (_, index) => ({ id: `r${index}`, value: 100 - index }));
+  const columns = [{ id: 'id', header: 'Row', cell: (row: typeof rows[number]) => row.id }, { id: 'value', header: 'Value', numeric: true, sortValue: (row: typeof rows[number]) => row.value, cell: (row: typeof rows[number]) => row.value }];
+  const body = text(renderToStaticMarkup(<DataTable columns={columns} rows={rows} getRowId={row => row.id} defaultSort={{ id: 'value', dir: 'desc' }} limit={8} selectedId="r10" />));
+  assert.match(body, /r7 93/); assert.doesNotMatch(body, /r8 92/); assert.doesNotMatch(body, /r9 91/);
+  assert.match(body, /r10 90/, 'the selected row stays in view');
+  assert.match(body, /Show all 12 rows/);
+  const short = text(renderToStaticMarkup(<DataTable columns={columns} rows={rows.slice(0, 5)} getRowId={row => row.id} limit={8} />));
+  assert.doesNotMatch(short, /Show all/, 'no toggle when everything already fits');
 });

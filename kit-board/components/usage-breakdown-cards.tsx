@@ -83,7 +83,7 @@ function ProjectCard({ result, filters, onFiltersChange }: { result: UsageQueryR
       </StatGroup>
       <div className="grid gap-3 p-4">
         <DataTable columns={columns} rows={rows} getRowId={projectRowId} defaultSort={{ id: 'tokens', dir: 'desc' }}
-          selectedId={selected ? projectRowId(selected) : undefined} onSelect={select} className="max-h-80 overflow-auto"
+          selectedId={selected ? projectRowId(selected) : undefined} onSelect={select} limit={8}
           caption="Select a row to filter the whole page to that project; select it again, or remove the chip above, to go back."
           empty={<EmptyState title="No project evidence in scope" description="Projects are read from request records. Nothing here means the selected scope carries only hourly buckets, which name no project; raise the collection detail level to requests or requests_with_tools. Projects are the groups you create in your apps, reported by companion 2.2.0." actions={<Button size="sm" variant="outline" asChild><Link href="/settings/projects">Open project settings</Link></Button>} />} />
       </div>
@@ -155,7 +155,7 @@ function AgentCard({ result, filters, onFiltersChange }: { result: UsageQueryRes
           </dl>
         ) : null}
         <DataTable columns={columns} rows={rows} getRowId={row => row.group_id || `${row.provider}:${row.role}:${row.name}`} defaultSort={{ id: 'tokens', dir: 'desc' }}
-          selectedId={selected?.group_id} onSelect={select} className="max-h-80 overflow-auto"
+          selectedId={selected?.group_id} onSelect={select} limit={8}
           caption="Select an agent to filter the whole page to it; select it again, or remove the chip above, to go back."
           empty={roleView !== 'all' && allRows.length
             ? <EmptyState title={`No ${ROLE_VIEW_LABELS[roleView].toLowerCase()} in scope`} description="Every agent in this scope has another role. Select the button again to show them all." />
@@ -224,7 +224,7 @@ function KnowledgeSources({ result }: { result: UsageQueryResult }) {
           <Button size="xs" variant="outline" asChild><Link href="/settings/sources">Configure sources</Link></Button>
         </div>
       </div>
-      <DataTable columns={columns} rows={rows} getRowId={(row) => `${row.state}:${row.source_id ?? rows.indexOf(row)}`} defaultSort={{ id: 'accesses', dir: 'desc' }} className="max-h-80 overflow-auto"
+      <DataTable columns={columns} rows={rows} getRowId={(row) => `${row.state}:${row.source_id ?? rows.indexOf(row)}`} defaultSort={{ id: 'accesses', dir: 'desc' }} limit={8}
         empty={<EmptyState title="No knowledge-source access in scope" description="Access rows arrive only at the requests_with_tools detail level, from installs with at least one configured source, and only for tool calls the companion could classify against it. A conversation running inside a vault folder is not counted as access." actions={<Button size="sm" variant="outline" asChild><Link href="/settings/sources">Configure sources</Link></Button>} />} />
       <p className="text-muted-foreground text-xs leading-relaxed" data-testid="knowledge-footnote">
         {note ? `${note} ` : ''}Reading or searching a source shows access, not that the answer used its contents, and no token cost is assigned to a source. Unassigned identities have been seen but not yet named under Settings; unknown rows carry no identity the registry can resolve.
@@ -314,12 +314,12 @@ export function ToolKnowledgeCard({ result, loading, knowledgeLoading }: { resul
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="grid gap-2">
             <h3 className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Top tools</h3>
-            <DataTable columns={toolColumns} rows={tools.by_tool} getRowId={row => `${row.synthetic ? 'synthetic' : row.class}:${row.namespace ?? ''}:${row.name ?? ''}:${row.machine ?? ''}`} defaultSort={{ id: 'invocations', dir: 'desc' }} className="max-h-80 overflow-auto"
+            <DataTable columns={toolColumns} rows={tools.by_tool} getRowId={row => `${row.synthetic ? 'synthetic' : row.class}:${row.namespace ?? ''}:${row.name ?? ''}:${row.machine ?? ''}`} defaultSort={{ id: 'invocations', dir: 'desc' }} limit={8}
               empty={<EmptyState title="No tool invocations in scope" description="Tool events arrive at the requests_with_tools detail level. Hourly buckets and plain request records carry none." actions={<Button size="sm" variant="outline" asChild><Link href="/settings/collection">Open collection settings</Link></Button>} />} />
           </div>
           <div className="grid gap-2">
             <h3 className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Top callers</h3>
-            <DataTable columns={callerColumns} rows={tools.by_caller} getRowId={row => `${row.state}:${row.group_id ?? ''}:${row.provider ?? ''}:${row.role ?? ''}:${row.name ?? ''}`} defaultSort={{ id: 'invocations', dir: 'desc' }} className="max-h-80 overflow-auto"
+            <DataTable columns={callerColumns} rows={tools.by_caller} getRowId={row => `${row.state}:${row.group_id ?? ''}:${row.provider ?? ''}:${row.role ?? ''}:${row.name ?? ''}`} defaultSort={{ id: 'invocations', dir: 'desc' }} limit={8}
               empty={<EmptyState title="No caller attribution" description="Callers are named only where an invocation carries its agent or request; none in scope does." />} />
           </div>
         </div>

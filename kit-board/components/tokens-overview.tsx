@@ -8,26 +8,48 @@ import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { EmptyState, Stat, StatGroup } from '@/components/kit';
+import { SectionNav } from '@/components/kit/section-nav';
 import { EnvironmentalImpact } from '@/components/environmental-impact';
 import { ProjectAgentBreakdown, ToolKnowledgeCard, agentLabel } from '@/components/usage-breakdown-cards';
 import { IntervalBars } from '@/components/usage-chart';
-import { UsageInsightCards } from '@/components/usage-insight-cards';
+import { UsageInsightCards, formatUsd } from '@/components/usage-insight-cards';
 import { UsageFilterBar, type FilterOption, type FilterVocabulary } from '@/components/usage-filter-bar';
 import { UsageStatusLine } from '@/components/usage-status-line';
 import { useLiveData } from '@/components/telemetry-shared';
 import { fetchPrivateJson, USAGE_QUERY_TIMEOUT_MS } from '@/lib/fetch-private-json';
 import type { UsageQueryResult } from '@/lib/usage-query';
 import {
-  compactTokens, compositionView, exactTokens, mergeUsageQuerySection, parseTokensFilters, percent, queryString, seriesSummary, serializeTokensFilters, whenIn,
+  compactTokens, compositionView, exactTokens, intervalLabel, mergeUsageQuerySection, parseTokensFilters, percent, queryString, seriesSummary, serializeTokensFilters, whenIn,
   USAGE_QUERY_CACHE_TTL_MS, USAGE_QUERY_SECTIONS, type TokensFilters, type UsageQuerySection,
 } from '@/lib/usage-view';
 
-/** The agreed Tokens card order; every section below shares this filter bar and query result. */
+/**
+ * The Tokens card order; every section below shares this filter bar and query result. The summary leads,
+ * then where the tokens went (time, models, cost), who spent them (projects, agents, tools), and last the
+ * modeled footprint and what the scope covers. `anchor` is the in-page jump target, when a card has one.
+ */
 export const TOKENS_SECTIONS = [
-  { key: 'filters', title: 'Filter bar', task: 'USG-017' }, { key: 'total', title: 'Total tokens and composition', task: 'USG-017' }, { key: 'activity', title: 'Tokens over time', task: 'USG-017' },
-  { key: 'cost', title: 'API-equivalent cost estimate', task: 'USG-018' }, { key: 'models', title: 'Tokens by model', task: 'USG-018' }, { key: 'environment', title: 'Environmental impact', task: 'USG-020' },
-  { key: 'projects_agents', title: 'Project and agent breakdowns', task: 'USG-021' }, { key: 'tools', title: 'Tool calls and knowledge sources', task: 'USG-022' },
+  { key: 'filters', title: 'Filter bar', task: 'USG-017' }, { key: 'total', title: 'Total tokens and composition', task: 'USG-017' },
+  { key: 'activity', title: 'Tokens over time', nav: 'Over time', anchor: 'tokens-activity', task: 'USG-017' },
+  { key: 'models', title: 'Tokens by model', nav: 'Models', anchor: 'tokens-models', task: 'USG-018' },
+  { key: 'cost', title: 'API-equivalent cost estimate', nav: 'Cost estimate', anchor: 'tokens-cost', task: 'USG-018' },
+  { key: 'projects_agents', title: 'Project and agent breakdowns', nav: 'Projects & agents', anchor: 'tokens-projects', task: 'USG-021' },
+  { key: 'tools', title: 'Tool calls and knowledge sources', nav: 'Tools', anchor: 'tokens-tools', task: 'USG-022' },
+  { key: 'environment', title: 'Environmental impact', nav: 'Footprint', anchor: 'tokens-footprint', task: 'USG-020' },
+  { key: 'coverage', title: 'What this scope covers', nav: 'Coverage', anchor: 'tokens-coverage', task: 'USG-017' },
 ] as const;
+
+const JUMPS = TOKENS_SECTIONS.flatMap(section => 'anchor' in section ? [{ anchor: section.anchor, label: section.nav }] : []);
+
+/** Busiest and typical interval, and tokens per call: three readings the bars imply but never state. */
+function activityStats(points: UsageQueryResult['series']['points'], timezone: string, resolution: TokensFilters['resolution']) {
+  const active = points.filter(point => point.total_tokens > 0);
+  if (!active.length) return null;
+  const peak = active.reduce((best, point) => point.total_tokens > best.total_tokens ? point : best, active[0]);
+  const total = active.reduce((sum, point) => sum + point.total_tokens, 0);
+  const calls = active.reduce((sum, point) => sum + point.calls, 0);
+  return { peak, peakLabel: intervalLabel(peak, timezone, resolution), average: total / active.length, active: active.length, perCall: calls ? total / calls : null };
+}
 
 const SEGMENT_CLASSES = { input_fresh: 'bg-chart-2', input_cached: 'bg-primary', input_cache_write: 'bg-chart-4', output: 'bg-chart-3', unclassified: 'bg-muted-foreground/40' } as const;
 
@@ -61,6 +83,8 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
   const headline = result?.headline;
   // Labels follow the result's own resolution and zone, so bars from the last good result are never labeled with filters still in flight.
   const shown = { resolution: result?.series.resolution ?? filters.resolution, timezone: result?.scope.range.timezone ?? filters.timezone };
+  const activity = result ? activityStats(result.series.points, shown.timezone, shown.resolution) : null;
+  const unit = shown.resolution === 'day' ? 'day' : 'hour';
 
   return (
     <div className="grid gap-6" aria-busy={loading || !!pending?.requests || !!pending?.tools || !!pending?.knowledge}>
@@ -129,6 +153,7 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
               <Stat label="Exact total" value={exactTokens(headline.total_tokens)} caption="tokens · reasoning counted once inside output" />
               <Stat label="Model calls" value={exactTokens(headline.calls)} caption={headline.basis === 'requests' ? 'canonical requests in scope' : 'canonical hourly buckets in scope'} />
               <Stat label="Conversations" value={headline.conversations === null ? '—' : exactTokens(headline.conversations)} caption={headline.basis === 'requests' ? 'distinct sessions with a matching request' : 'distinct sessions in the buckets'} />
+              <Stat label="API equivalent" value={result.cost.priced_tokens ? formatUsd(result.cost.estimated_cost_usd) : '—'} caption={result.cost.priced_tokens ? `list-price estimate, not spend · ${percent(result.cost.priced_token_coverage)} priced` : 'no priced model activity in scope'} />
               <Stat label="Last observation" value={whenIn(headline.last_observation, shown.timezone)} caption={headline.last_observation ? `${Math.max(0, Math.round((now - Date.parse(headline.last_observation)) / 60_000))} min ago · ${shown.timezone}` : 'nothing observed in scope'} />
             </StatGroup>
             <div className="border-border text-muted-foreground grid gap-1.5 border-t p-3 text-xs leading-relaxed">
@@ -146,7 +171,9 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
             </div>
           </Card>
 
-          <Card className="gap-0 overflow-hidden py-0" aria-label="Tokens over time">
+          <SectionNav label="Tokens sections" jumps={JUMPS} />
+
+          <Card id="tokens-activity" className="scroll-mt-28 gap-0 overflow-hidden py-0" aria-label="Tokens over time">
             <CardHeader className="p-4">
               <CardTitle className="text-base">Tokens over time</CardTitle>
               <CardAction className="flex flex-wrap justify-end gap-1.5">
@@ -161,6 +188,13 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
                 {summary.counts.missing ? <Badge variant="soft-warning">{summary.counts.missing} without coverage</Badge> : null}
               </CardAction>
             </CardHeader>
+            {activity ? (
+              <StatGroup className="border-border border-y">
+                <Stat label={`Busiest ${unit}`} value={compactTokens(activity.peak.total_tokens)} caption={`${activity.peakLabel} · ${exactTokens(activity.peak.calls)} calls`} />
+                <Stat label={`Average active ${unit}`} value={compactTokens(activity.average)} caption={`over ${activity.active} ${unit}${activity.active === 1 ? '' : 's'} with activity`} />
+                <Stat label="Tokens per call" value={activity.perCall === null ? '—' : compactTokens(activity.perCall)} caption="the bars' tokens over their model calls" />
+              </StatGroup>
+            ) : null}
             <div className="grid gap-4 px-4 pt-4 pb-4">
               {result.series.points.length ? <IntervalBars points={result.series.points} timezone={shown.timezone} resolution={shown.resolution} /> : <EmptyState title="No intervals in range" />}
             </div>
@@ -171,11 +205,15 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
           </Card>
 
           <UsageInsightCards result={result} />
-          <EnvironmentalImpact estimate={result.environment} />
-          <ProjectAgentBreakdown result={result} filters={filters} onFiltersChange={onFiltersChange} loading={!!pending?.requests} />
-          <ToolKnowledgeCard result={result} loading={!!pending?.tools} knowledgeLoading={!!pending?.knowledge} />
+          <div id="tokens-projects" className="min-w-0 scroll-mt-28">
+            <ProjectAgentBreakdown result={result} filters={filters} onFiltersChange={onFiltersChange} loading={!!pending?.requests} />
+          </div>
+          <div id="tokens-tools" className="min-w-0 scroll-mt-28">
+            <ToolKnowledgeCard result={result} loading={!!pending?.tools} knowledgeLoading={!!pending?.knowledge} />
+          </div>
+          <EnvironmentalImpact id="tokens-footprint" estimate={result.environment} />
 
-          <Card className="gap-0 overflow-hidden py-0" aria-label="Coverage and sources">
+          <Card id="tokens-coverage" className="scroll-mt-28 gap-0 overflow-hidden py-0" aria-label="Coverage and sources">
             <CardHeader className="p-4">
               <CardTitle className="text-base">What this scope covers</CardTitle>
               <CardDescription>Where the figures come from and what they leave out.</CardDescription>
