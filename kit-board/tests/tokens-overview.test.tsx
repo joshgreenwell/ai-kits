@@ -292,7 +292,7 @@ test('request and tool cards wait instead of flashing empty while their section 
 
 test('cost/model tables preserve exact values and a large legend starts readable', () => {
   const result = synthetic();
-  const colors = new Map([['m1', 'var(--chart-1)']]);
+  const colors = new Map([['m1', { color: 'var(--chart-1)' }]]);
   const cost = text(renderToStaticMarkup(<CostModelTable rows={result.cost.by_model} />));
   assert.match(cost, /m1 7 1,400 86% \$1\.25/);
     const models = text(renderToStaticMarkup(<ModelSummaryTable result={result} colors={colors} />));

@@ -5,16 +5,14 @@ import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
 import { cn } from 'cn';
 import { Button } from '@/components/ui/button';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
-
-const MODEL_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--muted-foreground)'];
+import { modelLineStyles } from '@/lib/model-colors';
 
 export type ChartCategory = { key: string; label: string; shortLabel: string };
-export type ChartSeries = { key: string; label: string; color: string; values: (number | null)[]; details?: (string | null)[] };
+/** `dash` is an SVG dash array: a model served through Cursor is drawn in its lab's color, dashed. */
+export type ChartSeries = { key: string; label: string; color: string; dash?: string; values: (number | null)[]; details?: (string | null)[] };
 
-/** Stable within one result and shared by the cost and token cards. */
-export function modelColors(models: string[]) {
-  return new Map([...new Set(models)].sort().map((model, index) => [model, MODEL_COLORS[index % MODEL_COLORS.length]]));
-}
+/** Each model's line style (lib/model-colors.ts), shared by the cost and token cards. */
+export const modelColors = modelLineStyles;
 
 /** One point as a sentence: which series, which category, the exact value, and the evidence behind it. */
 function pointLabel(item: ChartSeries, category: ChartCategory, index: number, formatValue: (value: number) => string) {
@@ -85,7 +83,7 @@ export function UsageSeriesChart({ categories, series, unit, formatValue, format
             return (
               // `natural` and no resting dot is the shadcn line chart: the reading is the tooltip's job,
               // so the plot stays a smooth line and only the hovered point is marked.
-              <Line key={item.key} dataKey={key} type="natural" stroke={`var(--color-${key})`} strokeWidth={2}
+              <Line key={item.key} dataKey={key} type="natural" stroke={`var(--color-${key})`} strokeWidth={2} strokeDasharray={item.dash}
                 connectNulls={false} isAnimationActive={false} dot={false}
                 activeDot={{ r: 4, stroke: 'var(--card)', strokeWidth: 2 }} />
             );
@@ -112,7 +110,9 @@ export function UsageSeriesChart({ categories, series, unit, formatValue, format
                   return next;
                 });
               }}>
-              <i aria-hidden className="block size-2 shrink-0 rounded-[2px]" style={{ background: on ? item.color : 'var(--border)' }} />
+              {item.dash
+                ? <i aria-hidden className="block h-0 w-3 shrink-0 border-t-2 border-dashed" style={{ borderColor: on ? item.color : 'var(--border)' }} />
+                : <i aria-hidden className="block size-2 shrink-0 rounded-[2px]" style={{ background: on ? item.color : 'var(--border)' }} />}
               <span className={cn('truncate', on ? 'text-foreground' : 'text-muted-foreground')}>{item.label}</span>
             </button>
           );

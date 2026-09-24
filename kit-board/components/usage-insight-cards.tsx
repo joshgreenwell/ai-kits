@@ -7,6 +7,7 @@ import { Card, CardAction, CardDescription, CardHeader, CardTitle } from '@/comp
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DataTable, Disclosure, EmptyState, Stat, StatGroup, type Column } from '@/components/kit';
 import { UsageSeriesChart, modelColors, type ChartCategory, type ChartSeries } from '@/components/usage-series-chart';
+import { UNKNOWN_MODEL_COLOR, type ModelLineStyle } from '@/lib/model-colors';
 import type { PricingRow } from '@/lib/usage-pricing';
 import type { UsageQueryResult } from '@/lib/usage-query';
 import { compactTokens, exactTokens, intervalLabel, percent } from '@/lib/usage-view';
@@ -95,13 +96,15 @@ function CostDimensionTable({ rows }: { rows: PricingRow[] }) {
   );
 }
 
-export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colors: Map<string, string> }) {
+const lineStyle = (colors: Map<string, ModelLineStyle>, model: string) => colors.get(model) ?? { color: UNKNOWN_MODEL_COLOR };
+
+export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colors: Map<string, ModelLineStyle> }) {
   const [view, setView] = useViewPreference('observatory.tokens.cost-view.v1');
   const cost = result.cost;
   const dates = calendarDates([...new Set(cost.series.flatMap(row => row.rate_date ? [row.rate_date] : []))].sort());
   const categories: ChartCategory[] = dates.map(date => ({ key: date, label: dateLabel(date), shortLabel: shortDate(date) }));
   const series: ChartSeries[] = cost.by_model.map(model => ({
-    key: model.model, label: modelLabel(model.model), color: colors.get(model.model) ?? 'var(--muted-foreground)',
+    key: model.model, label: modelLabel(model.model), ...lineStyle(colors, model.model),
     values: dates.map(date => cost.series.find(row => row.rate_date === date && row.model === model.model)?.estimated_cost_usd ?? null),
     details: dates.map(date => {
       const row = cost.series.find(item => item.rate_date === date && item.model === model.model);
@@ -167,7 +170,7 @@ export function ApiCostCard({ result, colors }: { result: UsageQueryResult; colo
 
 type ModelRow = UsageQueryResult['by_model'][number];
 
-export function ModelSummaryTable({ result, colors }: { result: UsageQueryResult; colors: Map<string, string> }) {
+export function ModelSummaryTable({ result, colors }: { result: UsageQueryResult; colors: Map<string, ModelLineStyle> }) {
   if (!result.by_model.length) return <EmptyState title="No model attribution in this scope" description="The selected total may include historical snapshots or activity that did not record a model." />;
   const rows = result.by_model;
   const sum = (pick: (row: ModelRow) => number) => rows.reduce((total, row) => total + pick(row), 0);
@@ -179,7 +182,7 @@ export function ModelSummaryTable({ result, colors }: { result: UsageQueryResult
   const columns: Column<ModelRow>[] = [
     { id: 'model', header: 'Model', sortValue: row => row.model, footer: `Total · ${rows.length} ${rows.length === 1 ? 'model' : 'models'}`, cell: row => (
       <span className="inline-flex max-w-[26ch] items-center gap-2" title={row.model}>
-        <i aria-hidden className="inline-block size-1.5 shrink-0 rounded-xs" style={{ background: colors.get(row.model) }} />
+        <i aria-hidden className="inline-block size-1.5 shrink-0 rounded-xs" style={{ background: lineStyle(colors, row.model).color }} />
         <span className="truncate font-mono">{modelLabel(row.model)}</span>
       </span>
     ) },
@@ -196,7 +199,7 @@ export function ModelSummaryTable({ result, colors }: { result: UsageQueryResult
   return <DataTable columns={columns} rows={rows} getRowId={row => row.model} defaultSort={{ id: 'tokens', dir: 'desc' }} />;
 }
 
-export function TokensByModelCard({ result, colors }: { result: UsageQueryResult; colors: Map<string, string> }) {
+export function TokensByModelCard({ result, colors }: { result: UsageQueryResult; colors: Map<string, ModelLineStyle> }) {
   const [view, setView] = useViewPreference('observatory.tokens.model-view.v1');
   const categories: ChartCategory[] = result.series.points.map(point => {
     const label = intervalLabel(point, result.scope.range.timezone, result.series.resolution);
@@ -206,7 +209,7 @@ export function TokensByModelCard({ result, colors }: { result: UsageQueryResult
   const series: ChartSeries[] = result.by_model.map(model => {
     const values = indexed.get(model.model);
     return {
-      key: model.model, label: modelLabel(model.model), color: colors.get(model.model) ?? 'var(--muted-foreground)',
+      key: model.model, label: modelLabel(model.model), ...lineStyle(colors, model.model),
       values: result.series.points.map(point => point.state === 'missing' || (point.sources.length > 0 && point.sources.every(source => source === 'snapshot'))
         ? null : values?.get(point.start)?.total_tokens ?? 0),
       details: result.series.points.map(point => {

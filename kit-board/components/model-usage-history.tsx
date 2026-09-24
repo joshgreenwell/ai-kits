@@ -124,11 +124,12 @@ function effortChartSeries(rows: UsageQueryResult['effort_series']['rows'], days
   return counted.map(row => {
     const efforts = ladder.get(row.model)!;
     const step = efforts.length - 1 - efforts.indexOf(row.effort);
-    const base = colors.get(row.model) ?? 'var(--muted-foreground)';
+    const base = colors.get(row.model) ?? { color: 'var(--muted-foreground)' };
     return {
       key: `${row.model} ${row.effort}`,
       label: `${row.model} · ${row.effort}`,
-      color: step === 0 ? base : `color-mix(in oklab, ${base} ${Math.max(40, 100 - step * 22)}%, var(--card))`,
+      color: step === 0 ? base.color : `color-mix(in oklab, ${base.color} ${Math.max(40, 100 - step * 22)}%, var(--card))`,
+      dash: base.dash,
       values: row.calls.map((calls, position) => (callsByDay[position] ? (calls / callsByDay[position]) * 100 : 0)),
       details: row.calls.map(calls => `${calls.toLocaleString()} ${calls === 1 ? 'call' : 'calls'}`),
     };
@@ -211,7 +212,8 @@ export function ModelUsageHistory({ data, windows, now }: { data: LiveData; wind
     return history.models.map(model => ({
       key: model.model,
       label: model.model,
-      color: colors.get(model.model) ?? 'var(--muted-foreground)',
+      color: colors.get(model.model)?.color ?? 'var(--muted-foreground)',
+      dash: colors.get(model.model)?.dash,
       values: model.dailyShare,
       details: model.dailyCalls.map(calls => `${calls.toLocaleString()} ${calls === 1 ? 'call' : 'calls'}`),
     }));
