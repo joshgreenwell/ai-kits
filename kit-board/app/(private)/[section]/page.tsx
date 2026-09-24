@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { sections } from '@/lib/catalog';
 import { reportById, reportHistory } from '@/lib/db';
 import { ReportView } from '@/components/report-view';
+import { ReadingsView } from '@/components/readings-view';
 import { requireSession } from '@/lib/auth';
 import { defaultReport } from '@/lib/report-selection';
 export default async function Section({ params, searchParams }: { params: Promise<{ section: string }>; searchParams: Promise<{ report?: string }> }) {
@@ -16,5 +17,6 @@ export default async function Section({ params, searchParams }: { params: Promis
   if (report && report.kind !== section.kind) notFound();
   if (requested && !report) notFound();
   // HTML stays on the authenticated artifact route; do not duplicate it into RSC payloads.
-  return <ReportView title={section.title} empty={section.empty} history={history} report={report ? { ...report, payload: { markdown: report.payload.markdown }, html: report.html ? 'available' : undefined } : undefined}/>;
+  const View = section.kind === 'readings' ? ReadingsView : ReportView;
+  return <View title={section.title} empty={section.empty} history={history} report={report ? { ...report, payload: { markdown: report.payload.markdown }, html: report.html ? 'available' : undefined } : undefined}/>;
 }
