@@ -1,6 +1,9 @@
 import { digest, safeEqual } from './crypto';
 import type { ReportKind } from './contracts';
 
+/** Report kinds, plus the PR watch runner, which reads and reports its queue with the same kind of key. */
+export type ProducerKind = ReportKind | 'pr-watch';
+
 type ProducerCredential = {
   hash: string;
   kinds: string[];
@@ -29,7 +32,7 @@ function entries(serialized: string): [string, ProducerCredential][] {
  */
 export function producerForToken(
   token: string,
-  kind: ReportKind,
+  kind: ProducerKind,
   primarySerialized = '{}',
   usageSerialized = '{}',
 ): string | undefined {

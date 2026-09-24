@@ -10,9 +10,11 @@ export function proxy(request: NextRequest) {
   // routing endpoints (agent-events, quota-state) carry a telemetry-source bearer key.
   const companion = path.startsWith('/api/v1/companion/') || path === '/api/v1/usage';
   const routing = path === '/api/v1/agent-events';
-  const ingestion = (request.method === 'POST' && (path === '/api/reports' || path.startsWith('/api/v1/reports/') || path === '/api/v1/telemetry' || path === '/api/reset-feeds' || companion || routing)) ||
+  // The PR watch runner reads its queue (GET) and reports each watch (POST) with its own producer key.
+  const prWatchReport = path.startsWith('/api/v1/pr-watches/');
+  const ingestion = (request.method === 'POST' && (path === '/api/reports' || path.startsWith('/api/v1/reports/') || path === '/api/v1/telemetry' || path === '/api/reset-feeds' || companion || routing || prWatchReport)) ||
     (request.method === 'PUT' && path === '/api/v1/companion/settings') ||
-    (request.method === 'GET' && (path === '/api/internal/sync-legacy-usage' || path === '/api/internal/sync-reset-feeds' || path === '/api/internal/sync-companion-release' || path === '/api/v1/companion/config' || routing || path === '/api/v1/quota-state'));
+    (request.method === 'GET' && (path === '/api/internal/sync-legacy-usage' || path === '/api/internal/sync-reset-feeds' || path === '/api/internal/sync-companion-release' || path === '/api/v1/companion/config' || routing || path === '/api/v1/quota-state' || path === '/api/v1/pr-watches'));
   const signedIn = verifySession(request.cookies.get(cookie)?.value ?? '', process.env.SESSION_SECRET ?? '', process.env.SITE_PASSWORD_HASH ?? '');
   if (!isPublic && !ingestion && !signedIn) {
     if (path.startsWith('/api/') || !isRead) return NextResponse.json({ error: 'Please sign in' }, { status: 401, headers: { 'Cache-Control': 'private, no-store' } });

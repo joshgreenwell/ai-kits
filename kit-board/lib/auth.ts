@@ -1,8 +1,8 @@
 import 'server-only';
 import { cookies } from 'next/headers';
 import { verifySession } from './crypto';
-import { RequestError, type ReportKind } from './contracts';
-import { producerForToken } from './producer-credentials';
+import { RequestError } from './contracts';
+import { producerForToken, type ProducerKind } from './producer-credentials';
 
 export const cookieName = process.env.NODE_ENV === 'production' ? '__Host-personal-hub' : 'personal-hub';
 export async function authenticated() {
@@ -14,7 +14,7 @@ export function requireSameOrigin(request: Request) {
   const expected = process.env.SITE_URL ?? new URL(request.url).origin;
   if (origin !== expected) throw new RequestError('Invalid request origin', 403);
 }
-export function requireProducer(request: Request, kind: ReportKind): string {
+export function requireProducer(request: Request, kind: ProducerKind): string {
   const header = request.headers.get('authorization') ?? '';
   if (!header.startsWith('Bearer ') || header.length > 512) throw new RequestError('Unauthorized', 401);
   const producer = producerForToken(
