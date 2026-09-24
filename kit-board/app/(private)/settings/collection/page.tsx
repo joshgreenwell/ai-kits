@@ -20,7 +20,7 @@ function SupportChip({ row, value, reports }: { row: SettingRow; value: unknown;
   const support = optionSupport(row, value, reports);
   if (support.state === 'always') return null;
   const variant = support.state === 'supported' ? 'soft' : support.state === 'unsupported' ? 'soft-warning' : 'outline';
-  return <Badge variant={variant} className="text-[10px]" title={support.label}>{support.state === 'unverified' ? 'unverified' : support.state === 'unsupported' ? 'unsupported' : `supported ${support.supported}/${support.reporting}`}</Badge>;
+  return <Badge variant={variant} title={support.label}>{support.state === 'unverified' ? 'unverified' : support.state === 'unsupported' ? 'unsupported' : `supported ${support.supported}/${support.reporting}`}</Badge>;
 }
 
 function Control({ row, value, onChange, id, disabled }: { row: SettingRow; value: unknown; onChange: (v: unknown) => void; id: string; disabled?: boolean }) {

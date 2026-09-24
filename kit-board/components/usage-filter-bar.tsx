@@ -82,7 +82,7 @@ export function UsageFilterBar({ filters, onChange, vocabulary, range, labels, d
             <FilterTrigger disabled={disabled} label={`More filters${moreCount ? `: ${moreCount} applied` : ''}`}>
               <span className="flex min-w-0 items-center gap-2">
                 More filters
-                {moreCount ? <Badge variant="soft" className="-my-0.5">{moreCount}</Badge> : null}
+                {moreCount ? <Badge variant="soft">{moreCount}</Badge> : null}
               </span>
             </FilterTrigger>
           </PopoverTrigger>

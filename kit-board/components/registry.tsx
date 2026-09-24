@@ -158,7 +158,7 @@ export function Registry({ kind, url, nouns, entries, identities, refresh, empty
                         </TableCell>
                         <TableCell className="align-top font-mono text-[11px]">
                           {identity.key}
-                          {identity.basis && <Badge variant="outline" className="ml-2 text-[10px]">{identity.basis.replaceAll('_', ' ')}</Badge>}
+                          {identity.basis && <Badge variant="outline" className="ml-2">{identity.basis.replaceAll('_', ' ')}</Badge>}
                           {identity.note && <span className="text-muted-foreground block">{identity.note}</span>}
                         </TableCell>
                         <TableCell className="align-top text-xs">{identity.where}</TableCell>

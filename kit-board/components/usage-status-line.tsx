@@ -40,7 +40,7 @@ export function UsageStatusLine({ data, now, error }: { data: LiveData | null; n
           )}
         </TooltipContent>
       </Tooltip>
-      <Badge variant={tone[status.state]} className="text-[10px]" title={status.label}>{status.state === 'none' ? 'not connected' : status.state}</Badge>
+      <Badge variant={tone[status.state]} title={status.label}>{status.state === 'none' ? 'not connected' : status.state}</Badge>
     </p>
   );
 }
