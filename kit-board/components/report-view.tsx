@@ -11,10 +11,12 @@ import { CopyButton, EmptyState, Prose, StatusBadge } from './kit';
 const date = (value: string) =>
   new Date(value).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-const statusLabel = (status: StoredReport['status']) =>
+export const statusLabel = (status: StoredReport['status']) =>
   status === 'partial' ? 'Partial coverage' : status === 'failed' ? 'Run failed' : 'Published';
 
-const markdownOf = (report: StoredReport) => (typeof report.payload?.markdown === 'string' ? report.payload.markdown : '');
+export const markdownOf = (report: StoredReport) => (typeof report.payload?.markdown === 'string' ? report.payload.markdown : '');
+
+export { date as reportDate };
 
 export function ReportStatus({ report }: { report: StoredReport }) {
   const markdown = markdownOf(report);
@@ -51,40 +53,42 @@ export function ReportBody({ report }: { report: StoredReport }) {
   );
 }
 
-export function ReportView({ title, empty, history, report }: { title: string; empty: string; history: StoredReport[]; report?: StoredReport }) {
+/** The history picker both report views put in their header; a choice navigates to `?report=<id>`. */
+export function ReportHistory({ history, report }: { history: StoredReport[]; report?: StoredReport }) {
   const router = useRouter();
+  return (
+    <div className="flex items-center gap-2">
+      <span id="report-history-label" className="text-muted-foreground text-xs font-semibold">
+        Report history
+      </span>
+      <Select value={report?.id ?? ''} onValueChange={id => router.push(`?report=${id}`)}>
+        <SelectTrigger aria-labelledby="report-history-label" className="w-[240px]">
+          <SelectValue>{report ? date(report.produced_at) : 'Choose a report'}</SelectValue>
+        </SelectTrigger>
+        <SelectContent position="popper" align="end">
+          {history.map(item => (
+            <SelectItem key={item.id} value={item.id}>
+              <span className="grid">
+                <strong className="text-sm">{item.title}</strong>
+                <small className="text-muted-foreground font-mono text-[11px]">
+                  {date(item.produced_at)} · {statusLabel(item.status)}
+                </small>
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
 
+export function ReportView({ title, empty, history, report }: { title: string; empty: string; history: StoredReport[]; report?: StoredReport }) {
   return (
     <Workspace>
       <PageHeader
         eyebrow="Personal observatory"
         title={title}
-        actions={
-          !!history.length && (
-            <div className="flex items-center gap-2">
-              <span id="report-history-label" className="text-muted-foreground text-xs font-semibold">
-                Report history
-              </span>
-              <Select value={report?.id ?? ''} onValueChange={id => router.push(`?report=${id}`)}>
-                <SelectTrigger aria-labelledby="report-history-label" className="w-[240px]">
-                  <SelectValue>{report ? date(report.produced_at) : 'Choose a report'}</SelectValue>
-                </SelectTrigger>
-                <SelectContent position="popper" align="end">
-                  {history.map(item => (
-                    <SelectItem key={item.id} value={item.id}>
-                      <span className="grid">
-                        <strong className="text-sm">{item.title}</strong>
-                        <small className="text-muted-foreground font-mono text-[11px]">
-                          {date(item.produced_at)} · {statusLabel(item.status)}
-                        </small>
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )
-        }
+        actions={!!history.length && <ReportHistory history={history} report={report} />}
       />
 
       {!report ? (

@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cn } from "cn";
+import { inlineStyles } from "./inline-markdown";
 
 /**
  * Report bodies arrive as markdown when a producer publishes no rendered HTML.
@@ -20,15 +21,14 @@ function inline(text: string, keyPrefix: string): React.ReactNode[] {
   return text.split(inlinePattern).filter(Boolean).map((token, index) => {
     const key = `${keyPrefix}-${index}`;
     if (/^(\*\*|__).+(\*\*|__)$/.test(token))
-      return <strong key={key} className="text-foreground font-semibold">{token.slice(2, -2)}</strong>;
+      return <strong key={key} className={inlineStyles.strong}>{token.slice(2, -2)}</strong>;
     if (/^\*[^*]+\*$/.test(token)) return <em key={key}>{token.slice(1, -1)}</em>;
     if (/^`[^`]+`$/.test(token))
-      return <code key={key} className="bg-muted text-foreground rounded-[var(--radius-sm)] px-1.5 py-0.5 font-mono text-[0.85em]">{token.slice(1, -1)}</code>;
+      return <code key={key} className={inlineStyles.code}>{token.slice(1, -1)}</code>;
     const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(token);
     if (link)
       return (
-        <a key={key} href={link[2]} rel="noreferrer noopener" target="_blank"
-          className="text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary">
+        <a key={key} href={link[2]} rel="noreferrer noopener" target="_blank" className={inlineStyles.link}>
           {link[1]}
         </a>
       );

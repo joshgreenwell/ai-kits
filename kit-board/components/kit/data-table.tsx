@@ -48,6 +48,7 @@ export function DataTable<T>({
   onSelect,
   defaultSort,
   empty,
+  limit,
   className,
   ...props
 }: Omit<React.ComponentProps<"div">, "rows" | "children" | "onSelect"> & {
@@ -59,8 +60,14 @@ export function DataTable<T>({
   onSelect?: (row: T) => void
   defaultSort?: { id: string; dir: "asc" | "desc" }
   empty?: React.ReactNode
+  /**
+   * Show the first rows of the current sort and offer the rest behind one toggle, instead of a scroll box
+   * nested inside the page. A selected row past the limit stays visible, so a drill-down never hides itself.
+   */
+  limit?: number
 }) {
   const [sort, setSort] = React.useState<SortState>(defaultSort ?? null)
+  const [expanded, setExpanded] = React.useState(false)
   const [focusIndex, setFocusIndex] = React.useState(0)
   const bodyRef = React.useRef<HTMLTableSectionElement>(null)
 
@@ -77,6 +84,12 @@ export function DataTable<T>({
     })
   }, [rows, sort, columns])
 
+  const limited = limit !== undefined && !expanded && sorted.length > limit
+  const visible = React.useMemo(
+    () => (limited ? sorted.filter((row, i) => i < limit! || getRowId(row) === selectedId) : sorted),
+    [limited, sorted, limit, getRowId, selectedId]
+  )
+
   function toggleSort(id: string) {
     setSort((prev) =>
       prev?.id === id ? { id, dir: prev.dir === "asc" ? "desc" : "asc" } : { id, dir: "desc" }
@@ -84,14 +97,14 @@ export function DataTable<T>({
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTableSectionElement>) {
-    const last = sorted.length - 1
+    const last = visible.length - 1
     let next = focusIndex
     if (e.key === "ArrowDown") next = Math.min(last, focusIndex + 1)
     else if (e.key === "ArrowUp") next = Math.max(0, focusIndex - 1)
     else if (e.key === "Home") next = 0
     else if (e.key === "End") next = last
     else if (e.key === "Enter" || e.key === " ") {
-      const row = sorted[focusIndex]
+      const row = visible[focusIndex]
       if (row && onSelect) {
         e.preventDefault()
         onSelect(row)
@@ -160,7 +173,7 @@ export function DataTable<T>({
         </TableHeader>
 
         <TableBody ref={bodyRef} onKeyDown={onKeyDown}>
-          {sorted.map((row, i) => {
+          {visible.map((row, i) => {
             const id = getRowId(row)
             const selected = selectedId === id
             return (
@@ -201,6 +214,20 @@ export function DataTable<T>({
           </TableFooter>
         ) : null}
       </Table>
+      {limit !== undefined && sorted.length > limit ? (
+        <div className="border-border border-t px-2 py-1.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((open) => !open)}
+            className="text-muted-foreground hover:text-foreground font-normal"
+          >
+            {expanded ? `Show the first ${limit}` : `Show all ${sorted.length} rows`}
+          </Button>
+        </div>
+      ) : null}
     </div>
   )
 }
