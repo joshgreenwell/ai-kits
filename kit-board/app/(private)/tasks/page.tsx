@@ -5,6 +5,7 @@ import { reportById, reportHistory } from '@/lib/db';
 import { DailyTasksView } from '@/components/daily-tasks-view';
 import { requireSession } from '@/lib/auth';
 import { dailySelection } from '@/lib/daily-tasks';
+import { parseBriefing } from '@/lib/daily-briefing';
 
 // HTML stays on the authenticated artifact route; do not duplicate it into RSC payloads.
 const withoutHtml = (report?: StoredReport) =>
@@ -22,5 +23,7 @@ export default async function DailyTasks({ searchParams }: { searchParams: Promi
     selection.briefing ? reportById(selection.briefing.id) : undefined,
     selection.standup ? reportById(selection.standup.id) : undefined,
   ]);
-  return <DailyTasksView title={section.title} empty={section.empty} days={selection.days} day={selection.day} briefing={withoutHtml(briefing)} standup={withoutHtml(standup)}/>;
+  // The structured payload is read here, so only the fields the view draws reach the client.
+  return <DailyTasksView title={section.title} empty={section.empty} days={selection.days} day={selection.day} briefing={withoutHtml(briefing)} standup={withoutHtml(standup)}
+    structured={briefing ? parseBriefing(briefing.payload) : null}/>;
 }

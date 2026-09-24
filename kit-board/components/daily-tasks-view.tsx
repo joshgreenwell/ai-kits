@@ -2,6 +2,8 @@
 import { useRouter } from 'next/navigation';
 import type { StoredReport } from '@/lib/contracts';
 import type { DailyDay } from '@/lib/daily-tasks';
+import type { Briefing } from '@/lib/daily-briefing';
+import { DailyBriefing } from './daily-briefing';
 import { ReportBody, ReportStatus } from './report-view';
 import { PageHeader } from './page-header';
 import { Workspace } from './workspace';
@@ -15,9 +17,12 @@ const dayLabel = (day: string) =>
 const holds = ({ briefing, standup }: DailyDay) =>
   briefing && standup ? 'Briefing · Standup' : briefing ? 'Briefing only' : 'Standup only';
 
-/** One working day: the standup ready to paste, above the merged daily briefing. */
-export function DailyTasksView({ title, empty, days, day, briefing, standup }: {
-  title: string; empty: string; days: DailyDay[]; day?: string; briefing?: StoredReport; standup?: StoredReport;
+/**
+ * One working day. A briefing with a structured payload is drawn natively, with the standup beside the
+ * day; an older revision without one keeps the published report, below the standup ready to paste.
+ */
+export function DailyTasksView({ title, empty, days, day, briefing, standup, structured }: {
+  title: string; empty: string; days: DailyDay[]; day?: string; briefing?: StoredReport; standup?: StoredReport; structured?: Briefing | null;
 }) {
   const router = useRouter();
 
@@ -54,6 +59,8 @@ export function DailyTasksView({ title, empty, days, day, briefing, standup }: {
 
       {!briefing && !standup ? (
         <EmptyState title="No published reports yet" description={empty} />
+      ) : briefing && structured ? (
+        <DailyBriefing report={briefing} briefing={structured} standup={standup} />
       ) : (
         <>
           {standup ? (
