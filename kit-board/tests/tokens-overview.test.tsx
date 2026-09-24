@@ -159,7 +159,7 @@ test('project and agent cards read their rows, coverage, and selection from the 
   assert.match(body, /Cursor unattributed Unattributed 0 1 40 8\.0% 0/, 'missing identity stays unattributed with nothing invented');
   assert.match(body, /Forked Codex subagent rollouts record their parent session and agent, so their tokens count under Codex main/, 'the forked-rollout gap is stated');
   assert.match(body, /do not say whether a user or a model asked for the delegation/);
-  assert.match(html, /aria-pressed="false"[^>]*>Main agent only/); assert.match(html, /aria-pressed="false"[^>]*>Subagents only/);
+  assert.match(html, /aria-pressed="false"[^>]*>Main agents</); assert.match(html, /aria-pressed="false"[^>]*>Subagents</);
   assert.doesNotMatch(html, /data-state="selected"/, 'nothing is selected on the landing view');
 
   assert.deepEqual(result.projects.rows.map(projectFilterValue), ['p1', 'no_project', 'unknown', 'projectless', `not_reported:${DESK_INSTALL}`], 'every row applies a value of its own');
@@ -169,7 +169,7 @@ test('project and agent cards read their rows, coverage, and selection from the 
   const selectedHtml = render({ filters });
   assert.match(selectedHtml, /data-state="selected"[^>]*>(?:(?!<\/tr>).)*No project/s, 'the state bucket row shows as selected');
   assert.match(selectedHtml, /data-state="selected"[^>]*>(?:(?!<\/tr>).)*Explore/s, 'the agent row shows as selected');
-  assert.match(selectedHtml, /aria-pressed="true"[^>]*>Subagents only/);
+  assert.match(selectedHtml, /aria-pressed="false"[^>]*>Subagents</, 'the card role buttons are a local view, independent of the page-wide agent scope');
   const selectedBody = text(selectedHtml);
   assert.match(selectedBody, /filtering: No project/); assert.match(selectedBody, /filtering: Claude Code · Explore/);
   assert.match(selectedBody, /Project: No project/); assert.match(selectedBody, /Agent: Claude Code · Explore/, 'the drill-down chip carries the agent name rather than a bare group id');

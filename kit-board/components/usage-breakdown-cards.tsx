@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -93,8 +94,15 @@ function ProjectCard({ result, filters, onFiltersChange }: { result: UsageQueryR
   );
 }
 
+type AgentRoleView = 'all' | 'main' | 'subagent';
+const ROLE_VIEW_LABELS: Record<Exclude<AgentRoleView, 'all'>, string> = { main: 'Main agents', subagent: 'Subagents' };
+
 function AgentCard({ result, filters, onFiltersChange }: { result: UsageQueryResult; filters: TokensFilters; onFiltersChange: (next: TokensFilters) => void }) {
-  const { rows, summary, coverage } = result.agents;
+  const { rows: allRows, summary, coverage } = result.agents;
+  // The role buttons narrow this table in place. Every row already carries its role, so showing main agents or
+  // subagents needs no new read; the page-wide agent scope (More filters) is the one that re-reads.
+  const [roleView, setRoleView] = useState<AgentRoleView>('all');
+  const rows = roleView === 'all' ? allRows : allRows.filter(row => row.role === roleView);
   const attributed = summary.main_tokens + summary.subagent_tokens;
   const total = attributed + summary.unattributed_tokens;
   const share = (tokens: number) => percent(total ? tokens / total : null);
@@ -119,7 +127,7 @@ function AgentCard({ result, filters, onFiltersChange }: { result: UsageQueryRes
     const key = row.group_id;
     onFiltersChange({ ...filters, agents: filters.agents.includes(key) ? filters.agents.filter(v => v !== key) : [key] });
   };
-  const scope = (next: TokensFilters['agent_scope']) => onFiltersChange({ ...filters, agent_scope: filters.agent_scope === next ? 'all' : next });
+  const view = (next: Exclude<AgentRoleView, 'all'>) => setRoleView(current => current === next ? 'all' : next);
   const classes = Object.entries(summary.by_class).filter(([, tokens]) => tokens > 0).sort((a, b) => b[1] - a[1]);
   return (
     <Card className="gap-0 overflow-hidden py-0" aria-label="Agents">
@@ -128,8 +136,9 @@ function AgentCard({ result, filters, onFiltersChange }: { result: UsageQueryRes
         <CardDescription>How the same tokens divide between each provider&apos;s main agent and its subagents, by name.</CardDescription>
         <CardAction className="flex flex-wrap justify-end gap-1.5">
           {selected ? <Badge variant="soft">filtering: {agentLabel(selected)}</Badge> : null}
-          <Button type="button" size="xs" variant={filters.agent_scope === 'main' ? 'default' : 'outline'} aria-pressed={filters.agent_scope === 'main'} onClick={() => scope('main')}>Main agent only</Button>
-          <Button type="button" size="xs" variant={filters.agent_scope === 'subagent' ? 'default' : 'outline'} aria-pressed={filters.agent_scope === 'subagent'} onClick={() => scope('subagent')}>Subagents only</Button>
+          {(['main', 'subagent'] as const).map(role => (
+            <Button key={role} type="button" size="xs" variant={roleView === role ? 'default' : 'outline'} aria-pressed={roleView === role} onClick={() => view(role)}>{ROLE_VIEW_LABELS[role]}</Button>
+          ))}
         </CardAction>
       </CardHeader>
       <StatGroup className="border-border border-y">
@@ -148,7 +157,9 @@ function AgentCard({ result, filters, onFiltersChange }: { result: UsageQueryRes
         <DataTable columns={columns} rows={rows} getRowId={row => row.group_id || `${row.provider}:${row.role}:${row.name}`} defaultSort={{ id: 'tokens', dir: 'desc' }}
           selectedId={selected?.group_id} onSelect={select} className="max-h-80 overflow-auto"
           caption="Select an agent to filter the whole page to it; select it again, or remove the chip above, to go back."
-          empty={<EmptyState title="No agent evidence in scope" description="Agent identity, parent, model, and depth arrive with request records and agent lifecycle events. Hourly buckets carry none of them, so this scope has nothing to divide." />} />
+          empty={roleView !== 'all' && allRows.length
+            ? <EmptyState title={`No ${ROLE_VIEW_LABELS[roleView].toLowerCase()} in scope`} description="Every agent in this scope has another role. Select the button again to show them all." />
+            : <EmptyState title="No agent evidence in scope" description="Agent identity, parent, model, and depth arrive with request records and agent lifecycle events. Hourly buckets carry none of them, so this scope has nothing to divide." />} />
       </div>
       <p className="border-border text-muted-foreground border-t p-3 text-xs leading-relaxed" data-testid="agents-footnote">
         Agent tokens divide the headline above; they are never added to it, and missing identity stays unattributed rather than counted as the main agent. One row is every agent of a provider with the same role and name; instances counts the distinct agents behind it. Forked Codex subagent rollouts record their parent session and agent, so their tokens count under Codex main. A role describes the child, not who started it: a custom role can be launched by another model, and the collected logs do not say whether a user or a model asked for the delegation. {coverage.note}
