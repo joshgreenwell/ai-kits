@@ -1,0 +1,35 @@
+name: contracts
+# The one job that reads both sides: every file in a kit's contract/ must equal the board file of the
+# same name. To fix a failure, regenerate on the board (npm run contracts) and copy the file into the kit.
+on:
+  push:
+    paths: ['kit-*/contract/**', 'kit-board/lib/generated/contracts/**', '.github/workflows/contracts.yml']
+  pull_request:
+    paths: ['kit-*/contract/**', 'kit-board/lib/generated/contracts/**', '.github/workflows/contracts.yml']
+permissions:
+  contents: read
+jobs:
+  copies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kit contract copies match the board
+        run: |
+          status=0
+          checked=0
+          for copy in kit-*/contract/*; do
+            [ -f "$copy" ] || continue
+            case "$copy" in kit-board/*) continue ;; esac
+            original="kit-board/lib/generated/contracts/$(basename "$copy")"
+            checked=$((checked + 1))
+            if [ ! -f "$original" ]; then
+              echo "::error file=$copy::$copy has no board original at $original"
+              status=1
+            elif ! cmp -s "$copy" "$original"; then
+              echo "::error file=$copy::$copy differs from $original; run npm run contracts in kit-board and copy the file"
+              status=1
+            fi
+          done
+          echo "Checked $checked copies"
+          [ "$checked" -gt 0 ] || { echo "::error::No kit contract copies found"; exit 1; }
+          exit $status

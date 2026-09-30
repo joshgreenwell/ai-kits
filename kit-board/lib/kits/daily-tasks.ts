@@ -4,8 +4,8 @@ export const dailyTasksKit = {
   id: 'daily-tasks',
   title: 'Daily tasks',
   summary: 'A scheduled agent publishes the morning briefing, and on weekdays the standup, from mail, calendar and the work queue.',
-  directory: 'kit-board',
-  extracted: false,
+  directory: 'kit-daily-tasks',
+  extracted: true,
   page: { path: '/tasks', empty: 'The next daily briefing and standup will appear here.' },
   reports: [
     { kind: 'tasks', contract: 'tasks-v1', enforcement: 'observe' },
@@ -22,6 +22,8 @@ export const dailyTasksKit = {
     { method: 'POST', path: '/api/v1/reports/standup/validate', auth: 'producer-or-session', scope: 'standup', contract: 'standup-v1', summary: 'Checks a standup as publishing would, and stores nothing.' },
   ],
   downloads: [
+    { label: 'Kit', path: 'kit-daily-tasks', summary: 'Schedule template, contract copies, synthetic fixtures and their tests.' },
+    { label: 'Schedule template', path: 'kit-daily-tasks/schedule/daily-personal-assistant.md', summary: 'What the daily personal assistant writes, and how it checks and publishes it.' },
     { label: 'Publisher', path: 'kit-board/scripts/publish.mjs', summary: 'Zero-dependency client that wraps a payload in the envelope and posts it.' },
   ],
 } as const satisfies KitManifest;

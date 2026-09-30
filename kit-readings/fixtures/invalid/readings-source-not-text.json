@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "period_key": "2026-09-28",
+  "subject_key": "example-owner",
+  "idempotency_key": "fixture-readings-source-not-text-2026-09-28",
+  "title": "Daily readings",
+  "produced_at": "2026-09-28T09:08:00-05:00",
+  "status": "complete",
+  "coverage": {},
+  "payload": {
+    "markdown": "# Daily readings",
+    "source": 7
+  }
+}

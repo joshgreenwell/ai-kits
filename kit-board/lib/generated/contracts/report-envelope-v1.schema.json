@@ -27,8 +27,8 @@
     },
     "title": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 200
+      "maxLength": 200,
+      "pattern": "\\S"
     },
     "produced_at": {
       "type": "string",

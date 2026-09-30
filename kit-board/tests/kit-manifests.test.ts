@@ -82,6 +82,20 @@ test('every download a kit offers exists in the repository', () => {
   }
 });
 
+test('an extracted kit carries what CONTRIBUTING.md asks of a kit, with a copy of each contract it publishes', () => {
+  for (const kit of kits.filter(kit => kit.extracted)) {
+    const root = join('..', kit.directory);
+    for (const file of ['README.md', 'package.json', 'fixtures/MANIFEST.json', `../.github/workflows/${kit.directory}.yml`]) assert.ok(existsSync(join(root, file)), `${kit.id}: ${file}`);
+    for (const report of kit.reports as readonly { contract?: string }[]) if (report.contract) {
+      for (const suffix of ['schema.json', 'example.json']) {
+        const copy = join(root, 'contract', `${report.contract}.${suffix}`);
+        assert.equal(readFileSync(copy, 'utf8'), readFileSync(`lib/generated/contracts/${report.contract}.${suffix}`, 'utf8'), `${copy} is a copy: run npm run contracts and copy it`);
+      }
+    }
+    assert.equal(readFileSync(join(root, 'contract/validate.mjs'), 'utf8'), readFileSync('lib/contract-validator.mjs', 'utf8'), `${kit.id}: contract/validate.mjs is a copy`);
+  }
+});
+
 test('the generated contracts are current, and each example matches its own schema', () => {
   const directory = 'lib/generated/contracts';
   for (const contract of Object.values(reportContractRegistry)) {
@@ -123,6 +137,9 @@ test('the dependency-free validator and the zod source agree on what they refuse
   const extra = example('report-envelope-v1');
   extra.unexpected = true;
   refused.push(['report-envelope-v1', extra]);
+  const untitledReport = example('report-envelope-v1');
+  untitledReport.title = '  ';
+  refused.push(['report-envelope-v1', untitledReport]);
   const period = example('report-envelope-v1');
   period.period_key = '29-09-2026';
   refused.push(['report-envelope-v1', period]);

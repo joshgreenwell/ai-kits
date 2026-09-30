@@ -58,9 +58,9 @@ function check(value, schema, root, path, issues) {
   if (typeof value === 'string') {
     // UTF-16 length, as the board's zod source counts it.
     const length = value.length;
-    if (schema.minLength !== undefined && length < schema.minLength) issues.push({ path, message: `Must be at least ${schema.minLength} characters` });
+    if (schema.minLength !== undefined && length < schema.minLength) issues.push({ path, message: schema.minLength === 1 ? 'Must not be empty' : `Must be at least ${schema.minLength} characters` });
     if (schema.maxLength !== undefined && length > schema.maxLength) issues.push({ path, message: `Must be at most ${schema.maxLength} characters` });
-    if (schema.pattern !== undefined && !new RegExp(schema.pattern).test(value)) issues.push({ path, message: 'Does not match the required format' });
+    if (schema.pattern !== undefined && !new RegExp(schema.pattern).test(value)) issues.push({ path, message: schema.pattern === '\\S' ? 'Must not be blank' : 'Does not match the required format' });
   }
   if (typeof value === 'number') {
     if (schema.minimum !== undefined && value < schema.minimum) issues.push({ path, message: `Must be at least ${schema.minimum}` });

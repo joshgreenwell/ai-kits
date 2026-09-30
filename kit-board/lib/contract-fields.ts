@@ -29,6 +29,7 @@ function rulesOf(schema: Schema): string[] {
   if (Object.hasOwn(schema, 'const')) rules.push(`always ${JSON.stringify(schema.const)}`);
   if (schema.enum) rules.push(`one of ${schema.enum.map(value => JSON.stringify(value)).join(', ')}`);
   if (schema.format === 'date-time') rules.push('ISO 8601 time with a UTC offset');
+  else if (schema.pattern === '\\S') rules.push('not blank');
   else if (schema.pattern) rules.push(schema.pattern.length <= 40 ? `matches ${schema.pattern}` : 'format checked');
   rules.push(range(schema.minLength, schema.maxLength, 'character'), range(schema.minimum, schema.maximum, ''), range(schema.minItems, schema.maxItems, 'item'));
   if (schema.default !== undefined) rules.push(`defaults to ${JSON.stringify(schema.default)}`);

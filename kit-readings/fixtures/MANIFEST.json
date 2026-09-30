@@ -1,0 +1,24 @@
+{
+  "declaration": {
+    "origin": "synthetic",
+    "ref": "hand-written for kit-readings against readings-v1; no field is copied from a stored report or a real edition",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw"
+  },
+  "consumers": [
+    "kit-readings npm test (contract/validate.mjs and render-readings.mjs)",
+    "POST /api/v1/reports/readings/validate, by hand"
+  ],
+  "valid": {
+    "readings-headings.json": { "contract": "readings-v1", "proves": "standard markdown headings, Worth Looking At items, and a coverage window pass and render" },
+    "readings-slack-mrkdwn.json": { "contract": "readings-v1", "proves": "bare headings, a section split across (1/2) and (2/2), and <https://…|label> links pass and render" },
+    "readings-markdown-only.json": { "contract": "readings-v1", "proves": "source is optional" }
+  },
+  "invalid": {
+    "readings-blank-markdown.json": { "contract": "readings-v1", "path": "payload.markdown", "refused_by": "contract", "reason": "an edition of whitespace says nothing" },
+    "readings-missing-markdown.json": { "contract": "readings-v1", "path": "payload.markdown", "refused_by": "contract", "reason": "markdown is the edition; it is required" },
+    "readings-source-not-text.json": { "contract": "readings-v1", "path": "payload.source", "refused_by": "contract", "reason": "source names the task that wrote the edition, as text" },
+    "readings-unknown-status.json": { "contract": "readings-v1", "path": "status", "refused_by": "envelope", "reason": "status is complete, partial, or failed" },
+    "readings-period-not-a-date.json": { "contract": "readings-v1", "path": "period_key", "refused_by": "envelope", "reason": "period_key is the edition's day as YYYY-MM-DD" }
+  }
+}

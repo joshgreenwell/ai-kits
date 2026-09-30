@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "period_key": "2026-09-24",
+  "subject_key": "example-owner",
+  "idempotency_key": "fixture-tasks-failed-run-2026-09-24",
+  "title": "Daily briefing",
+  "produced_at": "2026-09-24T09:12:00-05:00",
+  "status": "failed",
+  "coverage": {
+    "sources": [
+      {
+        "source": "Mail",
+        "status": "failed",
+        "detail": "Sign-in expired."
+      }
+    ]
+  },
+  "payload": {
+    "notice": "No source could be read; this revision records the failed run.",
+    "sections": {}
+  }
+}

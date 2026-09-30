@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "period_key": "2026-09-26",
+  "subject_key": "example-owner",
+  "idempotency_key": "fixture-tasks-extra-domain-2026-09-26",
+  "title": "Daily briefing",
+  "produced_at": "2026-09-26T09:06:00-05:00",
+  "status": "partial",
+  "coverage": {
+    "sources": [
+      {
+        "source": "Mail",
+        "status": "complete"
+      },
+      {
+        "source": "Calendar",
+        "status": "unavailable",
+        "detail": "The calendar connector timed out."
+      }
+    ]
+  },
+  "payload": {
+    "date_label": "Saturday, September 26",
+    "time_label": "9:06 AM",
+    "notice": "Calendar could not be read this morning.",
+    "sections": {
+      "personal": {
+        "items": [
+          {
+            "title": "Renew the library card",
+            "priority": "soon",
+            "kind": "deadline",
+            "when": "Friday"
+          }
+        ]
+      },
+      "volunteering": {
+        "items": [
+          {
+            "title": "Confirm the Saturday shift",
+            "priority": "today",
+            "kind": "followup",
+            "context": "The coordinator asked for a headcount.",
+            "estimate_minutes": 5
+          }
+        ]
+      }
+    },
+    "weather": {
+      "summary": "Clear, 21°C"
+    },
+    "coverage": [
+      {
+        "source": "Mail",
+        "status": "complete"
+      },
+      {
+        "source": "Calendar",
+        "status": "unavailable",
+        "detail": "The calendar connector timed out."
+      }
+    ]
+  }
+}

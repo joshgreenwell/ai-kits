@@ -1,0 +1,30 @@
+{
+  "declaration": {
+    "origin": "synthetic",
+    "ref": "hand-written for kit-daily-tasks against tasks-v1 and standup-v1; no field is copied from a stored report",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw"
+  },
+  "consumers": [
+    "kit-daily-tasks npm test (contract/validate.mjs)",
+    "POST /api/v1/reports/:kind/validate, by hand"
+  ],
+  "valid": {
+    "tasks-minimal.json": { "contract": "tasks-v1", "proves": "a briefing with no domains is still a briefing" },
+    "tasks-extra-domain.json": { "contract": "tasks-v1", "proves": "a partial run, a domain the board does not draw, an extra item field, an extra payload key, and coverage sources all pass" },
+    "tasks-with-html.json": { "contract": "tasks-v1", "proves": "markdown, an urgent work item, a queue entry updated '12d', and an HTML edition pass together" },
+    "tasks-failed-run.json": { "contract": "tasks-v1", "proves": "a failed run is stored, so a missed day has a revision" },
+    "standup-weekday.json": { "contract": "standup-v1", "proves": "a weekday standup is non-blank markdown under the briefing's period" }
+  },
+  "invalid": {
+    "tasks-unknown-priority.json": { "contract": "tasks-v1", "path": "payload.sections.work.items.0.priority", "refused_by": "contract", "reason": "priority is one of urgent, today, soon, later" },
+    "tasks-empty-item-title.json": { "contract": "tasks-v1", "path": "payload.sections.work.items.0.title", "refused_by": "contract", "reason": "every item needs a title" },
+    "tasks-missing-sections.json": { "contract": "tasks-v1", "path": "payload.sections", "refused_by": "contract", "reason": "sections is required, even when it is empty" },
+    "tasks-queue-updated-in-words.json": { "contract": "tasks-v1", "path": "payload.sections.work.queue.0.updated", "refused_by": "contract", "reason": "a queue entry's age is whole days, like 4d" },
+    "tasks-domain-is-a-list.json": { "contract": "tasks-v1", "path": "payload.sections.personal", "refused_by": "contract", "reason": "a domain is an object holding items and a queue, not a bare list" },
+    "tasks-produced-at-without-offset.json": { "contract": "tasks-v1", "path": "produced_at", "refused_by": "envelope", "reason": "produced_at carries a UTC offset" },
+    "tasks-unknown-envelope-key.json": { "contract": "tasks-v1", "path": "summary", "refused_by": "envelope", "reason": "the envelope is closed; extra fields belong in the payload" },
+    "tasks-blank-title.json": { "contract": "tasks-v1", "path": "title", "refused_by": "envelope", "reason": "a title of spaces is blank once trimmed" },
+    "standup-blank-markdown.json": { "contract": "standup-v1", "path": "payload.markdown", "refused_by": "contract", "reason": "a standup of whitespace says nothing" }
+  }
+}

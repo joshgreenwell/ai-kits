@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "period_key": "2026-09-28",
+  "subject_key": "example-owner",
+  "idempotency_key": "fixture-readings-headings-2026-09-28",
+  "title": "Daily readings",
+  "produced_at": "2026-09-28T09:08:00-05:00",
+  "status": "complete",
+  "coverage": {
+    "window": "2026-09-27T09:08:00-05:00/2026-09-28T09:08:00-05:00"
+  },
+  "payload": {
+    "source": "Example scheduled task",
+    "markdown": "# Daily Tech / AI / Crypto Snapshot — 2026-09-28\nEmail checked: Yes\nWeb checked: Yes\n\n## Executive Snapshot\n- One model release and one protocol upgrade.\n\n## Worth Looking At\n**[AI] An example model release — Example Lab**\nLink: [Release notes](https://example.com/notes)\nEvidence: strong\nSummary: What changed and who it affects.\n\n**[Crypto] An example protocol upgrade — Example Foundation**\nLink: [Proposal](https://example.org/proposal)\nSummary: The upgrade lands next week.\n\n## Watchlist\n- A pending standards vote.\n"
+  }
+}

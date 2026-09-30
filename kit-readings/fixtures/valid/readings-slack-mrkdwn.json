@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "period_key": "2026-09-27",
+  "subject_key": "example-owner",
+  "idempotency_key": "fixture-readings-slack-mrkdwn-2026-09-27",
+  "title": "Daily readings",
+  "produced_at": "2026-09-27T09:08:00-05:00",
+  "status": "complete",
+  "coverage": {},
+  "payload": {
+    "source": "Example scheduled task",
+    "markdown": "Daily readings — 2026-09-27\n\nExecutive Snapshot (1/2)\n• *Quiet day.* One tooling update <https://example.com/tooling|worth a look>.\n\nExecutive Snapshot (2/2)\n• Nothing needs action.\n\nSkipped\n• Two duplicate announcements.\n"
+  }
+}

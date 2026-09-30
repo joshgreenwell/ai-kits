@@ -1,0 +1,20 @@
+name: kit-daily-tasks
+on:
+  push:
+    paths: ['kit-daily-tasks/**', '.github/workflows/kit-daily-tasks.yml']
+  pull_request:
+    paths: ['kit-daily-tasks/**', '.github/workflows/kit-daily-tasks.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kit-daily-tasks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test

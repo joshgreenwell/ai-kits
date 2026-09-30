@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "period_key": "2026-09-29",
+  "subject_key": "example-owner",
+  "title": "Standup",
+  "produced_at": "2026-09-29T09:05:00-05:00",
+  "status": "complete",
+  "idempotency_key": "example-standup-2026-09-29",
+  "coverage": {},
+  "payload": {
+    "markdown": "Yesterday: shipped the checklist.\nToday: renewal reply and review.\nBlockers: none."
+  }
+}

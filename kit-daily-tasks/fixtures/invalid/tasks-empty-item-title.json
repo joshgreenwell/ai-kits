@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "period_key": "2026-09-28",
+  "subject_key": "example-owner",
+  "idempotency_key": "fixture-tasks-empty-item-title-2026-09-28",
+  "title": "Daily briefing",
+  "produced_at": "2026-09-28T09:04:00-05:00",
+  "status": "complete",
+  "coverage": {},
+  "payload": {
+    "sections": {
+      "work": {
+        "items": [
+          {
+            "title": "",
+            "priority": "today",
+            "kind": "followup"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -17,6 +17,7 @@ The canonical usage process inventory is [Usage: how the system actually works](
 | Daily personal assistant, with the standup | Codex `daily-personal-assistant` | Daily, 9:00 AM; standup on weekdays | Publishes the merged briefing and, on weekdays, the exact final standup text. `/tasks` shows each day's standup above its briefing; `/standup` redirects there |
 | Daily tech intel snapshot | Claude Desktop scheduled task `daily-tech-intel-snapshot`; needs Mac and the Claude app | Daily, 9:00 AM (the app runs it at 9:08 AM) | Publishes readings directly with the `claude-readings` producer; no Slack delivery |
 
+- The schedule templates, [`kit-daily-tasks/schedule/`](../../kit-daily-tasks/schedule/daily-personal-assistant.md) and [`kit-readings/schedule/`](../../kit-readings/schedule/daily-tech-intel-snapshot.md), record what each task writes and how it checks and publishes it.
 - The separate Codex `daily-standup-update` job is retired; the standup is produced inside the daily personal assistant.
 - The Claude cloud routine for the tech intel snapshot is disabled, not deleted. Its prompt still posts to Slack, so do not re-enable it alongside the Mac task.
 - The Codex readings publication relay is retired: paused, then archived outside Codex under this Mac's `.local/backups/codex-automations/`.

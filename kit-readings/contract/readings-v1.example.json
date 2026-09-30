@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "period_key": "2026-09-29",
+  "subject_key": "example-owner",
+  "title": "Daily readings",
+  "produced_at": "2026-09-29T09:05:00-05:00",
+  "status": "complete",
+  "idempotency_key": "example-readings-2026-09-29",
+  "coverage": {
+    "window": "2026-09-28T09:00:00-05:00/2026-09-29T09:00:00-05:00"
+  },
+  "payload": {
+    "source": "Example scheduled task",
+    "markdown": "# Daily Tech / AI / Crypto Snapshot — 2026-09-29\n\n## Executive Snapshot\n- A model release and a protocol update.\n\n## Worth Looking At\n**[AI] An example release — Example Lab**\nLink: [Notes](https://example.com/notes)\nSummary: What changed and why it matters.\n"
+  }
+}

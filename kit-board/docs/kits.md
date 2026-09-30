@@ -19,7 +19,7 @@ Some of the pieces named here arrive in later phases. The [extraction order](#ex
 |---|---|---|---|
 | AI usage | `kit-usage/` (not yet extracted) | companion, browser quota bridge, `scripts/telemetry/`, collector-side fixtures, machine-side docs | `lib/usage-contract.ts`, usage/telemetry/allowance/reset-feed libraries, `/api/v1/usage`, `/api/v1/companion/*`, `/api/reports`, `/usage`, `/settings/*` |
 | Daily tasks | `kit-daily-tasks/` | schedule template, fixtures, contract copies (`tasks-v1`, `standup-v1`) | `lib/daily-tasks.ts`, `lib/daily-briefing.ts`, `/tasks` |
-| Readings | `kit-readings/` | `render-readings.mjs`, schedule template, fixtures, contract copy (`readings-v1`) | `lib/readings.ts`, the readings view |
+| Readings | `kit-readings/` | `render-readings.mjs`, schedule template, fixtures, contract copy (`readings-v1`) | `lib/readings.ts`, the readings view, and `scripts/render-readings.mjs`, which forwards to the kit's renderer until the readings task runs that copy |
 | Audit | `kit-audit/` (not yet extracted) | `publish-assets.mjs`, fixtures, contract copy (`audit-v1`) | `lib/artifact*`, `lib/assets*`, `lib/report-selection.ts`, `/audit` |
 | PR watch | `kit-pr-watch/` | runner, decision core, decision tests, contract copies | `lib/pr-watch-contract.ts`, `lib/pr-watch-store.ts`, both route sets, `/reviews` |
 | Board core | — | — | auth, `proxy.ts`, `lib/db.ts`, the envelope, `scripts/publish.mjs`, migrations |
@@ -49,11 +49,21 @@ The PR watch contracts are added with `kit-pr-watch/` in phase 4.
 node lib/generated/contracts/validate.mjs lib/generated/contracts/tasks-v1.schema.json report.json
 ```
 
-It exits 1 when the report does not match. It also refuses a schema that uses a keyword it does not check, so a schema it only partly understands can never pass a report. The generator emits nothing that the zod source checks and the schema cannot express, except the envelope's two date checks: `produced_at` may not be in the future, and `period_key` must be a real calendar date.
+It exits 1 when the report does not match. It also refuses a schema that uses a keyword it does not check, so a schema it only partly understands can never pass a report. The generator emits nothing that the zod source checks and the schema cannot express, except three envelope checks. `produced_at` may not be in the future, and `period_key` must be a real calendar date. The board also trims `title` before it checks the 200-character limit, so the schema is stricter there: a 200-character title followed by spaces fails the schema and passes the board. A title of spaces fails both.
 
 Each ingestion receipt carries `contract: { id, enforcement, valid, issues }`, with at most 20 issues. `scripts/publish.mjs` prints it, and writes a warning to stderr when a stored report does not match.
 
 `POST /api/v1/reports/:kind/validate` answers what ingestion would decide about a body and stores nothing: `{ kind, accepted, envelope: { valid, issues }, contract }`. It takes the kind's producer key when an `Authorization` header is sent, and otherwise a signed-in, same-origin browser session; either way it authenticates before it reads the body. `scripts/publish.mjs --dry-run` calls it when the config holds a credential, and `--offline` keeps the check local.
+
+### Kit copies
+
+A kit carries a byte-identical copy of each generated file it depends on, in its own `contract/` folder: `kit-daily-tasks/contract/` has `tasks-v1` and `standup-v1`, and `kit-readings/contract/` has `readings-v1`, each with `validate.mjs`. After `npm run contracts`, refresh every copy from `kit-board/`:
+
+```bash
+for copy in ../kit-*/contract/*; do cp "lib/generated/contracts/$(basename "$copy")" "$copy"; done
+```
+
+Commit the copies with the change. `.github/workflows/contracts.yml` compares every `kit-*/contract/` file with the board file of the same name and fails when one differs or has no original. `tests/kit-manifests.test.ts` checks the same for each extracted kit's contracts, along with the README, `package.json`, `fixtures/MANIFEST.json` and workflow that a kit must carry.
 
 ## The kits pages
 
@@ -72,7 +82,7 @@ Each ingestion receipt carries `contract: { id, enforcement, valid, issues }`, w
 | 0 | This page and the layout rules in `CONTRIBUTING.md` | Done |
 | 1 | Kit manifests, payload contracts, generated schemas, observe-mode validation | Done |
 | 2 | The `/kits` documentation pages and the validate endpoint | Done |
-| 3 | `kit-daily-tasks/` and `kit-readings/` | Pending |
+| 3 | `kit-daily-tasks/` and `kit-readings/` | Done |
 | 4 | `kit-pr-watch/` | Pending |
 | 5 | `kit-audit/`, then a structured `audit-v2` payload | Not started |
 | 6 | `kit-usage/`, last: companion, browser bridge, telemetry scripts, release configuration | Not started |

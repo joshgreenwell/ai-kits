@@ -1,0 +1,20 @@
+name: kit-readings
+on:
+  push:
+    paths: ['kit-readings/**', '.github/workflows/kit-readings.yml']
+  pull_request:
+    paths: ['kit-readings/**', '.github/workflows/kit-readings.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kit-readings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test

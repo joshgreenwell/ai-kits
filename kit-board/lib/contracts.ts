@@ -9,7 +9,8 @@ export const reportEnvelope = z.object({
   period_key: z.string().regex(/^\d{4}-\d{2}(?:-\d{2})?$/),
   subject_key: key,
   idempotency_key: key,
-  title: z.string().trim().min(1).max(200),
+  // Trimmed, then checked; the pattern is how the generated schema refuses a blank title too.
+  title: z.string().trim().max(200).regex(/\S/, 'Must not be blank'),
   produced_at: z.iso.datetime({ offset: true }),
   status: z.enum(['complete', 'partial', 'failed']),
   coverage: z.record(z.string(), z.unknown()).default({}),

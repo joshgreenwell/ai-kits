@@ -53,6 +53,7 @@ The global shell and usage views are native React. Stored report HTML is intenti
 | Usage feature/status authority; v1 retirement | `docs/usage-system.md`, `docs/usage-collection.md` (v2), `docs/usage-v1-retirement.md` |
 | Usage capability and roadmap matrix, per provider, surface, and process | `docs/usage-coverage.md` (capability when enabled, not production status; update it with any collector or provider change) |
 | PR watch queue | `docs/pr-watch.md`, `app/(private)/reviews/page.tsx`, `components/pr-watch-queue.tsx`, `lib/pr-watch-contract.ts`, `lib/pr-watch-store.ts`, `app/api/pr-watches/` (session), `app/api/v1/pr-watches/` (`pr-watch` producer key), `scripts/pr-watch.mjs` (runner, launchd) with `scripts/pr-watch-core.mjs` (every decision), `tests/pr-watch.test.ts`, `tests/pr-watch-store.integration.test.ts` |
+| Daily tasks and readings producers | `../kit-daily-tasks/` (schedule template, contract copies, fixtures), `../kit-readings/` (`render-readings.mjs`, schedule template, contract copy, fixtures); `scripts/render-readings.mjs` only forwards to the kit's renderer. Each kit runs `npm test` under its own workflow, and `.github/workflows/contracts.yml` holds the copies to `lib/generated/contracts/` |
 | Reset feeds | `lib/reset-feeds.ts`, `lib/reset-feed-store.ts`, `app/api/reset-feeds/route.ts` |
 | Generic report ingestion | `lib/contracts.ts` (envelope), `lib/report-contracts.ts` (per-kind payloads, observe mode, `validateReport`), `lib/db.ts`, `app/api/v1/reports/[kind]/route.ts`, `app/api/v1/reports/[kind]/validate/route.ts` (checks and stores nothing), `scripts/publish.mjs` |
 | HTML report isolation and assets | `lib/artifact.ts`, `lib/artifact-runtime.ts`, `components/report-frame.tsx`, `app/api/artifacts/`, `scripts/publish-assets.mjs` |
@@ -60,7 +61,7 @@ The global shell and usage views are native React. Stored report HTML is intenti
 | Hosting cron schedules | `vercel.json`, `app/api/internal/` |
 | Tests | `tests/*.test.ts`, `tests/*_test.py` |
 
-`lib/generated/report-ui.json` is a checked-in generated file. Run `npm run report-ui` after changing the report UI inputs and commit its output with the source change. `lib/generated/contracts/` is too: run `npm run contracts` after changing `lib/contracts.ts` or `lib/report-contracts.ts`. The retired collector-bundle generator and generated ZIP payload were removed; the site does not distribute v1 collectors.
+`lib/generated/report-ui.json` is a checked-in generated file. Run `npm run report-ui` after changing the report UI inputs and commit its output with the source change. `lib/generated/contracts/` is too: run `npm run contracts` after changing `lib/contracts.ts` or `lib/report-contracts.ts`, then copy each file a kit carries into its `contract/` folder ([Observatory kits](kits.md#kit-copies) has the command). The retired collector-bundle generator and generated ZIP payload were removed; the site does not distribute v1 collectors.
 
 ## Data and security boundaries
 

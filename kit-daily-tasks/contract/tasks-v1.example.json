@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "period_key": "2026-09-29",
+  "subject_key": "example-owner",
+  "title": "Daily briefing",
+  "produced_at": "2026-09-29T09:05:00-05:00",
+  "status": "partial",
+  "idempotency_key": "example-tasks-2026-09-29",
+  "coverage": {
+    "sources": [
+      {
+        "source": "Mail",
+        "status": "complete"
+      },
+      {
+        "source": "Calendar",
+        "status": "stale since 08:00"
+      }
+    ]
+  },
+  "payload": {
+    "date_label": "Tuesday, September 29",
+    "time_label": "9:05 AM",
+    "notice": "Calendar was refreshed at 8:00 AM.",
+    "sections": {
+      "work": {
+        "items": [
+          {
+            "title": "Reply to the vendor about the renewal",
+            "priority": "today",
+            "kind": "reply",
+            "when": "By noon",
+            "context": "They asked for a decision on the annual plan.",
+            "next_step": "Confirm the seat count.",
+            "project": "Example project",
+            "source_url": "https://mail.example.com/message/1"
+          },
+          {
+            "title": "Review the deployment checklist",
+            "priority": "soon",
+            "kind": "followup",
+            "task_id": "EX-12",
+            "task_url": "https://linear.app/example/issue/EX-12",
+            "task_status": "In Review"
+          }
+        ],
+        "queue": [
+          {
+            "id": "EX-12",
+            "title": "Deployment checklist",
+            "priority": "High",
+            "status": "In Review",
+            "updated": "3d",
+            "url": "https://linear.app/example/issue/EX-12"
+          }
+        ],
+        "queue_summary": {
+          "open": 1,
+          "high": 1,
+          "stale": 0,
+          "stages": [
+            {
+              "label": "In Review",
+              "count": 1
+            }
+          ],
+          "note": "One item waits on review."
+        }
+      },
+      "personal": {
+        "items": [],
+        "empty_note": "Nothing personal needs today."
+      }
+    },
+    "week": {
+      "days": [
+        {
+          "date": "2026-09-29",
+          "dow": "Tue",
+          "day": "29",
+          "today": true,
+          "weekend": false,
+          "shared_hours": 2,
+          "solo_hours": 1.5,
+          "counted_entries": 3,
+          "entries": [
+            {
+              "title": "Team sync",
+              "time": "10:00",
+              "tag": "6"
+            },
+            {
+              "title": "Focus block",
+              "time": "13:00",
+              "tag": "own"
+            }
+          ]
+        }
+      ],
+      "note": "Durations include overlaps."
+    },
+    "inbox": {
+      "window_label": "Last 24 hours",
+      "total": 14,
+      "figures": [
+        {
+          "n": 2,
+          "k": "Need a reply",
+          "hot": true
+        }
+      ],
+      "classes": [
+        {
+          "label": "Newsletters",
+          "count": 6
+        }
+      ],
+      "top_senders": [
+        {
+          "address": "news@example.com",
+          "count": 4
+        }
+      ]
+    },
+    "candidates": [
+      {
+        "domain": "personal",
+        "sender": "news@example.com",
+        "reason": "Six unread issues",
+        "action": "Unsubscribe"
+      }
+    ],
+    "coverage": [
+      {
+        "source": "Mail",
+        "status": "complete"
+      },
+      {
+        "source": "Calendar",
+        "status": "stale since 08:00"
+      }
+    ]
+  }
+}
