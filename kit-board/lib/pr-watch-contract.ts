@@ -8,6 +8,14 @@ import { RequestError } from './contracts';
 export const prWatchStatuses = ['watching', 'stopped', 'closed', 'merged'] as const;
 export type PrWatchStatus = (typeof prWatchStatuses)[number];
 export type PrReviewState = 'idle' | 'running' | 'failed';
+/**
+ * 'review' re-reviews someone else's PR when its author pushes; 'address' works through new review
+ * comments on the owner's own PR and pushes the fixes.
+ */
+export const prWatchKinds = ['review', 'address'] as const;
+export type PrWatchKind = (typeof prWatchKinds)[number];
+export const addressOutcomes = ['pushed', 'no_change', 'needs_you'] as const;
+export type AddressOutcome = (typeof addressOutcomes)[number];
 
 export type PullRequestRef = { owner: string; repo: string; number: number };
 
@@ -36,32 +44,42 @@ export function parsePullRequestUrl(input: string): PullRequestRef {
 
 export const pullRequestUrl = (ref: PullRequestRef) => `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}`;
 
-export const addWatchInput = z.strictObject({ url: z.string().min(1).max(500) });
+export const addWatchInput = z.strictObject({ url: z.string().min(1).max(500), kind: z.enum(prWatchKinds).default('review') });
 export const watchActionInput = z.strictObject({ action: z.enum(['stop', 'review']) });
 
 const sha = z.string().regex(/^[0-9a-f]{40}$/);
 const shortText = (max: number) => z.string().max(max).transform(value => value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim());
+/** Like shortText, but keeps line breaks, for a session's own summary. */
+const longText = (max: number) => z.string().max(max).transform(value => value.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').replace(/\n{3,}/g, '\n\n').trim());
+const timestamp = z.iso.datetime({ offset: true });
+const githubUrl = z.string().max(500).regex(/^https:\/\/github\.com\//);
 
 /**
  * What the runner reports after looking at one watch. Every field is optional: a tick that only saw an
  * unchanged head sends `checked_at` alone, and `null` clears a field (an error that went away).
  */
 export const runnerReport = z.strictObject({
-  checked_at: z.iso.datetime({ offset: true }),
-  status: z.enum(['watching', 'closed', 'merged']).optional(),
+  checked_at: timestamp,
+  // 'stopped' ends an address watch on a PR the owner did not open.
+  status: z.enum(['watching', 'closed', 'merged', 'stopped']).optional(),
   title: shortText(300).optional(),
   author_login: z.string().regex(/^[A-Za-z0-9-]{1,39}(\[bot\])?$/).optional(),
   head_sha: sha.optional(),
   head_fingerprint: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   reviewed_sha: z.string().regex(/^[0-9a-f]{7,40}$/).optional(),
   baseline_source: z.enum(['ai_review', 'watch_start']).optional(),
+  // Address watches only: the newest comment taken on, and how many newer ones are waiting.
+  comments_through: timestamp.optional(),
+  comments_pending: z.number().int().min(0).max(10_000).optional(),
   review: z.discriminatedUnion('event', [
-    // A review session was started for this head.
-    z.strictObject({ event: z.literal('started'), session: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/), target_sha: sha, started_at: z.iso.datetime({ offset: true }) }),
-    // The session posted its review; the URL is that review on GitHub.
-    z.strictObject({ event: z.literal('posted'), finished_at: z.iso.datetime({ offset: true }), url: z.string().max(500).regex(/^https:\/\/github\.com\//) }),
-    // The session ended, or ran out of time, without a review on GitHub.
-    z.strictObject({ event: z.literal('failed'), finished_at: z.iso.datetime({ offset: true }) }),
+    // A session was started for this head: a review, or a pass over new comments.
+    z.strictObject({ event: z.literal('started'), session: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/), target_sha: sha, started_at: timestamp }),
+    // A review session posted its review; the URL is that review on GitHub.
+    z.strictObject({ event: z.literal('posted'), finished_at: timestamp, url: githubUrl }),
+    // An address session finished and said what it did; the URL is the pushed range, when it pushed.
+    z.strictObject({ event: z.literal('addressed'), finished_at: timestamp, outcome: z.enum(addressOutcomes), summary: longText(2000), url: githubUrl.nullable() }),
+    // The session ended, or ran out of time, without a review on GitHub or a result.
+    z.strictObject({ event: z.literal('failed'), finished_at: timestamp }),
   ]).optional(),
   note: shortText(500).nullable().optional(),
   error: shortText(500).nullable().optional(),
@@ -75,6 +93,7 @@ export const runnerHeartbeat = z.strictObject({
 
 export type PrWatch = PullRequestRef & {
   id: string;
+  kind: PrWatchKind;
   url: string;
   status: PrWatchStatus;
   title: string | null;
@@ -94,6 +113,10 @@ export type PrWatch = PullRequestRef & {
   last_checked_at: string | null;
   last_note: string | null;
   last_error: string | null;
+  comments_through: string | null;
+  comments_pending: number;
+  last_outcome: AddressOutcome | null;
+  last_summary: string | null;
   created_at: string;
   stopped_at: string | null;
 };

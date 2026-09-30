@@ -96,6 +96,68 @@ maybe('the PR watch queue: add, report, review, stop, and end as the application
   }
 });
 
+/**
+ * The second kind: an address watch on the same PR is its own row, lives on its own tab, records the
+ * comment watermark, and finishes with the session's own summary. Reports of the other kind's shape
+ * are refused, and the columns only address watches use stay empty on review watches.
+ */
+maybe('address watches: their own queue, watermark, and outcome, kept apart from review watches', async () => {
+  const { createPrWatchStore } = await import('../lib/pr-watch-store');
+  const admin = postgres(url!, options);
+  const app = postgres(url!, { ...options, username: 'personal_hub_app' });
+  const store = createPrWatchStore(() => app);
+  const repo = `address-${randomUUID().slice(0, 8)}`;
+  try {
+    const reviewing = await store.add({ owner: 'acme', repo, number: 7 });
+    const addressing = await store.add({ owner: 'acme', repo, number: 7 }, 'address');
+    assert.equal(addressing.duplicate, false, 'a PR can be re-reviewed and have its comments addressed at once');
+    assert.notEqual(addressing.watch.id, reviewing.watch.id);
+    assert.deepEqual([addressing.watch.kind, addressing.watch.comments_through, addressing.watch.comments_pending, addressing.watch.last_outcome], ['address', null, 0, null]);
+    assert.equal((await store.add({ owner: 'Acme', repo, number: 7 }, 'address')).duplicate, true);
+    const id = addressing.watch.id;
+
+    const mine = async (kind: 'review' | 'address') => (await store.list(kind)).watches.filter(watch => watch.repo === repo).map(watch => watch.id);
+    assert.deepEqual(await mine('address'), [id]);
+    assert.deepEqual(await mine('review'), [reviewing.watch.id]);
+    const work = await store.runnerWork('pr-watch', {});
+    assert.ok(work.some(watch => watch.id === id && watch.kind === 'address') && work.some(watch => watch.id === reviewing.watch.id && watch.kind === 'review'));
+
+    const looked = await store.report(id, { checked_at: at(0), head_sha: A, comments_through: at(0), comments_pending: 3, note: '3 new comments from zach.' });
+    assert.deepEqual([looked.comments_through, looked.comments_pending], [at(0), 3]);
+    await assert.rejects(store.report(reviewing.watch.id, { checked_at: at(1), comments_pending: 1 }), { status: 409, message: /for an address watch; this one is a review watch/ });
+    await assert.rejects(app`UPDATE personal_hub.pr_watches SET comments_pending = 1 WHERE id = ${reviewing.watch.id}`, /pr_watches_kind_columns/);
+
+    assert.ok((await store.act(id, 'review')).review_requested_at, 'Address now');
+    const started = await store.report(id, { checked_at: at(5), comments_through: at(4), comments_pending: 0, error: null,
+      review: { event: 'started', session: 'bg_a1', target_sha: A, started_at: at(5) } });
+    assert.deepEqual([started.review_state, started.review_requested_at, started.comments_through, started.comments_pending], ['running', null, at(4), 0]);
+    await assert.rejects(store.act(id, 'review'), { status: 409, message: /already addressing comments/ });
+    await assert.rejects(store.report(id, { checked_at: at(6), review: { event: 'posted', finished_at: at(6), url: 'https://github.com/acme/x' } }),
+      { status: 409, message: /for a review watch; this one is an address watch/ }, 'a review report cannot finish an address pass');
+
+    const compare = `https://github.com/acme/${repo}/compare/${A}...${B}`;
+    const addressed = await store.report(id, { checked_at: at(30), head_sha: B, note: 'Needs you: 1 question.', error: null,
+      review: { event: 'addressed', finished_at: at(30), outcome: 'needs_you', summary: 'Renamed the test.\n\nQuestions for you:\n- Keep the fallback?', url: compare } });
+    assert.deepEqual([addressed.review_state, addressed.review_count, addressed.last_outcome, addressed.last_review_url, addressed.review_finished_at],
+      ['idle', 1, 'needs_you', compare, at(30)]);
+    assert.equal(addressed.last_summary, 'Renamed the test.\n\nQuestions for you:\n- Keep the fallback?', 'line breaks survive');
+    await assert.rejects(store.report(id, { checked_at: at(31), review: { event: 'addressed', finished_at: at(31), outcome: 'pushed', summary: '', url: null } }), conflict, 'a pass finishes once');
+
+    // A pass that pushed nothing keeps the link to the last push.
+    await store.report(id, { checked_at: at(40), review: { event: 'started', session: 'bg_a2', target_sha: B, started_at: at(40) } });
+    const quiet = await store.report(id, { checked_at: at(50), review: { event: 'addressed', finished_at: at(50), outcome: 'no_change', summary: '', url: null } });
+    assert.deepEqual([quiet.last_outcome, quiet.last_summary, quiet.last_review_url, quiet.review_count], ['no_change', null, compare, 2]);
+
+    // The runner ends an address watch on someone else's PR.
+    const ended = await store.report(id, { checked_at: at(55), status: 'stopped', note: "Stopped: this PR is dana's." });
+    assert.equal(ended.status, 'stopped'); assert.ok(ended.stopped_at);
+    assert.equal((await store.add({ owner: 'acme', repo, number: 7 }, 'address')).duplicate, false, 'and it can be watched again');
+  } finally {
+    await admin`DELETE FROM personal_hub.pr_watches WHERE repo = ${repo}`;
+    await Promise.all([admin.end({ timeout: 1 }), app.end({ timeout: 1 })]);
+  }
+});
+
 maybe('the queue holds a bounded number of live watches', async () => {
   const { createPrWatchStore, MAX_ACTIVE_WATCHES } = await import('../lib/pr-watch-store');
   const admin = postgres(url!, options);
@@ -103,10 +165,11 @@ maybe('the queue holds a bounded number of live watches', async () => {
   const store = createPrWatchStore(() => app);
   const repo = `cap-${randomUUID().slice(0, 8)}`;
   try {
-    const [{ count }] = await admin`SELECT count(*)::int AS count FROM personal_hub.pr_watches WHERE status = 'watching'`;
+    const [{ count }] = await admin`SELECT count(*)::int AS count FROM personal_hub.pr_watches WHERE status = 'watching' AND kind = 'review'`;
     for (let number = 1; number <= MAX_ACTIVE_WATCHES - count; number++) await store.add({ owner: 'acme', repo, number });
-    await assert.rejects(store.add({ owner: 'acme', repo, number: 999 }), { status: 409, message: new RegExp(`${MAX_ACTIVE_WATCHES} pull requests`) });
+    await assert.rejects(store.add({ owner: 'acme', repo, number: 999 }), { status: 409, message: new RegExp(`${MAX_ACTIVE_WATCHES} pull requests for re-review`) });
     assert.equal((await store.add({ owner: 'acme', repo, number: 1 })).duplicate, true, 'a duplicate is not a new watch, even at the cap');
+    assert.equal((await store.add({ owner: 'acme', repo, number: 999 }, 'address')).duplicate, false, 'each kind has its own cap');
   } finally {
     await admin`DELETE FROM personal_hub.pr_watches WHERE repo = ${repo}`;
     await Promise.all([admin.end({ timeout: 1 }), app.end({ timeout: 1 })]);
@@ -120,7 +183,7 @@ maybe('the application role can never delete a watch or rewrite which PR it is',
     for (const table of ['pr_watches', 'pr_watch_runners']) {
       await assert.rejects(app.unsafe(`DELETE FROM personal_hub.${table} WHERE false`), /permission denied/, `${table} delete`);
     }
-    for (const column of ['id', 'owner', 'repo', 'number', 'created_at']) {
+    for (const column of ['id', 'kind', 'owner', 'repo', 'number', 'created_at']) {
       await assert.rejects(app.unsafe(`UPDATE personal_hub.pr_watches SET ${column} = ${column} WHERE false`), /permission denied/, `pr_watches.${column}`);
     }
     await assert.rejects(app.unsafe('UPDATE personal_hub.pr_watch_runners SET producer_id = producer_id WHERE false'), /permission denied/);

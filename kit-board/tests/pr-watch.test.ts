@@ -93,10 +93,19 @@ test('runner reports are strict, bounded, and cleaned of control characters', ()
   assert.equal(runnerReport.parse({ checked_at, error: null }).error, null, 'null clears an error');
   assert.equal(runnerReport.parse({ checked_at, author_login: 'dependabot[bot]' }).author_login, 'dependabot[bot]');
   assert.ok(runnerReport.parse({ checked_at, review: { event: 'started', session: 'bg_1a2b', target_sha: A, started_at: checked_at } }).review);
+  assert.equal(runnerReport.parse({ checked_at, status: 'stopped' }).status, 'stopped', 'an address watch on a PR the owner did not open ends');
+  const addressed = runnerReport.parse({ checked_at, comments_through: checked_at, comments_pending: 0,
+    review: { event: 'addressed', finished_at: checked_at, outcome: 'needs_you', summary: 'Fixed the test name.\r\n\n\n\nQuestions for you:\n- Keep\u0007 the fallback?', url: null } }).review;
+  assert.equal(addressed?.event === 'addressed' && addressed.summary, 'Fixed the test name.\n\nQuestions for you:\n- Keep  the fallback?', 'a summary keeps its line breaks and loses control characters');
   for (const bad of [
     {},
     { checked_at, extra: true },
-    { checked_at, status: 'stopped' },
+    { checked_at, status: 'paused' },
+    { checked_at, comments_pending: -1 },
+    { checked_at, comments_through: 'yesterday' },
+    { checked_at, review: { event: 'addressed', finished_at: checked_at, outcome: 'merged', summary: '', url: null } },
+    { checked_at, review: { event: 'addressed', finished_at: checked_at, outcome: 'pushed', summary: 'x'.repeat(2001), url: null } },
+    { checked_at, review: { event: 'addressed', finished_at: checked_at, outcome: 'pushed', summary: '', url: 'https://evil.example/compare' } },
     { checked_at, head_sha: 'abc1234' },
     { checked_at, head_fingerprint: 'f'.repeat(63) },
     { checked_at, note: 'x'.repeat(501) },

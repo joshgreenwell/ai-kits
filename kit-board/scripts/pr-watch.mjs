@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // PR watch runner (docs/pr-watch.md). launchd runs `tick` every five minutes on this Mac: it reads the
-// queue from the site, looks at each pull request through gh, and when the PR author has pushed a
-// change to the diff it starts a background Claude session that runs the AI review skill. Polling is
-// plain code; a model runs only for a review.
+// queue from the site and looks at each pull request through gh. On a review watch, when the PR author
+// has pushed a change to the diff, it starts a background Claude session that runs the AI review skill.
+// On an address watch, when reviewers leave new comments on the owner's own PR, it starts one that works
+// through them and pushes the fixes. Polling is plain code; a model runs only when there is work.
 //
 //   node scripts/pr-watch.mjs tick [--dry-run]    one pass over the queue (what launchd runs)
-//   node scripts/pr-watch.mjs check <PR url>      what a new watch would do, read-only, no site needed
+//   node scripts/pr-watch.mjs check <PR url> [--kind address] [--since <time>] [--requested]
+//                                                 what a new watch would do, read-only, no site needed
 //   node scripts/pr-watch.mjs keygen [--rotate]   create the runner's producer key; prints only its hash
 //   node scripts/pr-watch.mjs install | uninstall | status
 //
@@ -13,20 +15,20 @@
 // arguments or logs. Optional settings live beside it in pr-watch.json.
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { backgroundedSession, decide, defaults, reviewPrompt, short } from './pr-watch-core.mjs';
+import { addressPrompt, addressResult, backgroundedSession, decide, decideAddress, defaults, feedback, remoteMatches, reviewPrompt, short } from './pr-watch-core.mjs';
 
 const run = promisify(execFile);
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const LABEL = 'com.personal-observatory.pr-watch';
 const PRODUCER = 'pr-watch';
 
 const [command = 'tick', ...rest] = process.argv.slice(2);
-const positional = rest.filter((arg, i) => !arg.startsWith('--') && !/^--(config|head|reviewed)$/.test(rest[i - 1] ?? ''));
+const positional = rest.filter((arg, i) => !arg.startsWith('--') && !/^--(config|head|reviewed|kind|since)$/.test(rest[i - 1] ?? ''));
 const flag = name => rest.includes(`--${name}`);
 const option = name => { const i = rest.indexOf(`--${name}`); return i >= 0 ? rest[i + 1] : undefined; };
 
@@ -48,11 +50,16 @@ async function settings() {
   const own = await readJsonFile(settingsPath, {});
   const merged = { ...defaults, workspace: `${homedir()}/github/luumen-workspace`, ...own };
   merged.workspace = merged.workspace.replace(/^~(?=\/|$)/, homedir());
-  if (!/^[A-Za-z0-9._-]{1,64}$/.test(merged.model) || !/^[a-z]{1,16}$/.test(merged.effort) || !/^[A-Za-z]{1,32}$/.test(merged.permission_mode) || !/^[A-Za-z0-9:_-]{1,80}$/.test(merged.skill)) {
-    throw new Error(`Invalid model, effort, permission_mode, or skill in ${settingsPath}`);
+  const skill = /^[A-Za-z0-9:_-]{1,80}$/;
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(merged.model) || !/^[a-z]{1,16}$/.test(merged.effort) || !/^[A-Za-z]{1,32}$/.test(merged.permission_mode) || !skill.test(merged.skill) || !skill.test(merged.address_skill)) {
+    throw new Error(`Invalid model, effort, permission_mode, skill, or address_skill in ${settingsPath}`);
   }
-  merged.max_concurrent = Math.max(1, Math.min(5, Number(merged.max_concurrent) || defaults.max_concurrent));
-  merged.review_timeout_minutes = Math.max(10, Math.min(240, Number(merged.review_timeout_minutes) || defaults.review_timeout_minutes));
+  const clamp = (key, min, max) => { merged[key] = Math.max(min, Math.min(max, Number.isFinite(Number(merged[key])) ? Number(merged[key]) : defaults[key])); };
+  clamp('max_concurrent', 1, 5);
+  clamp('review_timeout_minutes', 10, 240);
+  clamp('address_max_concurrent', 1, 5);
+  clamp('address_timeout_minutes', 15, 240);
+  clamp('address_settle_minutes', 0, 120);
   return merged;
 }
 
@@ -76,6 +83,8 @@ function github(watch) {
     pull: () => gh([`${base}/pulls/${watch.number}`]),
     files: once(() => pages(`${base}/pulls/${watch.number}/files?per_page=100`)),
     reviews: once(() => pages(`${base}/pulls/${watch.number}/reviews?per_page=100`)),
+    reviewComments: once(() => pages(`${base}/pulls/${watch.number}/comments?per_page=100`)),
+    issueComments: once(() => pages(`${base}/issues/${watch.number}/comments?per_page=100`)),
     newCommits: async (from, to) => (await gh([`${base}/compare/${from}...${to}?per_page=100`], { missing: true }))?.commits ?? null,
   };
 }
@@ -96,6 +105,53 @@ async function startReview(config, watch, pull, action) {
   const session = backgroundedSession(`${stdout}\n${stderr}`);
   if (!session) throw new Error(`claude --bg did not report a session: ${firstLine(stderr || stdout)}`);
   return session;
+}
+
+// An address session works in a worktree under the workspace's git-ignored tmp/ and leaves its result
+// file there; the runner reads that file to learn how the pass went.
+const addressPaths = (config, watch, target) => {
+  const root = resolve(config.workspace, 'tmp', 'pr-watch');
+  return {
+    results: resolve(root, 'results'),
+    result: resolve(root, 'results', `${watch.id}.json`),
+    worktree: resolve(root, 'worktrees', `${watch.repo}-${watch.number}-${short(target)}-${Date.now().toString(36)}`),
+  };
+};
+
+/** The workspace checkout whose origin is this repository, so the session can add a worktree to it; null when none is. */
+async function findClone(config, fullName) {
+  const entries = await readdir(config.workspace, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries.filter(item => item.isDirectory() && !item.name.startsWith('.') && item.name !== 'tmp')) {
+    const path = resolve(config.workspace, entry.name);
+    const remote = await run('git', ['-C', path, 'remote', 'get-url', 'origin'], { timeout: 10_000 }).then(out => out.stdout, () => '');
+    if (remoteMatches(remote, fullName)) return path;
+  }
+  return null;
+}
+
+async function startAddress(config, watch, pull, action) {
+  const paths = addressPaths(config, watch, action.target_sha);
+  // A result left by an earlier pass must not read as this pass's result.
+  await rm(paths.result, { force: true });
+  await mkdir(paths.results, { recursive: true });
+  await mkdir(dirname(paths.worktree), { recursive: true });
+  const clone = await findClone(config, pull.head.repo.full_name);
+  const prompt = addressPrompt({ watch, pull, reason: action.reason, comments: action.comments, skill: config.address_skill, resultPath: paths.result, worktree: paths.worktree, clone });
+  const name = `PR comments · ${watch.owner}/${watch.repo}#${watch.number} · ${short(action.target_sha)}`;
+  const { stdout, stderr } = await run('claude', ['--bg', '--model', config.model, '--effort', config.effort, '--permission-mode', config.permission_mode, '-n', name, prompt],
+    { cwd: config.workspace, timeout: 120_000 });
+  const session = backgroundedSession(`${stdout}\n${stderr}`);
+  if (!session) throw new Error(`claude --bg did not report a session: ${firstLine(stderr || stdout)}`);
+  return session;
+}
+
+/** The running address session's result, once it has written one for this pass. */
+async function readResult(config, watch) {
+  const { result } = addressPaths(config, watch, watch.review_target_sha);
+  const info = await stat(result).catch(() => null);
+  if (!info || info.mtimeMs < Date.parse(watch.review_started_at) - 60_000) return null;
+  // A half-written file reads as no result yet; the next tick reads it again.
+  return addressResult(await readJsonFile(result).catch(() => null));
 }
 
 const stopSession = session => run('claude', ['stop', session], { timeout: 30_000 }).catch(error => log(`Could not stop session ${session}: ${firstLine(error.stderr || error.message)}`));
@@ -149,37 +205,46 @@ async function tick() {
   if (!dryRun) await rotateLog();
   const config = await settings();
   const site = await siteClient();
-  const { watches } = await site(`/api/v1/pr-watches?machine=${encodeURIComponent(hostname().slice(0, 80))}&version=${VERSION}`);
+  const { watches: listed } = await site(`/api/v1/pr-watches?machine=${encodeURIComponent(hostname().slice(0, 80))}&version=${VERSION}`);
+  // A site from before address watches sends no kind; every watch it has is a review watch.
+  const watches = listed.map(watch => ({ kind: 'review', ...watch }));
   if (!watches.length) { log('The queue is empty.'); return; }
   const viewer = (await gh(['user'])).login;
   const agents = once(claudeAgents);
   const state = await readJsonFile(statePath, { launched: {} });
   // A launch the site never heard about, for a watch that has since left the queue, has nothing left to report.
-  const listed = new Set(watches.map(watch => watch.id));
-  const stale = Object.keys(state.launched).filter(id => !listed.has(id));
+  const ids = new Set(watches.map(watch => watch.id));
+  const stale = Object.keys(state.launched).filter(id => !ids.has(id));
   if (stale.length && !dryRun) { for (const id of stale) delete state.launched[id]; await writePrivate(statePath, state); }
-  let slots = config.max_concurrent - watches.filter(watch => watch.review_state === 'running').length;
+  // Each kind has its own cap, so a burst of comments cannot hold up re-reviews or the other way round.
+  const running = kind => watches.filter(watch => watch.kind === kind && watch.review_state === 'running').length;
+  const slots = { review: config.max_concurrent - running('review'), address: config.address_max_concurrent - running('address') };
 
   for (const watch of watches) {
-    const label = `${watch.owner}/${watch.repo}#${watch.number}`;
+    const label = `${watch.owner}/${watch.repo}#${watch.number}${watch.kind === 'address' ? ' (comments)' : ''}`;
     try {
-      // A review started on an earlier tick whose report never reached the site: report it, never start a second one.
+      // A session started on an earlier tick whose report never reached the site: report it, never start a second one.
       const pending = state.launched[watch.id];
       if (pending && watch.review_state === 'running') { delete state.launched[watch.id]; await writePrivate(statePath, state); }
       else if (pending) {
         if (!dryRun) {
           await site(`/api/v1/pr-watches/${watch.id}`, { checked_at: new Date().toISOString(), head_sha: pending.target_sha, head_fingerprint: pending.fingerprint,
+            ...(pending.comments_through ? { comments_through: pending.comments_through, comments_pending: 0 } : {}),
             review: { event: 'started', session: pending.session, target_sha: pending.target_sha, started_at: pending.started_at }, note: pending.note, error: null })
             .catch(error => { if (error.status !== 409) throw error; });
           delete state.launched[watch.id]; await writePrivate(statePath, state);
         }
-        log(label, `re-reported review session ${pending.session}`);
-        slots--;
+        log(label, `re-reported session ${pending.session}`);
+        slots[watch.kind]--;
         continue;
       }
       const source = github(watch);
       const pull = await source.pull();
-      const decision = await decide({ watch, pull, files: source.files, reviews: source.reviews, newCommits: source.newCommits, agents, viewer, slot: slots > 0, now: new Date(), config });
+      const now = new Date();
+      const decision = watch.kind === 'address'
+        ? await decideAddress({ watch, pull, reviews: source.reviews, reviewComments: source.reviewComments, issueComments: source.issueComments, agents,
+          result: () => readResult(config, watch), viewer, slot: slots.address > 0, now, config })
+        : await decide({ watch, pull, files: source.files, reviews: source.reviews, newCommits: source.newCommits, agents, viewer, slot: slots.review > 0, now, config });
       let report = decision.report;
       if (dryRun) { console.log(JSON.stringify({ watch: label, report, action: decision.action })); continue; }
       if (decision.action?.type === 'stop') await stopSession(decision.action.session);
@@ -188,7 +253,7 @@ async function tick() {
           const session = await startReview(config, watch, pull, decision.action);
           const started_at = new Date().toISOString();
           const note = `Review started in session ${session}: ${decision.action.reason}`;
-          slots--;
+          slots.review--;
           state.launched[watch.id] = { session, target_sha: decision.action.target_sha, fingerprint: report.head_fingerprint, started_at, note };
           await writePrivate(statePath, state);
           report = { ...report, review: { event: 'started', session, target_sha: decision.action.target_sha, started_at }, note };
@@ -196,6 +261,22 @@ async function tick() {
           // Leave the head where it was, so the next tick tries again.
           const { head_sha, head_fingerprint, baseline_source, reviewed_sha, ...kept } = report;
           report = { ...kept, error: `Could not start the review: ${firstLine(error.stderr || error.message)}` };
+        }
+      }
+      if (decision.action?.type === 'address') {
+        try {
+          const session = await startAddress(config, watch, pull, decision.action);
+          const started_at = new Date().toISOString();
+          const note = `Addressing comments in session ${session}: ${decision.action.reason}`;
+          const { target_sha, through } = decision.action;
+          slots.address--;
+          state.launched[watch.id] = { session, target_sha, comments_through: through, started_at, note };
+          await writePrivate(statePath, state);
+          // The comments this pass took on stop counting as new only now that it has started.
+          report = { ...report, comments_through: through, comments_pending: 0, review: { event: 'started', session, target_sha, started_at }, note };
+        } catch (error) {
+          // The watermark has not moved, so the next tick tries again.
+          report = { ...report, error: `Could not start the session: ${firstLine(error.stderr || error.message)}` };
         }
       }
       if (report) {
@@ -212,18 +293,42 @@ async function tick() {
   }
 }
 
-/** What a fresh watch of this PR would do right now, without the site and without starting anything. */
+/**
+ * What a fresh watch of this PR would do right now, without the site and without starting anything.
+ * --kind address looks at it as an address watch; --since treats comments after that time as new;
+ * --requested acts as if Review now or Address now had been pressed.
+ */
 async function check(input) {
   const match = /^https:\/\/(?:www\.)?github\.com\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})\/pull\/([1-9][0-9]*)/.exec(input ?? '');
-  if (!match) throw new Error('Usage: node scripts/pr-watch.mjs check https://github.com/owner/repo/pull/123');
+  if (!match) throw new Error('Usage: node scripts/pr-watch.mjs check https://github.com/owner/repo/pull/123 [--kind address] [--since <time>] [--requested]');
   const [, owner, repo, number] = match;
-  const watch = { id: 'check', owner, repo, number: Number(number), url: `https://github.com/${owner}/${repo}/pull/${number}`, status: 'watching', review_state: 'idle',
-    head_sha: option('head') ?? null, head_fingerprint: null, reviewed_sha: option('reviewed') ?? null, review_requested_at: null, last_note: null };
+  const kind = option('kind') ?? 'review';
+  if (!['review', 'address'].includes(kind)) throw new Error('--kind is review or address');
+  const since = option('since');
+  if (since !== undefined && Number.isNaN(Date.parse(since))) throw new Error('--since needs a time, such as 2026-09-30T12:00:00Z');
+  const now = new Date();
+  const watch = { id: 'check', kind, owner, repo, number: Number(number), url: `https://github.com/${owner}/${repo}/pull/${number}`, status: 'watching', review_state: 'idle',
+    head_sha: option('head') ?? null, head_fingerprint: null, reviewed_sha: option('reviewed') ?? null, review_requested_at: flag('requested') ? now.toISOString() : null, last_note: null,
+    comments_through: since ? new Date(since).toISOString() : null, created_at: now.toISOString() };
   const config = await settings();
   const source = github(watch);
   const pull = await source.pull();
   const viewer = (await gh(['user'])).login;
-  const decision = await decide({ watch, pull, files: source.files, reviews: source.reviews, newCommits: source.newCommits, agents: claudeAgents, viewer, slot: true, now: new Date(), config });
+  if (kind === 'address') {
+    const decision = await decideAddress({ watch, pull, reviews: source.reviews, reviewComments: source.reviewComments, issueComments: source.issueComments,
+      agents: claudeAgents, result: async () => null, viewer, slot: true, now, config });
+    const items = feedback({ reviews: await source.reviews(), reviewComments: await source.reviewComments(), issueComments: await source.issueComments(), viewer });
+    console.log(JSON.stringify({ viewer, head: pull.head.sha, author: pull.user?.login, feedback: items, ...decision }, null, 2));
+    if (decision.action?.type === 'address') {
+      const paths = addressPaths(config, watch, decision.action.target_sha);
+      const clone = await findClone(config, pull.head.repo.full_name);
+      console.log('\nWould run, in', config.workspace + ':');
+      console.log(`claude --bg --model ${config.model} --effort ${config.effort} --permission-mode ${config.permission_mode} -n "PR comments · ${owner}/${repo}#${number} · ${short(pull.head.sha)}" <prompt>\n`);
+      console.log(addressPrompt({ watch, pull, reason: decision.action.reason, comments: decision.action.comments, skill: config.address_skill, resultPath: paths.result, worktree: paths.worktree, clone }));
+    }
+    return;
+  }
+  const decision = await decide({ watch, pull, files: source.files, reviews: source.reviews, newCommits: source.newCommits, agents: claudeAgents, viewer, slot: true, now, config });
   console.log(JSON.stringify({ viewer, head: pull.head.sha, author: pull.user?.login, ...decision }, null, 2));
   if (decision.action?.type === 'review') {
     console.log('\nWould run, in', config.workspace + ':');
