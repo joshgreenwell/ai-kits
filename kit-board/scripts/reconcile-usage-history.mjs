@@ -24,7 +24,7 @@ if (!['report', 'outbox'].includes(command ?? '')) usage();
 if (!process.env.DATABASE_URL) { console.error('DATABASE_URL is not set; run with `node --env-file=.env.local ...` or export it.'); process.exit(2); }
 
 const sql = postgres(process.env.DATABASE_URL, {
-  prepare: false, max: 1, idle_timeout: 5, connect_timeout: 10,
+  prepare: false, max: 1, idle_timeout: 5, connect_timeout: 25,
   ssl: process.env.DATABASE_CA_CERT ? { rejectUnauthorized: true, ca: process.env.DATABASE_CA_CERT.replace(/\\n/g, '\n') } : undefined,
 });
 const reconciliation = createUsageReconciliation(() => sql);

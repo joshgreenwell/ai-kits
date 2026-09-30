@@ -12,6 +12,7 @@ The September 13 audit found an active Windows v2 schedule plus two failing v1 s
 - Production: `https://personal-observatory-jg.vercel.app`
 - Vercel project: `the-mindful-pug/personal-hub`
 - Supabase project: discover the existing private project through the operator’s hosting configuration; project identifier omitted from public source.
+- Database move: production stays on Supabase until the Aurora cutover in [aurora-cutover.md](aurora-cutover.md) completes; follow that runbook for any change to the database target.
 - Data schema: unexposed `personal_hub`
 - Runtime: Next.js 16 App Router, React 19, Node 22, TypeScript, postgres.js, shadcn/Radix source components.
 

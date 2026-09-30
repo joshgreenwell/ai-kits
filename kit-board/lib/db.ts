@@ -8,8 +8,10 @@ import { readCache } from './read-cache';
 
 function createDatabase() {
   let client: ReturnType<typeof postgres> | undefined;
+  // Aurora Serverless v2 pauses after 15 idle minutes; the first connection waits while it resumes
+  // (17 s measured). The connect timeout outlasts that, and the job budget below includes it.
   const current = () => client ??= postgres(process.env.DATABASE_URL!, {
-    prepare: false, max: 1, idle_timeout: 5, connect_timeout: 3, max_lifetime: 60,
+    prepare: false, max: 1, idle_timeout: 5, connect_timeout: 25, max_lifetime: 60,
     ssl: { rejectUnauthorized: true, ca: process.env.DATABASE_CA_CERT?.replace(/\\n/g, '\n') },
   });
   // Usage reads build each section's ledger once (canonical hourly buckets, in-range request keys,
