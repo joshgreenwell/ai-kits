@@ -1,13 +1,13 @@
 # Move the database from Supabase to Aurora
 
-Started September 29, 2026. The site's Postgres moves from Supabase to an Aurora PostgreSQL Serverless v2 cluster in AWS. **Production still runs on Supabase until the cutover step below.** The app uses only Postgres there: no Supabase Storage, Auth or Data API. So the move covers the `personal_hub` schema and nothing else.
+Started September 29, 2026. The site's Postgres moves from Supabase to an Aurora PostgreSQL Serverless v2 cluster in AWS. **Production has run on Aurora since September 30.** The app uses only Postgres there: no Supabase Storage, Auth or Data API. So the move covers the `personal_hub` schema and nothing else.
 
 ## Status
 
 - **September 29: bootstrap and validation done.** Aurora has all 32 migrations and their history. `personal_hub_app` has its password, and its URL is in Doppler as `APP_DATABASE_URL`. The privilege checks matched the security model. A local run as `personal_hub_app` signed in and loaded every page and data endpoint without errors.
 - **Open question: sleep.** The cluster paused overnight, and the first connection then took 17 s. In the afternoon it stayed up through two idle windows of 18 and 22 minutes, with no user sessions open. Confirm the minimum capacity and the auto-pause delay with the administrator.
 - **September 29, evening: production dumped.** 39 tables and 737,774 rows, taken with `pg_dump` 17 at 02:41 UTC on September 30. The column, constraint, sequence and trigger signatures of the two databases matched line for line. The load ran as one transaction in 2 min 22 s. Afterwards every table's row count matched the dump, both as `ai_kits` and as `personal_hub_app`, the check was back `NOT VALID`, and the schema was analyzed. The dump files were then deleted.
-- **Then:** the cutover, after a fresh dump and reload.
+- **September 30, 03:48 UTC: cut over.** Production reads and writes Aurora. The window fell between the hourly uploads, which land at about :17 and :31. On Vercel, `DATABASE_URL` and `DATABASE_CA_CERT` changed at 03:41. A fresh dump started at 03:42:47 and loaded 739,214 rows by 03:46:52. Commit `e581704` (region `iad1`, 25 s connect timeout) deployed from `main` and was serving by 03:48:41. Afterwards, per-table checksums of Supabase matched Aurora's post-load state on 38 of 39 tables. The only difference was the PR-watch runner's `last_seen_at` heartbeat: Supabase held 03:44:00, and Aurora already held 03:49:00, written through the new deployment. So no row was lost. Supabase is untouched and stays available for rollback.
 
 ## The target
 
