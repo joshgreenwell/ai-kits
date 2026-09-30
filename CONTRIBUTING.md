@@ -8,6 +8,15 @@
 
 The directories never import from each other. Observatory runtime data and credentials stay outside Git. Fixtures, docs, and CI live inside each kit directory. Root-level files are limited to this file, the README, the license, CI workflow definitions under `.github/`, and `dist-workspace.toml` (the cargo-dist configuration for the companion's release workflow, which must run from the repository root).
 
+## Observatory kits
+
+The Observatory is one board fed by producer kits. [Observatory kits](kit-board/docs/kits.md) has the ownership table and the extraction status.
+
+* **The board, `kit-board/`,** owns sign-in, every ingestion API, storage and migrations, the views, and every wire contract it accepts. Contracts are authored in zod and generated to JSON Schema under `kit-board/lib/generated/contracts/` with `npm run contracts`.
+* **A producer kit, `kit-<area>/`,** holds what runs outside the board to feed it: a collector, a runner, or an agent-schedule template. It also holds a copy of its contract, synthetic fixtures, tests, a README, and a workflow named after the directory. Its branch prefix is its directory name.
+* **Kits copy contracts; they never import them.** Each file in `kit-<area>/contract/` must be byte-identical to the board file of the same name in `kit-board/lib/generated/contracts/`. `.github/workflows/contracts.yml` is the one job that reads both sides, and it fails when a copy drifts. To update a copy, regenerate it on the board, then copy the file.
+* **A contract change starts on the board.** Change the zod source, regenerate, copy into every kit that carries the file, and commit all of it together.
+
 ## Branches and pull requests
 
 * One branch per Linear story or small group of stories, named `<kit>/<story-ids>-<short-slug>` (for example `agentlint/tl-a1-a4-core-model`).

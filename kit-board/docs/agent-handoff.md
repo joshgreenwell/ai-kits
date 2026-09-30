@@ -16,7 +16,7 @@ The September 13 audit found an active Windows v2 schedule plus two failing v1 s
 - Data schema: unexposed `personal_hub`
 - Runtime: Next.js 16 App Router, React 19, Node 22, TypeScript, postgres.js, shadcn/Radix source components.
 
-This is an independent personal tool. It is not Luumen product code, even though it displays Luumen reports. Do not edit the surrounding `luumen-workspace` repository for application changes. Read `AGENTS.md`, then this file, `README.md`, `docs/architecture.md`, `docs/schedules.md`, and `docs/usage-collection.md` before changing behavior.
+This is an independent personal tool. It is not Luumen product code, even though it displays Luumen reports. Do not edit the surrounding `luumen-workspace` repository for application changes. Read `AGENTS.md`, then this file, `README.md`, `docs/architecture.md`, `docs/schedules.md`, and `docs/usage-collection.md` before changing behavior. [Observatory kits](kits.md) defines the board/kit boundary: what lives in `kit-board/`, what lives in the producer kits beside it, and who owns each contract.
 
 ## What the site does
 
