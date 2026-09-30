@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { kitById } from '@/lib/kits';
+import { endpointContracts, kitById } from '@/lib/kits';
 import { latestByKind } from '@/lib/db';
 import { kitReads } from '@/lib/kit-reads';
 import { requireSession } from '@/lib/auth';
@@ -10,7 +10,7 @@ import { Workspace } from '@/components/workspace';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SectionNav } from '@/components/kit/section-nav';
-import { ContractCard, DownloadTable, EndpointTable, ScheduleTable } from '@/components/kit-docs';
+import { ContractCard, DownloadTable, EndpointContractCard, EndpointTable, ScheduleTable } from '@/components/kit-docs';
 import { CollectorTable } from '@/components/collector-table';
 
 export default async function Kit({ params }: { params: Promise<{ kit: string }> }) {
@@ -24,9 +24,10 @@ export default async function Kit({ params }: { params: Promise<{ kit: string }>
     usage ? kitReads.collectorSources() : Promise.resolve([]),
   ]);
   const rows = bodies as unknown as StoredBody[];
+  const contracts = endpointContracts(kit);
 
   const jumps = [
-    ...(kit.reports.length ? [{ anchor: 'contracts', label: 'Contracts' }] : []),
+    ...(kit.reports.length || contracts.length ? [{ anchor: 'contracts', label: 'Contracts' }] : []),
     { anchor: 'endpoints', label: 'Endpoints' },
     ...(kit.schedules.length ? [{ anchor: 'schedules', label: 'Schedules' }] : []),
     ...(usage ? [{ anchor: 'collectors', label: 'Collectors' }] : []),
@@ -48,12 +49,13 @@ export default async function Kit({ params }: { params: Promise<{ kit: string }>
       />
       <SectionNav label={`${kit.title} kit sections`} jumps={jumps} />
 
-      {kit.reports.length ? (
+      {kit.reports.length || contracts.length ? (
         <section id="contracts" aria-labelledby="contracts-heading" className="grid scroll-mt-28 gap-4">
           <h2 id="contracts-heading" className="text-base font-semibold">Contracts</h2>
           {kit.reports.map(report => (
             <ContractCard key={report.kind} report={report} status={report.kind === 'usage' ? undefined : contractStatus(report.kind, rows)} />
           ))}
+          {contracts.map(contract => <EndpointContractCard key={contract.id} {...contract} />)}
         </section>
       ) : null}
 

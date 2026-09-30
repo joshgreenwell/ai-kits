@@ -6,8 +6,8 @@ import { prWatchStore } from '@/lib/pr-watch-store';
 export const maxDuration = 15;
 
 /**
- * The local runner's tick (scripts/pr-watch.mjs). Asking for work is the heartbeat, so the page can
- * tell a quiet queue from a runner that is not running.
+ * The local runner's tick (kit-pr-watch/pr-watch.mjs). Asking for work is the heartbeat, so the page can
+ * tell a quiet queue from a runner that is not running. The body matches pr-watch-work-v1.
  */
 export async function GET(request: Request) {
   try {

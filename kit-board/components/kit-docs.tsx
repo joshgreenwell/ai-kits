@@ -1,11 +1,11 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { z } from 'zod';
-import { kitById, reportContract, sectionPath, type Download, type Endpoint, type EndpointAuth, type KitReport, type Schedule } from '@/lib/kits';
+import { kitById, reportContract, sectionPath, type ContractId, type Download, type Endpoint, type EndpointAuth, type KitReport, type PublishedContract, type Schedule } from '@/lib/kits';
 import { sourceLinks } from '@/lib/kits/source';
 import { contractFields } from '@/lib/contract-fields';
 import type { ContractStatus } from '@/lib/contract-status';
-import { reportContractRegistry, type ReportContractId } from '@/lib/report-contracts';
+import { contractRegistry, type PublishedContractId } from '@/lib/contract-registry';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
@@ -78,7 +78,8 @@ export function EndpointTable({ id, title, description, endpoints }: { id?: stri
               </TableCell>
               <TableCell className="text-muted-foreground py-2 whitespace-normal">
                 {endpoint.summary}
-                {endpoint.contract ? <span className="block font-mono text-[11px]">{endpoint.contract}</span> : null}
+                {endpoint.contract ? <span className="block font-mono text-[11px]">body {endpoint.contract}</span> : null}
+                {endpoint.returns ? <span className="block font-mono text-[11px]">answers {endpoint.returns}</span> : null}
               </TableCell>
             </TableRow>
           ))}
@@ -182,6 +183,67 @@ export function ContractHealth({ status }: { status: ContractStatus | undefined 
 
 const contractPath = (file: string) => `kit-board/lib/generated/contracts/${file}`;
 
+/** The published contract with this id, for a contract `npm run contracts` writes. */
+export const publishedContract = (id: ContractId): PublishedContract => contractRegistry[id as PublishedContractId];
+
+/**
+ * What every published contract shows: its files, its fields, and its example. `direction` says who
+ * writes the body, which decides what an unknown key means to the other side.
+ */
+function ContractDetails({ contract, direction }: { contract: PublishedContract; direction: 'request' | 'response' }) {
+  const schema = z.toJSONSchema(contract.schema, { io: 'input' }) as Parameters<typeof contractFields>[0];
+  const fields = contractFields(schema);
+  const example = JSON.stringify(contract.example, null, 2);
+  const keys = schema.additionalProperties === false
+    ? 'The board refuses any key this list does not name.'
+    : direction === 'request'
+      ? 'Objects accept keys the board does not read yet, so a producer can add a field before the board draws it.'
+      : 'The board may add a key before this list names it, so a reader should ignore keys it does not know.';
+  return (
+    <>
+      <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+        <SourceLinks path={contractPath(`${contract.id}.schema.json`)} label="JSON Schema" />
+        <SourceLinks path={contractPath(`${contract.id}.example.json`)} label="Example" />
+        <SourceLinks path={contractPath('validate.mjs')} label="validate.mjs" />
+      </div>
+      <Disclosure title={`Fields (${fields.length})`}>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className={head}>Field</TableHead>
+                <TableHead className={head}>Type</TableHead>
+                <TableHead className={head}>Rules</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {/* A field shared by two shapes of one object is listed under each, so the path alone is not a key. */}
+              {fields.map((field, index) => (
+                <TableRow key={`${index} ${field.path}`} className={row}>
+                  <TableCell className="py-1.5 font-mono text-xs" style={{ paddingLeft: `${0.5 + field.depth}rem` }}>
+                    {field.path}{field.required ? <span className="text-primary" title="Required"> *</span> : null}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground py-1.5 font-mono text-xs">{field.type}</TableCell>
+                  <TableCell className="text-muted-foreground py-1.5 text-xs whitespace-normal">
+                    {[...field.rules, ...(field.description ? [field.description] : [])].join('; ')}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+        <p className="text-muted-foreground mt-2 text-xs">* required. {keys}</p>
+      </Disclosure>
+      <Disclosure title="Example body">
+        <div className="grid gap-2">
+          <CopyButton value={example} label="Copy the example" copiedLabel="Copied the example" size="xs" className="justify-self-start" />
+          <TerminalBlock caption={`${contract.id}.example.json`}>{example}</TerminalBlock>
+        </div>
+      </Disclosure>
+    </>
+  );
+}
+
 /** One report kind's contract: what it checks, how recent reports compare, and how to check your own. */
 export function ContractCard({ report, status }: { report: KitReport; status?: ContractStatus }) {
   if (report.kind === 'usage') {
@@ -198,9 +260,7 @@ export function ContractCard({ report, status }: { report: KitReport; status?: C
       </Card>
     );
   }
-  const contract = reportContractRegistry[report.contract as ReportContractId];
-  const schema = z.toJSONSchema(contract.schema, { io: 'input' }) as Parameters<typeof contractFields>[0];
-  const fields = contractFields(schema);
+  const contract = publishedContract(report.contract);
   const example = JSON.stringify(contract.example, null, 2);
   const endpoint = `/api/v1/reports/${report.kind}`;
   const local = `node validate.mjs ${contract.id}.schema.json report.json`;
@@ -218,44 +278,7 @@ export function ContractCard({ report, status }: { report: KitReport; status?: C
             : `POST ${endpoint} stores any report whose envelope is valid and returns this contract's result in its receipt. It will refuse a mismatch once the contract is enforced.`}
         </p>
         <ContractHealth status={status} />
-        <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-          <SourceLinks path={contractPath(`${contract.id}.schema.json`)} label="JSON Schema" />
-          <SourceLinks path={contractPath(`${contract.id}.example.json`)} label="Example" />
-          <SourceLinks path={contractPath('validate.mjs')} label="validate.mjs" />
-        </div>
-        <Disclosure title={`Fields (${fields.length})`}>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className={head}>Field</TableHead>
-                  <TableHead className={head}>Type</TableHead>
-                  <TableHead className={head}>Rules</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {fields.map(field => (
-                  <TableRow key={field.path} className={row}>
-                    <TableCell className="py-1.5 font-mono text-xs" style={{ paddingLeft: `${0.5 + field.depth}rem` }}>
-                      {field.path}{field.required ? <span className="text-primary" title="Required"> *</span> : null}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground py-1.5 font-mono text-xs">{field.type}</TableCell>
-                    <TableCell className="text-muted-foreground py-1.5 text-xs whitespace-normal">
-                      {[...field.rules, ...(field.description ? [field.description] : [])].join('; ')}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-          <p className="text-muted-foreground mt-2 text-xs">* required. Objects accept keys the board does not read yet, so a producer can add a field before the board draws it.</p>
-        </Disclosure>
-        <Disclosure title="Example body">
-          <div className="grid gap-2">
-            <CopyButton value={example} label="Copy the example" copiedLabel="Copied the example" size="xs" className="justify-self-start" />
-            <TerminalBlock caption={`${contract.id}.example.json`}>{example}</TerminalBlock>
-          </div>
-        </Disclosure>
+        <ContractDetails contract={contract} direction="request" />
         <Disclosure title="Check a report">
           <div className="grid gap-4">
             <ContractValidatorForm kind={report.kind} example={example} />
@@ -263,6 +286,33 @@ export function ContractCard({ report, status }: { report: KitReport; status?: C
             <TerminalBlock caption="Against the board, with the producer's key. Stores nothing." command={remote}>{remote}</TerminalBlock>
           </div>
         </Disclosure>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * A contract an endpoint names outside the report kinds: a body the board refuses when it does not
+ * match, or the shape of what the board answers.
+ */
+export function EndpointContractCard({ id, endpoint, direction }: { id: ContractId; endpoint: Endpoint; direction: 'request' | 'response' }) {
+  const contract = publishedContract(id);
+  const file = direction === 'request' ? 'body.json' : 'response.json';
+  const local = `node validate.mjs ${contract.id}.schema.json ${file}`;
+  return (
+    <Card className="gap-4 py-4">
+      <CardHeader className="px-4">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-base">{contract.title} <Badge variant="soft">{direction === 'request' ? 'Request body' : 'Response body'}</Badge></CardTitle>
+        <CardDescription><span className="font-mono text-[11px]">{contract.id}</span> · {contract.summary}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4 px-4">
+        <p className="text-muted-foreground text-sm">
+          {direction === 'request'
+            ? `The body of ${endpoint.method} ${endpoint.path}. The board answers 400 and changes nothing when it does not match.`
+            : `What ${endpoint.method} ${endpoint.path} answers.`}
+        </p>
+        <ContractDetails contract={contract} direction={direction} />
+        <TerminalBlock caption="Offline, with the downloaded schema. Exits 1 on a mismatch." command={local}>{local}</TerminalBlock>
       </CardContent>
     </Card>
   );

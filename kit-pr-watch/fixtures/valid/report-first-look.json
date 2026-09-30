@@ -1,0 +1,10 @@
+{
+  "checked_at": "2026-09-29T14:05:00.000Z",
+  "title": "Add CSV export",
+  "author_login": "example-author",
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "reviewed_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "baseline_source": "ai_review",
+  "note": "Watching from the AI review of aaaaaaa."
+}

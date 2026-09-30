@@ -1,0 +1,33 @@
+{
+  "declaration": {
+    "origin": "synthetic",
+    "ref": "hand-written for kit-pr-watch against pr-watch-report-v1 and pr-watch-work-v1; no field is copied from a stored watch, a runner log or a real pull request",
+    "completeness": "complete",
+    "excerpt_or_raw": "raw"
+  },
+  "consumers": [
+    "kit-pr-watch npm test (contract/validate.mjs)"
+  ],
+  "valid": {
+    "report-unchanged.json": { "contract": "pr-watch-report-v1", "proves": "a look that finds nothing new reports the head it saw and clears the last error with null" },
+    "report-first-look.json": { "contract": "pr-watch-report-v1", "proves": "a first look records the reviewed commit and where that baseline came from" },
+    "report-review-started.json": { "contract": "pr-watch-report-v1", "proves": "starting a review names the session and the commit it reviews" },
+    "report-review-posted.json": { "contract": "pr-watch-report-v1", "proves": "a posted review links to the review on github.com" },
+    "report-review-failed.json": { "contract": "pr-watch-report-v1", "proves": "a failed session needs only its finish time, with the reason in error" },
+    "report-addressed.json": { "contract": "pr-watch-report-v1", "proves": "an address pass reports its outcome, a multi-line summary, how far it read the comments, and no link when it pushed nothing" },
+    "report-merged.json": { "contract": "pr-watch-report-v1", "proves": "a merged pull request ends its watch" },
+    "work-list.json": { "contract": "pr-watch-work-v1", "proves": "a failed review watch with Review now pressed, beside an address watch with comments waiting" },
+    "work-empty.json": { "contract": "pr-watch-work-v1", "proves": "an empty queue is an empty list" },
+    "work-newer-board.json": { "contract": "pr-watch-work-v1", "proves": "a board that answers keys this runner does not read yet still matches" }
+  },
+  "invalid": {
+    "report-missing-checked-at.json": { "contract": "pr-watch-report-v1", "path": "checked_at", "reason": "every report says when the runner looked" },
+    "report-unknown-key.json": { "contract": "pr-watch-report-v1", "path": "labels", "reason": "a report names only the fields the board stores" },
+    "report-short-head-sha.json": { "contract": "pr-watch-report-v1", "path": "head_sha", "reason": "the head is the full 40-character commit" },
+    "report-posted-off-github.json": { "contract": "pr-watch-report-v1", "path": "review", "reason": "a posted review links to github.com, so the queue never links elsewhere" },
+    "report-unknown-outcome.json": { "contract": "pr-watch-report-v1", "path": "review", "reason": "an address pass pushed, changed nothing, or needs the owner" },
+    "report-unknown-status.json": { "contract": "pr-watch-report-v1", "path": "status", "reason": "a watch is watching, stopped, closed or merged" },
+    "work-unknown-status.json": { "contract": "pr-watch-work-v1", "path": "watches.0.status", "reason": "a watch is watching, stopped, closed or merged" },
+    "work-missing-kind.json": { "contract": "pr-watch-work-v1", "path": "watches.0.kind", "reason": "the runner needs to know whether to review or to address comments" }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "checked_at": "2026-09-29T14:05:00.000Z",
+  "review": {
+    "event": "failed",
+    "finished_at": "2026-09-29T14:05:00.000Z"
+  },
+  "error": "The session ended without posting a review; open it with claude attach example-session."
+}

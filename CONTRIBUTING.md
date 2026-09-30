@@ -3,7 +3,7 @@
 ## Layout
 
 * `kit-board/` — Personal Observatory, Node 22 and Python 3.10+. See its [startup and verification guide](kit-board/docs/startup-and-recovery.md).
-* `kit-daily-tasks/`, `kit-readings/` — Observatory producer kits, Node 22 with no dependencies. Run `npm test` in each.
+* `kit-daily-tasks/`, `kit-readings/`, `kit-pr-watch/` — Observatory producer kits, Node 22 with no dependencies. Run `npm test` in each.
 * `agentlint/` — Kit 1, Python. Run `cd agentlint && uv run pytest`.
 * `agent-surface/` — Kit 2, TypeScript. Run `cd agent-surface && npm ci && npm test`.
 

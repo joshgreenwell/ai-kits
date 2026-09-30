@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { z } from 'zod';
 import { kinds } from '../lib/contracts';
-import { endpoints, kits, reportContract, reportContracts, sectionPath, sections } from '../lib/kits';
+import { endpointContracts, endpoints, kits, reportContract, reportContracts, sectionPath, sections } from '../lib/kits';
+import { contractRegistry, isPublishedContract } from '../lib/contract-registry';
 import { checkReportContract, reportContractRegistry } from '../lib/report-contracts';
 import { assertSupported, validate } from '../lib/contract-validator.mjs';
 
@@ -75,6 +76,14 @@ test('producer endpoints carry a declared scope, and report endpoints name their
   }
 });
 
+test('every contract an endpoint names is published, and only the PR watch routes name one outside the reports', () => {
+  for (const endpoint of endpoints) for (const id of [endpoint.contract, endpoint.returns]) if (id) assert.ok(id === 'usage-v2' || isPublishedContract(id), `${endpoint.path}: ${id}`);
+  assert.deepEqual(kits.flatMap(kit => endpointContracts(kit).map(({ id, endpoint, direction }) => `${kit.id} ${direction} ${endpoint.method} ${endpoint.path} ${id}`)), [
+    'pr-watch response GET /api/v1/pr-watches pr-watch-work-v1',
+    'pr-watch request POST /api/v1/pr-watches/:id pr-watch-report-v1',
+  ]);
+});
+
 test('every download a kit offers exists in the repository', () => {
   for (const kit of kits) {
     assert.ok(existsSync(join('..', kit.directory)), `${kit.id} directory ${kit.directory}`);
@@ -86,10 +95,12 @@ test('an extracted kit carries what CONTRIBUTING.md asks of a kit, with a copy o
   for (const kit of kits.filter(kit => kit.extracted)) {
     const root = join('..', kit.directory);
     for (const file of ['README.md', 'package.json', 'fixtures/MANIFEST.json', `../.github/workflows/${kit.directory}.yml`]) assert.ok(existsSync(join(root, file)), `${kit.id}: ${file}`);
-    for (const report of kit.reports as readonly { contract?: string }[]) if (report.contract) {
+    // usage-v2 is the companion's own schema, copied into its package rather than beside a validate.mjs.
+    const published = [...kit.reports.map(report => report.contract), ...endpointContracts(kit).map(entry => entry.id)].filter(isPublishedContract);
+    for (const id of published) {
       for (const suffix of ['schema.json', 'example.json']) {
-        const copy = join(root, 'contract', `${report.contract}.${suffix}`);
-        assert.equal(readFileSync(copy, 'utf8'), readFileSync(`lib/generated/contracts/${report.contract}.${suffix}`, 'utf8'), `${copy} is a copy: run npm run contracts and copy it`);
+        const copy = join(root, 'contract', `${id}.${suffix}`);
+        assert.equal(readFileSync(copy, 'utf8'), readFileSync(`lib/generated/contracts/${id}.${suffix}`, 'utf8'), `${copy} is a copy: run npm run contracts and copy it`);
       }
     }
     assert.equal(readFileSync(join(root, 'contract/validate.mjs'), 'utf8'), readFileSync('lib/contract-validator.mjs', 'utf8'), `${kit.id}: contract/validate.mjs is a copy`);
@@ -98,7 +109,7 @@ test('an extracted kit carries what CONTRIBUTING.md asks of a kit, with a copy o
 
 test('the generated contracts are current, and each example matches its own schema', () => {
   const directory = 'lib/generated/contracts';
-  for (const contract of Object.values(reportContractRegistry)) {
+  for (const contract of Object.values(contractRegistry)) {
     const schema = JSON.parse(readFileSync(join(directory, `${contract.id}.schema.json`), 'utf8'));
     const { $schema: _, ...generated } = z.toJSONSchema(contract.schema, { io: 'input' }) as Record<string, unknown>;
     const { $schema: __, $id: ___, title: ____, description: _____, ...written } = schema;

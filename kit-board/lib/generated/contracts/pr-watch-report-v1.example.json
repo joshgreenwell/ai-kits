@@ -1,0 +1,15 @@
+{
+  "checked_at": "2026-09-29T14:05:00.000Z",
+  "title": "Add the deployment checklist",
+  "author_login": "example-author",
+  "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "head_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "review": {
+    "event": "started",
+    "session": "example-session",
+    "target_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "started_at": "2026-09-29T14:05:00.000Z"
+  },
+  "note": "Review started in session example-session: 1 new commit that changes the diff was pushed to example-author's PR (head bbbbbbb).",
+  "error": null
+}

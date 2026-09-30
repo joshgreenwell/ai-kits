@@ -1,0 +1,10 @@
+{
+  "checked_at": "2026-09-29T14:05:00.000Z",
+  "reviewed_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "review": {
+    "event": "posted",
+    "finished_at": "2026-09-29T14:05:00.000Z",
+    "url": "https://github.com/example-owner/example-app/pull/12#pullrequestreview-2"
+  },
+  "note": "Posted the follow-up review of bbbbbbb."
+}

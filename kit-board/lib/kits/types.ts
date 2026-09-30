@@ -1,7 +1,11 @@
+import type { z } from 'zod';
 import type { ReportKind } from '../contracts';
 
-/** Contracts the board publishes. `report-contracts.ts` maps each one to its zod source. */
-export type ContractId = 'report-envelope-v1' | 'tasks-v1' | 'standup-v1' | 'readings-v1' | 'audit-v1' | 'usage-v2';
+/** Contracts the board publishes. `contract-registry.ts` maps each one to its zod source; usage-v2 has its own generator. */
+export type ContractId = 'report-envelope-v1' | 'tasks-v1' | 'standup-v1' | 'readings-v1' | 'audit-v1' | 'usage-v2' | 'pr-watch-work-v1' | 'pr-watch-report-v1';
+
+/** A contract `npm run contracts` publishes: its zod source, and a synthetic example that passes it. */
+export type PublishedContract = { id: ContractId; title: string; summary: string; schema: z.ZodType; example: unknown };
 
 /**
  * Who may call an endpoint. Everything except `session` is admitted by `proxy.ts` without a cookie and
@@ -24,7 +28,10 @@ export type Endpoint = {
   path: string;
   auth: EndpointAuth;
   scope?: string;
+  /** The contract the request body must match. */
   contract?: ContractId;
+  /** The contract the response body matches. */
+  returns?: ContractId;
   summary: string;
 };
 

@@ -14,7 +14,7 @@ export type ContractField = { path: string; depth: number; type: string; require
 
 const typeOf = (schema: Schema): string => {
   const options = schema.anyOf ?? schema.oneOf;
-  if (options) return options.map(typeOf).join(' or ');
+  if (options) return [...new Set(options.map(typeOf))].join(' or ');
   if (schema.type === 'array') return schema.items ? `${typeOf(schema.items)} list` : 'list';
   return [schema.type ?? 'any'].flat().join(' or ');
 };
@@ -37,16 +37,34 @@ function rulesOf(schema: Schema): string[] {
   return rules.filter((rule): rule is string => Boolean(rule)).map(rule => rule.trim());
 }
 
+/** A value that may also be null reads as its one other shape: `anyOf: [X, { type: 'null' }]`. */
+const unwrap = (schema: Schema): Schema => {
+  const options = (schema.anyOf ?? schema.oneOf)?.filter(option => option.type !== 'null');
+  return options?.length === 1 ? { ...options[0], description: schema.description ?? options[0].description } : schema;
+};
+
+/** The property whose constant tells one object shape from another, as `event` does in a discriminated union. */
+const discriminator = (option: Schema) => Object.entries(option.properties ?? {}).find(([, child]) => Object.hasOwn(child, 'const'));
+
 /** Every field in a contract, parents before their children, in the schema's own order. */
 export function contractFields(root: Schema): ContractField[] {
   const rows: ContractField[] = [];
   const walk = (schema: Schema, prefix: string, depth: number) => {
     const target = schema.type === 'array' && schema.items ? schema.items : schema;
     const base = schema.type === 'array' ? `${prefix}[]` : prefix;
-    for (const [name, child] of Object.entries(target.properties ?? {})) {
+    for (const [name, raw] of Object.entries(target.properties ?? {})) {
       const path = base ? `${base}.${name}` : name;
-      rows.push({ path, depth, type: typeOf(child), required: target.required?.includes(name) ?? false, rules: rulesOf(child), description: child.description });
+      const child = unwrap(raw);
+      rows.push({ path, depth, type: typeOf(raw), required: target.required?.includes(name) ?? false, rules: rulesOf(child), description: child.description });
       walk(child, path, depth + 1);
+      // One row per shape an object can take, named by its discriminator, with that shape's fields under it.
+      const variants = (child.anyOf ?? child.oneOf ?? []).filter(option => option.type === 'object');
+      for (const variant of variants) {
+        const [key, tag] = discriminator(variant) ?? [];
+        const label = key ? `${key} ${JSON.stringify(tag?.const)}` : `shape ${variants.indexOf(variant) + 1}`;
+        rows.push({ path: `${path} (${label})`, depth: depth + 1, type: 'object', required: false, rules: rulesOf(variant), description: variant.description });
+        walk(variant, path, depth + 2);
+      }
     }
     const extra = target.additionalProperties;
     // `{}` only says the object is open; a schema here describes every key the object does not name.

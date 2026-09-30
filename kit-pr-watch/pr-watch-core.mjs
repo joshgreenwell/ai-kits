@@ -1,6 +1,6 @@
 // The PR watch runner's decisions, kept free of I/O so tests can drive them with fakes
-// (tests/pr-watch.test.ts). scripts/pr-watch.mjs wires in GitHub (gh), Claude (claude --bg), and the
-// site. docs/pr-watch.md explains the rules in prose. `decide` handles review watches (re-review
+// (test/review.test.mjs, test/address.test.mjs). pr-watch.mjs wires in GitHub (gh), Claude (claude --bg),
+// and the site. kit-board/docs/pr-watch.md explains the rules in prose. `decide` handles review watches (re-review
 // someone else's PR when they push); `decideAddress` handles address watches (work through new review
 // comments on the owner's own PR).
 import { createHash } from 'node:crypto';

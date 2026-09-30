@@ -1,0 +1,13 @@
+{
+  "checked_at": "2026-09-29T14:05:00.000Z",
+  "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "head_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "review": {
+    "event": "started",
+    "session": "example-session",
+    "target_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "started_at": "2026-09-29T14:05:00.000Z"
+  },
+  "note": "Review started in session example-session: 1 new commit since aaaaaaa.",
+  "error": null
+}

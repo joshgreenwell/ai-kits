@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { boardEndpoints, kits, schedules } from '@/lib/kits';
+import { boardEndpoints, endpointContracts, kits, schedules } from '@/lib/kits';
 import { latestByKind } from '@/lib/db';
 import { kitReads } from '@/lib/kit-reads';
 import { requireSession } from '@/lib/auth';
@@ -28,6 +28,7 @@ export default async function Kits() {
           const statuses = kit.reports.flatMap(report => report.kind === 'usage' ? [] : [contractStatus(report.kind, rows)]);
           const checked = statuses.reduce((sum, status) => sum + status.checked, 0);
           const matched = statuses.reduce((sum, status) => sum + status.matched, 0);
+          const bodies = endpointContracts(kit);
           return (
             <KitCard
               key={kit.id}
@@ -40,15 +41,18 @@ export default async function Kits() {
                 { label: 'Endpoints', value: kit.endpoints.length },
                 { label: 'Downloads', value: kit.downloads.length },
               ]}
-              status={kit.reports.length ? (
+              status={kit.reports.length || bodies.length ? (
                 <div className="flex flex-wrap items-center gap-1.5">
                   {kit.reports.map(report => (
                     <span key={report.kind} className="inline-flex items-center gap-1.5 font-mono text-[11px]">
                       {report.contract} <EnforcementBadge enforcement={report.enforcement} />
                     </span>
                   ))}
+                  {bodies.map(body => (
+                    <span key={body.id} className="font-mono text-[11px]">{body.id}</span>
+                  ))}
                 </div>
-              ) : <span className="text-muted-foreground text-xs">No report contract yet</span>}
+              ) : <span className="text-muted-foreground text-xs">No contract yet</span>}
               actions={
                 <div className="flex flex-wrap gap-2">
                   <Button asChild size="sm" variant="outline"><Link href={kit.page.path}>Open {kit.page.path}</Link></Button>

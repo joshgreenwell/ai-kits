@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { checkEnvelope, reportEnvelope, reportSchema, type ReportInput, type ReportKind } from './contracts';
-import { reportContract, type ContractId, type Enforcement } from './kits';
+import { reportContract, type ContractId, type Enforcement, type PublishedContract } from './kits';
 
 /*
  * Each report kind's payload, as the board reads it. The envelope is shared (`contracts.ts`); these
@@ -104,8 +104,6 @@ const envelopeExample = {
   schema_version: 1, period_key: '2026-09-29', subject_key: 'example-owner', title: 'Daily briefing', produced_at: produced, status: 'complete',
 } as const;
 
-type ReportContract = { id: ContractId; title: string; summary: string; schema: z.ZodType; example: unknown };
-
 export const reportContractRegistry = {
   'report-envelope-v1': {
     id: 'report-envelope-v1',
@@ -176,7 +174,7 @@ export const reportContractRegistry = {
       payload: { markdown: 'Summary of the audit.' }, html: '<!doctype html><title>Example audit</title><h1>Example audit</h1>',
     },
   },
-} as const satisfies Partial<Record<ContractId, ReportContract>>;
+} as const satisfies Partial<Record<ContractId, PublishedContract>>;
 
 export type ReportContractId = keyof typeof reportContractRegistry;
 

@@ -11,7 +11,7 @@ Both tabs share one table (`personal_hub.pr_watches`, told apart by `kind`), one
 Vercel cannot start a Claude session on the owner's machine, and the review needs the owner's `gh` login, the skill, and the Luumen checkouts. So the site only holds the queue, and a runner on the Mac does the work:
 
 - **The site** (`/reviews` and `/reviews/comments`, `personal_hub.pr_watches`) stores which PRs are watched, what the runner last saw, and the state of each session. Each tab has three actions: paste a URL and **Watch**, **Review now** (or **Address now**), and **Stop**.
-- **The runner** (`scripts/pr-watch.mjs`, run by launchd every 5 minutes) pulls both queues over a producer key and reads each PR through `gh`. When a rule below says a session is due, it starts `claude --bg`. The runner itself is plain code and spends no tokens.
+- **The runner** (`kit-pr-watch/pr-watch.mjs`, run by launchd every 5 minutes) pulls both queues over a producer key and reads each PR through `gh`. When a rule below says a session is due, it starts `claude --bg`. The runner itself is plain code and spends no tokens.
 
 A model that polled every five minutes would spend about 288 Opus turns a day on each PR just to learn that nothing changed. Here a model runs only when there is something to review.
 
@@ -25,7 +25,7 @@ runner  ──claude───▶ claude --bg --model claude-opus-5-5 --effort me
 
 ## What counts as an update
 
-`decide` in `scripts/pr-watch-core.mjs` makes every decision. It never touches the network, and `tests/pr-watch.test.ts` covers each branch.
+`decide` in `kit-pr-watch/pr-watch-core.mjs` makes every decision. It never touches the network, and `kit-pr-watch/test/review.test.mjs` covers each branch.
 
 1. **The baseline (first look).** The runner looks for the newest AI review that the `gh` login posted on the PR. A review counts as an AI review when its body opens with "AI review". That covers the skill's current header, `AI review by <model> of \`<sha>\`.`, and the older bold `**AI review — <model>.**` header. The reviewed SHA is the one the body names; if the body names none, it is the review's `commit_id` (the head when the review was submitted).
    - If there is no AI review, the watch starts from the current head. It does not review the PR until you press **Review now**.
@@ -47,7 +47,7 @@ The prompt (`reviewPrompt`) tells the session:
 
 ## Address comments
 
-`decideAddress` in `scripts/pr-watch-core.mjs` makes every decision for this tab. Like `decide`, it never touches the network, and `tests/pr-watch-address.test.ts` covers each branch.
+`decideAddress` in `kit-pr-watch/pr-watch-core.mjs` makes every decision for this tab. Like `decide`, it never touches the network, and `kit-pr-watch/test/address.test.mjs` covers each branch.
 
 1. **Only your own PRs.** The session pushes to the PR's branch, so an address watch runs only when the PR author is the `gh` login. Otherwise the first tick stops the watch and suggests Re-review. A PR whose head repository was deleted shows a note and starts nothing. Merged and closed PRs end their watch, as on the other tab.
 2. **What counts as feedback** (`feedback`). Your own comments never count. Items are:
@@ -97,17 +97,17 @@ These steps need the owner's credentials and production access. Run them yoursel
    ```bash
    doppler run --project ai-kits --config dev -- sh -c 'supabase db push --db-url "$DATABASE_URL"'
    ```
-2. Create the runner's key:
+2. Create the runner's key from `kit-pr-watch/`:
    ```bash
-   node scripts/pr-watch.mjs keygen
+   node pr-watch.mjs keygen
    ```
    It saves the key to `~/.config/personal-hub/publish.json` under `producers["pr-watch"]` and prints only a hash entry. Merge that entry into `INGEST_KEYS_JSON` on Vercel.
 3. Deploy the site.
-4. Install the LaunchAgent:
+4. Install the LaunchAgent from `kit-pr-watch/`:
    ```bash
-   node scripts/pr-watch.mjs install
+   node pr-watch.mjs install
    ```
-   It checks the key, `gh auth status`, `claude --version` and the workspace first, then loads `com.personal-observatory.pr-watch`. The agent runs this checkout's script in place, so moving or deleting the checkout stops it. Run `install` again after you move it. An update to the script needs no reinstall; the next tick runs the new code.
+   It checks the key, `gh auth status`, `claude --version` and the workspace first, then loads `com.personal-observatory.pr-watch`. The agent runs the kit's `pr-watch.mjs` in place, so moving or deleting the checkout stops it. Run `install` again after you move it. An update to the script needs no reinstall; the next tick runs the new code.
 5. Optional settings go in `~/.config/personal-hub/pr-watch.json`. These are the defaults:
    ```json
    { "model": "claude-opus-5-5", "effort": "medium", "permission_mode": "auto", "skill": "luumen-ai-pr-review",
@@ -118,13 +118,15 @@ These steps need the owner's credentials and production access. Run them yoursel
 
 ## Operating
 
+Run these from `kit-pr-watch/`.
+
 | Command | What it does |
 | --- | --- |
-| `node scripts/pr-watch.mjs check <PR url>` | What a new watch of that PR would do now. It is read-only and needs no site or key. If a review is due, it prints the exact `claude` command and prompt. |
-| `node scripts/pr-watch.mjs check <PR url> --kind address [--since <time>] [--requested]` | The same for an address watch. It lists every comment that counts as feedback, then the decision. `--since` sets the watermark (by default, now, so nothing is new), and `--requested` acts as if you pressed Address now. If a pass is due, it prints the clone it would use, the command, and the prompt. |
-| `node scripts/pr-watch.mjs tick --dry-run` | One pass over the real queue. It prints every decision and reports and starts nothing. |
-| `node scripts/pr-watch.mjs status` | Whether launchd has the agent loaded, its last exit code, and the last 15 log lines. |
-| `node scripts/pr-watch.mjs uninstall` | Removes the LaunchAgent. The queue on the site stays as it is. |
+| `node pr-watch.mjs check <PR url>` | What a new watch of that PR would do now. It is read-only and needs no site or key. If a review is due, it prints the exact `claude` command and prompt. |
+| `node pr-watch.mjs check <PR url> --kind address [--since <time>] [--requested]` | The same for an address watch. It lists every comment that counts as feedback, then the decision. `--since` sets the watermark (by default, now, so nothing is new), and `--requested` acts as if you pressed Address now. If a pass is due, it prints the clone it would use, the command, and the prompt. |
+| `node pr-watch.mjs tick --dry-run` | One pass over the real queue. It prints every decision and reports and starts nothing. |
+| `node pr-watch.mjs status` | Whether launchd has the agent loaded, its last exit code, and the last 15 log lines. |
+| `node pr-watch.mjs uninstall` | Removes the LaunchAgent. The queue on the site stays as it is. |
 
 Logs go to `~/.config/personal-hub/logs/pr-watch.log`, which rotates at 5 MB. The page shows when the runner last asked for work. After 15 minutes of silence it shows "runner not running" with the install command.
 

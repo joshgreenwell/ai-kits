@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -38,6 +39,12 @@ maybe('the PR watch queue: add, report, review, stop, and end as the application
     // The runner's tick: a heartbeat, then the live watches.
     const work = await store.runnerWork('pr-watch', { machine_label: 'Josh’s Mac', version: '1.0.0' });
     assert.ok(work.some(watch => watch.id === id) && work.some(watch => watch.id === other));
+    // The route answers { watches: work } as JSON, which must match pr-watch-work-v1, the shape the runner reads.
+    const { runnerWork } = await import('../lib/pr-watch-contract');
+    const { validate } = await import('../lib/contract-validator.mjs');
+    const answered = JSON.parse(JSON.stringify({ watches: work }));
+    runnerWork.parse(answered);
+    assert.deepEqual(validate(answered, JSON.parse(readFileSync('lib/generated/contracts/pr-watch-work-v1.schema.json', 'utf8'))), { valid: true, issues: [] });
     const firstLook = await store.report(id, { checked_at: at(0), title: 'Add export', author_login: 'dana', head_sha: A, head_fingerprint: 'f'.repeat(64),
       baseline_source: 'watch_start', note: 'Watching from aaaaaaa.' });
     assert.deepEqual([firstLook.title, firstLook.author_login, firstLook.head_sha, firstLook.baseline_source, firstLook.last_note, firstLook.last_checked_at],

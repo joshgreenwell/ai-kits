@@ -1,0 +1,35 @@
+{
+  "watches": [
+    {
+      "id": "00000000-0000-4000-8000-000000000012",
+      "owner": "example-owner",
+      "repo": "example-app",
+      "number": 12,
+      "url": "https://github.com/example-owner/example-app/pull/12",
+      "status": "watching",
+      "title": "Add the deployment checklist",
+      "author_login": "example-author",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "reviewed_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "baseline_source": "ai_review",
+      "review_state": "idle",
+      "review_session": null,
+      "review_target_sha": null,
+      "review_started_at": null,
+      "review_finished_at": null,
+      "review_count": 1,
+      "last_review_url": "https://github.com/example-owner/example-app/pull/12#pullrequestreview-1",
+      "review_requested_at": null,
+      "last_checked_at": "2026-09-29T14:00:00.000Z",
+      "last_note": "Watching from the AI review of aaaaaaa.",
+      "last_error": null,
+      "comments_through": null,
+      "comments_pending": 0,
+      "last_outcome": null,
+      "last_summary": null,
+      "created_at": "2026-09-28T15:30:00.000Z",
+      "stopped_at": null
+    }
+  ]
+}

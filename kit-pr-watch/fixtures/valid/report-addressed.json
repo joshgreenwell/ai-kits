@@ -1,0 +1,13 @@
+{
+  "checked_at": "2026-09-29T14:05:00.000Z",
+  "comments_through": "2026-09-29T14:05:00.000Z",
+  "comments_pending": 0,
+  "review": {
+    "event": "addressed",
+    "finished_at": "2026-09-29T14:05:00.000Z",
+    "outcome": "needs_you",
+    "summary": "Renamed the export test.\n\nQuestions for you:\n- Keep the TSV fallback?",
+    "url": null
+  },
+  "note": "Addressed 2 comments; one question is left for you."
+}

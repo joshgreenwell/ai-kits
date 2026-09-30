@@ -7,7 +7,7 @@ import { readingsKit } from './readings';
 import type { ContractId, Endpoint, Enforcement, KitManifest, KitReport, Schedule } from './types';
 import { usageKit } from './usage';
 
-export type { ContractId, Download, Endpoint, EndpointAuth, Enforcement, KitManifest, KitReport, Schedule } from './types';
+export type { ContractId, Download, Endpoint, EndpointAuth, Enforcement, KitManifest, KitReport, PublishedContract, Schedule } from './types';
 export { boardEndpoints };
 
 /** The board's registry, in navigation order. `docs/kits.md` explains the boundary. */
@@ -24,6 +24,21 @@ export const kitById = (id: string): KitManifest | undefined => registry.find(ki
 export const reportContracts: readonly (KitReport & { kit: KitId })[] = registry.flatMap(kit => kit.reports.map(report => ({ ...report, kit: kit.id as KitId })));
 export const reportContract = (kind: ReportKind) => reportContracts.find(report => report.kind === kind)!;
 export const enforcementFor = (kind: ReportKind): Enforcement => reportContract(kind).enforcement;
+
+/**
+ * The contracts a kit's endpoints name beyond its reports' payloads: a body the board checks, or the
+ * shape of what it answers. Each id is listed once, at the first endpoint that names it.
+ */
+export function endpointContracts(kit: KitManifest): { id: ContractId; endpoint: Endpoint; direction: 'request' | 'response' }[] {
+  const owned = new Set<ContractId>(kit.reports.map(report => report.contract));
+  const found: { id: ContractId; endpoint: Endpoint; direction: 'request' | 'response' }[] = [];
+  for (const endpoint of kit.endpoints) {
+    for (const [id, direction] of [[endpoint.contract, 'request'], [endpoint.returns, 'response']] as const) {
+      if (id && !owned.has(id) && !found.some(entry => entry.id === id)) found.push({ id, endpoint, direction });
+    }
+  }
+  return found;
+}
 
 /** The report pages, one per kit that stores reports; standups read alongside the briefing. */
 export const sections: { kind: ReportKind; title: string; path: string; empty: string }[] = registry.flatMap(kit =>

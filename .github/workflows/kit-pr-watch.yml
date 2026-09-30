@@ -1,0 +1,20 @@
+name: kit-pr-watch
+on:
+  push:
+    paths: ['kit-pr-watch/**', '.github/workflows/kit-pr-watch.yml']
+  pull_request:
+    paths: ['kit-pr-watch/**', '.github/workflows/kit-pr-watch.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kit-pr-watch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test

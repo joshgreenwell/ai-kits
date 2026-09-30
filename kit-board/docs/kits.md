@@ -21,7 +21,7 @@ Some of the pieces named here arrive in later phases. The [extraction order](#ex
 | Daily tasks | `kit-daily-tasks/` | schedule template, fixtures, contract copies (`tasks-v1`, `standup-v1`) | `lib/daily-tasks.ts`, `lib/daily-briefing.ts`, `/tasks` |
 | Readings | `kit-readings/` | `render-readings.mjs`, schedule template, fixtures, contract copy (`readings-v1`) | `lib/readings.ts`, the readings view, and `scripts/render-readings.mjs`, which forwards to the kit's renderer until the readings task runs that copy |
 | Audit | `kit-audit/` (not yet extracted) | `publish-assets.mjs`, fixtures, contract copy (`audit-v1`) | `lib/artifact*`, `lib/assets*`, `lib/report-selection.ts`, `/audit` |
-| PR watch | `kit-pr-watch/` | runner, decision core, decision tests, contract copies | `lib/pr-watch-contract.ts`, `lib/pr-watch-store.ts`, both route sets, `/reviews` |
+| PR watch | `kit-pr-watch/` | runner, decision core, decision tests, fixtures, contract copies (`pr-watch-work-v1`, `pr-watch-report-v1`) | `lib/pr-watch-contract.ts`, `lib/pr-watch-store.ts`, both route sets, `/reviews`, and `scripts/pr-watch.mjs`, which forwards to the kit's runner until the LaunchAgent is reinstalled from the kit |
 | Board core | — | — | auth, `proxy.ts`, `lib/db.ts`, the envelope, `scripts/publish.mjs`, migrations |
 
 Agent routing (`/api/v1/agent-events`, `/api/v1/quota-state`) is a board API with no kit. Its contract is canonical in the workspace repository and copied into `lib/routing-contract/`.
@@ -30,7 +30,7 @@ Agent routing (`/api/v1/agent-events`, `/api/v1/quota-state`) is a board API wit
 
 ## Contracts
 
-`npm run contracts` writes `lib/generated/contracts/`, and `prebuild` runs it too. For each contract it writes `<id>.schema.json`, the JSON Schema of the whole request body, and `<id>.example.json`, a synthetic body that passes it. It also writes `validate.mjs`, a copy of `lib/contract-validator.mjs`. CI fails when the committed files differ from a fresh run.
+`npm run contracts` writes `lib/generated/contracts/`, and `prebuild` runs it too. For each contract in `lib/contract-registry.ts` it writes `<id>.schema.json`, the JSON Schema of the whole body, and `<id>.example.json`, a synthetic body that passes it. It also writes `validate.mjs`, a copy of `lib/contract-validator.mjs`. CI fails when the committed files differ from a fresh run.
 
 | Contract | Kind | Mode |
 |---|---|---|
@@ -40,8 +40,10 @@ Agent routing (`/api/v1/agent-events`, `/api/v1/quota-state`) is a board API wit
 | `readings-v1` | `readings` | observe |
 | `audit-v1` | `audit` | observe |
 | `usage-v2` | the companion upload, `lib/generated/usage-v2.schema.json` | enforced |
+| `pr-watch-work-v1` | what `GET /api/v1/pr-watches` answers | open: the board may add a key without breaking an older runner |
+| `pr-watch-report-v1` | the `POST /api/v1/pr-watches/:id` body | enforced; the board refuses a body that does not match with 400 and changes nothing |
 
-The PR watch contracts are added with `kit-pr-watch/` in phase 4.
+The two PR watch contracts are not report kinds. `lib/pr-watch-contract.ts` defines them next to the zod the routes use, and the registry publishes them beside the report kinds. The board also refuses a report for an unknown watch (404) and one whose event does not fit the watch's kind or state (409); `kit-pr-watch/fixtures/README.md` lists those checks.
 
 `validate.mjs` has no dependencies. It checks a report against a schema on any machine with Node:
 
@@ -57,7 +59,7 @@ Each ingestion receipt carries `contract: { id, enforcement, valid, issues }`, w
 
 ### Kit copies
 
-A kit carries a byte-identical copy of each generated file it depends on, in its own `contract/` folder: `kit-daily-tasks/contract/` has `tasks-v1` and `standup-v1`, and `kit-readings/contract/` has `readings-v1`, each with `validate.mjs`. After `npm run contracts`, refresh every copy from `kit-board/`:
+A kit carries a byte-identical copy of each generated file it depends on, in its own `contract/` folder: `kit-daily-tasks/contract/` has `tasks-v1` and `standup-v1`, `kit-readings/contract/` has `readings-v1`, and `kit-pr-watch/contract/` has `pr-watch-work-v1` and `pr-watch-report-v1`, each with `validate.mjs`. After `npm run contracts`, refresh every copy from `kit-board/`:
 
 ```bash
 for copy in ../kit-*/contract/*; do cp "lib/generated/contracts/$(basename "$copy")" "$copy"; done
@@ -69,7 +71,7 @@ Commit the copies with the change. `.github/workflows/contracts.yml` compares ev
 
 `/kits` lists every kit with its contracts, how many of the last 20 revisions of each kind match the current contract, and the board's own endpoints. `/kits/<id>` documents one kit:
 
-- **Contracts.** Each contract's mode, the recent-revision match with its most common issues (array indexes folded, each counted once per revision), a field table derived from the generated JSON Schema by `lib/contract-fields.ts`, the example body, and a form that posts a pasted body to the validate endpoint.
+- **Contracts.** Each report contract's mode, the recent-revision match with its most common issues (array indexes folded, each counted once per revision), a field table derived from the generated JSON Schema by `lib/contract-fields.ts`, the example body, and a form that posts a pasted body to the validate endpoint. A contract that an endpoint names and no report kind owns (`endpointContracts` in `lib/kits/index.ts`: PR watch's two) shows whether it is a request or a response body, its field table and example, and the offline `validate.mjs` command.
 - **Endpoints, schedules and collectors.** The manifest's endpoints and schedules; the AI usage kit also shows each collection source and reset feed, the table that used to sit on `/schedules`.
 - **Downloads.** Links to the repository on GitHub, pinned to the commit the deployment was built from (`VERCEL_GIT_COMMIT_SHA`, or `main` outside Vercel), with a raw link for single files. The repository is public, so there is no download route; schemas and examples come from `lib/generated/contracts/` at that commit.
 
@@ -83,7 +85,7 @@ Commit the copies with the change. `.github/workflows/contracts.yml` compares ev
 | 1 | Kit manifests, payload contracts, generated schemas, observe-mode validation | Done |
 | 2 | The `/kits` documentation pages and the validate endpoint | Done |
 | 3 | `kit-daily-tasks/` and `kit-readings/` | Done |
-| 4 | `kit-pr-watch/` | Pending |
+| 4 | `kit-pr-watch/` | Done |
 | 5 | `kit-audit/`, then a structured `audit-v2` payload | Not started |
 | 6 | `kit-usage/`, last: companion, browser bridge, telemetry scripts, release configuration | Not started |
 
@@ -92,3 +94,5 @@ Before phase 6, confirm on each machine that no unpacked browser extension loads
 ## Outside the repository
 
 Moving kit files does not change the scheduled agents that produce reports: Codex `daily-personal-assistant`, `weekly-luumen-ai-audit` and `monthly-ai-usage`, and the Claude Desktop `daily-tech-intel-snapshot`. Their prompts and schedules live in those apps. Each kit's `schedule/` template records what the board needs from the schedule. It is documentation, not the schedule's source of truth.
+
+Two local jobs do run files from this checkout by path. The readings task runs the renderer, and the PR watch LaunchAgent runs the path `install` wrote. `kit-board/scripts/render-readings.mjs` and `kit-board/scripts/pr-watch.mjs` forward to the kits' copies until each job is repointed, and are removed after that.

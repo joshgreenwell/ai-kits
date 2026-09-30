@@ -96,8 +96,22 @@ test('contract fields list every field with its requirement and rules', () => {
   assert.equal(field('produced_at')?.rules[0], 'ISO 8601 time with a UTC offset');
   assert.equal(field('payload.sections.*')?.description, 'Any other key', 'catch-all domains are listed');
   assert.ok(fields.findIndex(entry => entry.path === 'payload') < fields.findIndex(entry => entry.path === 'payload.sections'), 'parents come first');
-  for (const id of ['readings-v1', 'audit-v1', 'standup-v1', 'report-envelope-v1'])
+  for (const id of ['readings-v1', 'audit-v1', 'standup-v1', 'report-envelope-v1', 'pr-watch-work-v1', 'pr-watch-report-v1'])
     assert.ok(contractFields(JSON.parse(readFileSync(`lib/generated/contracts/${id}.schema.json`, 'utf8'))).length > 5, id);
+});
+
+test('contract fields read a nullable field as its other shape, and list each shape of a union under its tag', () => {
+  const fields = (id: string) => contractFields(JSON.parse(readFileSync(`lib/generated/contracts/${id}.schema.json`, 'utf8')));
+  const work = fields('pr-watch-work-v1');
+  const headSha = work.find(entry => entry.path === 'watches[].head_sha');
+  assert.equal(headSha?.type, 'string or null');
+  assert.deepEqual(headSha?.rules, ['matches ^[0-9a-f]{40}$'], 'the rules of the non-null shape');
+  const report = fields('pr-watch-report-v1');
+  assert.deepEqual(report.filter(entry => entry.path.startsWith('review (')).map(entry => entry.path),
+    ['review (event "started")', 'review (event "posted")', 'review (event "addressed")', 'review (event "failed")']);
+  const started = report.findIndex(entry => entry.path === 'review (event "started")');
+  assert.deepEqual(report[started + 1], { path: 'review.event', depth: 2, type: 'string', required: true, rules: ['always "started"'], description: undefined }, 'a shape\'s fields sit under it');
+  assert.ok(report.filter(entry => entry.path === 'review.finished_at').length > 1, 'a field two shapes share is listed under each');
 });
 
 test('download links point at the repository, by folder or by file', () => {

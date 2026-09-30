@@ -280,7 +280,7 @@ export function PrWatchQueue({ kind, initial, initialError }: { kind: PrWatchKin
           <Alert variant="warning">
             <AlertDescription>
               <p>Nothing is polling these watches. Start the runner on the Mac that holds your GitHub login and the review skill:</p>
-              <code className="font-mono text-xs">node scripts/pr-watch.mjs install</code>
+              <code className="font-mono text-xs">node kit-pr-watch/pr-watch.mjs install</code>
             </AlertDescription>
           </Alert>
         ) : null}
