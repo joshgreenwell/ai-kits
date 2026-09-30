@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { sections } from '@/lib/catalog';
+import { kits } from '@/lib/kits';
 import { Button } from './ui/button';
 import { cn } from 'cn';
 import { pageFrame } from './workspace';
@@ -33,37 +33,23 @@ export function Navigation() {
         </Link>
 
         <nav aria-label="Main navigation" className="flex flex-wrap items-center gap-1">
-          {sections.map(section => (
+          {kits.map(kit => (
             <Link
-              key={section.kind}
-              href={section.path}
+              key={kit.id}
+              href={kit.page.path}
               scroll={false}
               onNavigate={startSection}
-              aria-current={isCurrent(section.path) ? 'page' : undefined}
+              aria-current={isCurrent(kit.page.path) ? 'page' : undefined}
               className={cn(
                 'focus-visible:ring-ring/50 rounded-md px-2.5 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-[3px]',
-                isCurrent(section.path)
+                isCurrent(kit.page.path)
                   ? 'bg-secondary text-foreground'
                   : 'text-muted-foreground hover:bg-accent hover:text-foreground'
               )}
             >
-              {section.title}
+              {kit.title}
             </Link>
           ))}
-          <Link
-            href="/reviews"
-            scroll={false}
-            onNavigate={startSection}
-            aria-current={isCurrent('/reviews') ? 'page' : undefined}
-            className={cn(
-              'focus-visible:ring-ring/50 rounded-md px-2.5 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-[3px]',
-              isCurrent('/reviews')
-                ? 'bg-secondary text-foreground'
-                : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-            )}
-          >
-            PR watch
-          </Link>
         </nav>
 
         <div className="ml-auto flex items-center gap-2">

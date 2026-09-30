@@ -3,7 +3,8 @@ import { z } from 'zod';
 export const kinds = ['usage', 'tasks', 'standup', 'readings', 'audit'] as const;
 export type ReportKind = typeof kinds[number];
 const key = z.string().min(1).max(160).regex(/^[a-zA-Z0-9._:@+-]+$/);
-export const reportSchema = z.object({
+/** The envelope every report kind posts. Each kind's payload contract lives in `report-contracts.ts`. */
+export const reportEnvelope = z.object({
   schema_version: z.literal(1),
   period_key: z.string().regex(/^\d{4}-\d{2}(?:-\d{2})?$/),
   subject_key: key,
@@ -14,7 +15,9 @@ export const reportSchema = z.object({
   coverage: z.record(z.string(), z.unknown()).default({}),
   payload: z.record(z.string(), z.unknown()),
   html: z.string().max(3_500_000).optional(),
-}).strict().superRefine((data, ctx) => {
+}).strict();
+/** Checks JSON Schema cannot express: no observation from the future, and a real calendar date. */
+export function checkEnvelope(data: { produced_at: string; period_key: string }, ctx: z.RefinementCtx) {
   if (Date.parse(data.produced_at) > Date.now() + 300_000) {
     ctx.addIssue({ code: 'custom', path: ['produced_at'], message: 'Observation time cannot be in the future' });
   }
@@ -22,7 +25,8 @@ export const reportSchema = z.object({
   if (!Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date) {
     ctx.addIssue({ code: 'custom', path: ['period_key'], message: 'Invalid calendar date' });
   }
-});
+}
+export const reportSchema = reportEnvelope.superRefine(checkEnvelope);
 export type ReportInput = z.infer<typeof reportSchema>;
 export type StoredReport = ReportInput & {
   id: string; kind: ReportKind; producer_id: string; received_at: string; content_hash: string;

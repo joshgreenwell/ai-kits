@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { sections } from '@/lib/catalog';
+import { sections } from '@/lib/kits';
 import { reportById, reportHistory } from '@/lib/db';
 import { ReportView } from '@/components/report-view';
 import { ReadingsView } from '@/components/readings-view';

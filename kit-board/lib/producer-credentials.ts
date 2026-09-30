@@ -1,8 +1,8 @@
 import { digest, safeEqual } from './crypto';
-import type { ReportKind } from './contracts';
+import type { ProducerKind } from './kits';
 
-/** Report kinds, plus the PR watch runner, which reads and reports its queue with the same kind of key. */
-export type ProducerKind = ReportKind | 'pr-watch';
+/** Scopes come from the kit manifests: every report kind, plus the PR watch runner's `pr-watch`. */
+export type { ProducerKind };
 
 type ProducerCredential = {
   hash: string;

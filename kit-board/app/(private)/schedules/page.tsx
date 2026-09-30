@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { schedules, sectionPath } from '@/lib/catalog';
+import { schedules, sectionPath } from '@/lib/kits';
 import { database, latestByKind } from '@/lib/db';
 import { requireSession } from '@/lib/auth';
 import { PageHeader } from '@/components/page-header';

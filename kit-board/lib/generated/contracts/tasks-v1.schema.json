@@ -1,0 +1,715 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/joshgreenwell/ai-kits/blob/main/kit-board/lib/generated/contracts/tasks-v1.schema.json",
+  "title": "Daily briefing",
+  "description": "The structured briefing /tasks draws natively. A revision without sections falls back to its HTML.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "period_key": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}(?:-\\d{2})?$"
+    },
+    "subject_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9._:@+-]+$"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9._:@+-]+$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "produced_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "failed"
+      ]
+    },
+    "coverage": {
+      "default": {},
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "date_label": {
+          "type": "string"
+        },
+        "time_label": {
+          "type": "string"
+        },
+        "notice": {
+          "type": "string"
+        },
+        "markdown": {
+          "type": "string"
+        },
+        "sections": {
+          "type": "object",
+          "properties": {
+            "work": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "priority": {
+                        "type": "string",
+                        "enum": [
+                          "urgent",
+                          "today",
+                          "soon",
+                          "later"
+                        ]
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "reply",
+                          "deadline",
+                          "followup",
+                          "information"
+                        ]
+                      },
+                      "when": {
+                        "type": "string"
+                      },
+                      "context": {
+                        "type": "string"
+                      },
+                      "next_step": {
+                        "type": "string"
+                      },
+                      "project": {
+                        "type": "string"
+                      },
+                      "task_id": {
+                        "type": "string"
+                      },
+                      "task_url": {
+                        "type": "string",
+                        "description": "An https:, http: or linear: URL. Any other address is dropped."
+                      },
+                      "task_status": {
+                        "type": "string"
+                      },
+                      "reference_label": {
+                        "type": "string"
+                      },
+                      "reference_url": {
+                        "type": "string",
+                        "description": "An https:, http: or linear: URL. Any other address is dropped."
+                      },
+                      "source_url": {
+                        "type": "string",
+                        "description": "An https:, http: or linear: URL. Any other address is dropped."
+                      },
+                      "observation_status": {
+                        "description": "How current the item is, such as \"Not refreshed September 22\".",
+                        "type": "string"
+                      },
+                      "status": {
+                        "description": "A tracked disposition such as needs_review.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "title"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "empty_note": {
+                  "type": "string"
+                },
+                "queue": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "priority": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "updated": {
+                        "description": "Days since the last update, as \"4d\".",
+                        "type": "string",
+                        "pattern": "^\\d+d$"
+                      },
+                      "due_date": {
+                        "type": "string"
+                      },
+                      "url": {
+                        "type": "string",
+                        "description": "An https:, http: or linear: URL. Any other address is dropped."
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "queue_summary": {
+                  "type": "object",
+                  "properties": {
+                    "open": {
+                      "type": "number"
+                    },
+                    "high": {
+                      "type": "number"
+                    },
+                    "stale": {
+                      "type": "number"
+                    },
+                    "stages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "count": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "count"
+                        ],
+                        "additionalProperties": {}
+                      }
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": {}
+                }
+              },
+              "additionalProperties": {}
+            },
+            "personal": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "priority": {
+                        "type": "string",
+                        "enum": [
+                          "urgent",
+                          "today",
+                          "soon",
+                          "later"
+                        ]
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "reply",
+                          "deadline",
+                          "followup",
+                          "information"
+                        ]
+                      },
+                      "when": {
+                        "type": "string"
+                      },
+                      "context": {
+                        "type": "string"
+                      },
+                      "next_step": {
+                        "type": "string"
+                      },
+                      "project": {
+                        "type": "string"
+                      },
+                      "task_id": {
+                        "type": "string"
+                      },
+                      "task_url": {
+                        "type": "string",
+                        "description": "An https:, http: or linear: URL. Any other address is dropped."
+                      },
+                      "task_status": {
+                        "type": "string"
+                      },
+                      "reference_label": {
+                        "type": "string"
+                      },
+                      "reference_url": {
+                        "type": "string",
+                        "description": "An https:, http: or linear: URL. Any other address is dropped."
+                      },
+                      "source_url": {
+                        "type": "string",
+                        "description": "An https:, http: or linear: URL. Any other address is dropped."
+                      },
+                      "observation_status": {
+                        "description": "How current the item is, such as \"Not refreshed September 22\".",
+                        "type": "string"
+                      },
+                      "status": {
+                        "description": "A tracked disposition such as needs_review.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "title"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "empty_note": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": {}
+            },
+            "aa": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "priority": {
+                        "type": "string",
+                        "enum": [
+                          "urgent",
+                          "today",
+                          "soon",
+                          "later"
+                        ]
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "reply",
+                          "deadline",
+                          "followup",
+                          "information"
+                        ]
+                      },
+                      "when": {
+                        "type": "string"
+                      },
+                      "context": {
+                        "type": "string"
+                      },
+                      "next_step": {
+                        "type": "string"
+                      },
+                      "project": {
+                        "type": "string"
+                      },
+                      "task_id": {
+                        "type": "string"
+                      },
+                      "task_url": {
+                        "type": "string",
+                        "description": "An https:, http: or linear: URL. Any other address is dropped."
+                      },
+                      "task_status": {
+                        "type": "string"
+                      },
+                      "reference_label": {
+                        "type": "string"
+                      },
+                      "reference_url": {
+                        "type": "string",
+                        "description": "An https:, http: or linear: URL. Any other address is dropped."
+                      },
+                      "source_url": {
+                        "type": "string",
+                        "description": "An https:, http: or linear: URL. Any other address is dropped."
+                      },
+                      "observation_status": {
+                        "description": "How current the item is, such as \"Not refreshed September 22\".",
+                        "type": "string"
+                      },
+                      "status": {
+                        "description": "A tracked disposition such as needs_review.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "title"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "empty_note": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": {}
+            }
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "priority": {
+                      "type": "string",
+                      "enum": [
+                        "urgent",
+                        "today",
+                        "soon",
+                        "later"
+                      ]
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "reply",
+                        "deadline",
+                        "followup",
+                        "information"
+                      ]
+                    },
+                    "when": {
+                      "type": "string"
+                    },
+                    "context": {
+                      "type": "string"
+                    },
+                    "next_step": {
+                      "type": "string"
+                    },
+                    "project": {
+                      "type": "string"
+                    },
+                    "task_id": {
+                      "type": "string"
+                    },
+                    "task_url": {
+                      "type": "string",
+                      "description": "An https:, http: or linear: URL. Any other address is dropped."
+                    },
+                    "task_status": {
+                      "type": "string"
+                    },
+                    "reference_label": {
+                      "type": "string"
+                    },
+                    "reference_url": {
+                      "type": "string",
+                      "description": "An https:, http: or linear: URL. Any other address is dropped."
+                    },
+                    "source_url": {
+                      "type": "string",
+                      "description": "An https:, http: or linear: URL. Any other address is dropped."
+                    },
+                    "observation_status": {
+                      "description": "How current the item is, such as \"Not refreshed September 22\".",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "A tracked disposition such as needs_review.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "title"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "empty_note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": {}
+          },
+          "description": "One entry per domain. work, personal and aa are drawn first, in that order."
+        },
+        "week": {
+          "type": "object",
+          "properties": {
+            "days": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "date": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "dow": {
+                    "type": "string"
+                  },
+                  "day": {
+                    "type": "string"
+                  },
+                  "today": {
+                    "type": "boolean"
+                  },
+                  "weekend": {
+                    "type": "boolean"
+                  },
+                  "shared_hours": {
+                    "type": "number"
+                  },
+                  "solo_hours": {
+                    "type": "number"
+                  },
+                  "counted_entries": {
+                    "type": "number"
+                  },
+                  "entries": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string"
+                        },
+                        "time": {
+                          "type": "string"
+                        },
+                        "tag": {
+                          "description": "The attendee count, or \"own\" for your own block.",
+                          "type": [
+                            "string",
+                            "number"
+                          ]
+                        },
+                        "dim": {
+                          "description": "True when the entry is not counted in the hours.",
+                          "type": "boolean"
+                        }
+                      },
+                      "additionalProperties": {}
+                    }
+                  }
+                },
+                "required": [
+                  "date"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": {}
+        },
+        "inbox": {
+          "type": "object",
+          "properties": {
+            "window_label": {
+              "type": "string"
+            },
+            "total": {
+              "type": "number"
+            },
+            "figures": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "number"
+                  },
+                  "k": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "hint": {
+                    "type": "string"
+                  },
+                  "hot": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "n",
+                  "k"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "classes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "count": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "label",
+                  "count"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "note": {
+              "type": "string"
+            },
+            "top_senders": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "address": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "count": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "address",
+                  "count"
+                ],
+                "additionalProperties": {}
+              }
+            }
+          },
+          "additionalProperties": {}
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "domain": {
+                "type": "string"
+              },
+              "sender": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sender"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "coverage": {
+          "description": "Source coverage. The publisher also copies it into the envelope as coverage.sources.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "additionalProperties": {}
+          }
+        }
+      },
+      "required": [
+        "sections"
+      ],
+      "additionalProperties": {}
+    },
+    "html": {
+      "type": "string",
+      "maxLength": 3500000
+    }
+  },
+  "required": [
+    "schema_version",
+    "period_key",
+    "subject_key",
+    "idempotency_key",
+    "title",
+    "produced_at",
+    "status",
+    "payload"
+  ],
+  "additionalProperties": false
+}

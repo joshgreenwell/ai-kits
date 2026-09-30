@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "period_key": "2026-09-29",
+  "subject_key": "example-owner",
+  "title": "AI audit · September 29",
+  "produced_at": "2026-09-29T09:05:00-05:00",
+  "status": "complete",
+  "idempotency_key": "example-audit-2026-09-29",
+  "coverage": {
+    "presentation": "full-audit"
+  },
+  "payload": {
+    "markdown": "Summary of the audit."
+  },
+  "html": "<!doctype html><title>Example audit</title><h1>Example audit</h1>"
+}

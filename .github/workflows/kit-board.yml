@@ -30,8 +30,11 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: '1'
       - run: npm run usage-schema
+      - run: npm run contracts
       - name: Generated assets are current
-        run: git diff --exit-code -- lib/generated/report-ui.json lib/generated/usage-v2.schema.json
+        run: |
+          git status --porcelain -- lib/generated
+          test -z "$(git status --porcelain -- lib/generated)"
       - name: Install PostgreSQL tools for the disposable cluster
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q postgresql

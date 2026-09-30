@@ -56,4 +56,6 @@ if (!receipt.ok || !receipt.id) throw new Error('The server did not return a val
 await mkdir(resolve(dirname(configPath), 'receipts'), { recursive: true, mode: 0o700 });
 await writeFile(resolve(dirname(configPath), 'receipts', `${args.kind}-${contentHash}.json`), JSON.stringify({ ...receipt, kind: args.kind, at: new Date().toISOString(), content_hash: contentHash }), { mode: 0o600 });
 await rename(spool, spool + '.published');
-console.log(JSON.stringify({ ok: true, id: receipt.id, duplicate: receipt.duplicate, url: new URL('/' + args.kind, url).href }));
+// The board stores a report whose payload drifts from its kind's contract while that contract is observed; say so here.
+if (receipt.contract && !receipt.contract.valid) console.error(`Published, but the payload does not match ${receipt.contract.id}; the board will refuse it once that contract is enforced.`);
+console.log(JSON.stringify({ ok: true, id: receipt.id, duplicate: receipt.duplicate, url: new URL('/' + args.kind, url).href, ...(receipt.contract ? { contract: receipt.contract } : {}) }));

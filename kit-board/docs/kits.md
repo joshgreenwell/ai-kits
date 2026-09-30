@@ -28,12 +28,37 @@ Agent routing (`/api/v1/agent-events`, `/api/v1/quota-state`) is a board API wit
 
 `scripts/publish.mjs` stays in the board. It is the reference client for the board's envelope, and the scheduled agents call it by path.
 
+## Contracts
+
+`npm run contracts` writes `lib/generated/contracts/`, and `prebuild` runs it too. For each contract it writes `<id>.schema.json`, the JSON Schema of the whole request body, and `<id>.example.json`, a synthetic body that passes it. It also writes `validate.mjs`, a copy of `lib/contract-validator.mjs`. CI fails when the committed files differ from a fresh run.
+
+| Contract | Kind | Mode |
+|---|---|---|
+| `report-envelope-v1` | every `/api/v1/reports/:kind` body | enforced; ingestion refuses a bad envelope with 400 |
+| `tasks-v1` | `tasks` | observe |
+| `standup-v1` | `standup` | observe |
+| `readings-v1` | `readings` | observe |
+| `audit-v1` | `audit` | observe |
+| `usage-v2` | the companion upload, `lib/generated/usage-v2.schema.json` | enforced |
+
+The PR watch contracts are added with `kit-pr-watch/` in phase 4.
+
+`validate.mjs` has no dependencies. It checks a report against a schema on any machine with Node:
+
+```bash
+node lib/generated/contracts/validate.mjs lib/generated/contracts/tasks-v1.schema.json report.json
+```
+
+It exits 1 when the report does not match. It also refuses a schema that uses a keyword it does not check, so a schema it only partly understands can never pass a report. The generator emits nothing that the zod source checks and the schema cannot express, except the envelope's two date checks: `produced_at` may not be in the future, and `period_key` must be a real calendar date.
+
+Each ingestion receipt carries `contract: { id, enforcement, valid, issues }`, with at most 20 issues. `scripts/publish.mjs` prints it, and writes a warning to stderr when a stored report does not match.
+
 ## Extraction order
 
 | Phase | Work | Status |
 |---|---|---|
 | 0 | This page and the layout rules in `CONTRIBUTING.md` | Done |
-| 1 | Kit manifests, payload contracts, generated schemas, observe-mode validation | Pending |
+| 1 | Kit manifests, payload contracts, generated schemas, observe-mode validation | Done |
 | 2 | The `/kits` documentation page, the validate and contract endpoints | Pending |
 | 3 | `kit-daily-tasks/` and `kit-readings/` | Pending |
 | 4 | `kit-pr-watch/` | Pending |

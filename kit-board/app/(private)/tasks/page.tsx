@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { sections } from '@/lib/catalog';
+import { sections } from '@/lib/kits';
 import type { StoredReport } from '@/lib/contracts';
 import { reportById, reportHistory } from '@/lib/db';
 import { DailyTasksView } from '@/components/daily-tasks-view';
