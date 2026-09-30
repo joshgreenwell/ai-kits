@@ -28,8 +28,6 @@ node pr-watch.mjs install
 
 It checks the key, `gh auth status`, `claude --version` and the workspace, then loads `com.personal-observatory.pr-watch`. The agent runs this file in place, so run `install` again after moving the checkout. An update to the script needs no reinstall.
 
-`kit-board/scripts/pr-watch.mjs` forwards to this runner, so a LaunchAgent installed from the old path keeps working. Running `install` through it writes this kit's path. It will be removed once the LaunchAgent runs this copy.
-
 ## Contracts
 
 - **`pr-watch-work-v1`** is what `GET /api/v1/pr-watches` answers: the work list for one tick. It is open, so the board can add a key without breaking an older runner.

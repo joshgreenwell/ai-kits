@@ -21,7 +21,7 @@ Some of the pieces named here arrive in later phases. The [extraction order](#ex
 | Daily tasks | `kit-daily-tasks/` | schedule template, fixtures, contract copies (`tasks-v1`, `standup-v1`) | `lib/daily-tasks.ts`, `lib/daily-briefing.ts`, `/tasks` |
 | Readings | `kit-readings/` | `render-readings.mjs`, schedule template, fixtures, contract copy (`readings-v1`) | `lib/readings.ts`, the readings view, and `scripts/render-readings.mjs`, which forwards to the kit's renderer until the readings task runs that copy |
 | Audit | `kit-audit/` (not yet extracted) | `publish-assets.mjs`, fixtures, contract copy (`audit-v1`) | `lib/artifact*`, `lib/assets*`, `lib/report-selection.ts`, `/audit` |
-| PR watch | `kit-pr-watch/` | runner, decision core, decision tests, fixtures, contract copies (`pr-watch-work-v1`, `pr-watch-report-v1`) | `lib/pr-watch-contract.ts`, `lib/pr-watch-store.ts`, both route sets, `/reviews`, and `scripts/pr-watch.mjs`, which forwards to the kit's runner until the LaunchAgent is reinstalled from the kit |
+| PR watch | `kit-pr-watch/` | runner, decision core, decision tests, fixtures, contract copies (`pr-watch-work-v1`, `pr-watch-report-v1`) | `lib/pr-watch-contract.ts`, `lib/pr-watch-store.ts`, both route sets, `/reviews` |
 | Board core | — | — | auth, `proxy.ts`, `lib/db.ts`, the envelope, `scripts/publish.mjs`, migrations |
 
 Agent routing (`/api/v1/agent-events`, `/api/v1/quota-state`) is a board API with no kit. Its contract is canonical in the workspace repository and copied into `lib/routing-contract/`.
@@ -95,4 +95,4 @@ Before phase 6, confirm on each machine that no unpacked browser extension loads
 
 Moving kit files does not change the scheduled agents that produce reports: Codex `daily-personal-assistant`, `weekly-luumen-ai-audit` and `monthly-ai-usage`, and the Claude Desktop `daily-tech-intel-snapshot`. Their prompts and schedules live in those apps. Each kit's `schedule/` template records what the board needs from the schedule. It is documentation, not the schedule's source of truth.
 
-Two local jobs do run files from this checkout by path. The readings task runs the renderer, and the PR watch LaunchAgent runs the path `install` wrote. `kit-board/scripts/render-readings.mjs` and `kit-board/scripts/pr-watch.mjs` forward to the kits' copies until each job is repointed, and are removed after that.
+Two local jobs do run files from this checkout by path. The PR watch LaunchAgent runs `kit-pr-watch/pr-watch.mjs`, the path `install` wrote, so run `install` again after moving the checkout. The readings task runs the renderer; `kit-board/scripts/render-readings.mjs` forwards to the kit's copy until the task is repointed, and is removed after that.
