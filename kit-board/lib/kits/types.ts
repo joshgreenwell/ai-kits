@@ -10,6 +10,7 @@ export type ContractId = 'report-envelope-v1' | 'tasks-v1' | 'standup-v1' | 'rea
 export type EndpointAuth =
   | 'session' // signed-in browser; mutations also check the origin
   | 'producer' // producer bearer key from INGEST_KEYS_JSON, scoped to `scope`
+  | 'producer-or-session' // a producer key when an Authorization header is sent, otherwise a same-origin session
   | 'install' // companion install key
   | 'pairing-code' // one-time pairing code, exchanged for an install key
   | 'telemetry' // telemetry-source bearer key

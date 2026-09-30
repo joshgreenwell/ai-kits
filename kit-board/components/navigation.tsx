@@ -68,18 +68,18 @@ export function Navigation() {
             Settings
           </Link>
           <Link
-            href="/schedules"
+            href="/kits"
             scroll={false}
             onNavigate={startSection}
-            aria-current={pathname === '/schedules' ? 'page' : undefined}
+            aria-current={isCurrent('/kits') ? 'page' : undefined}
             className={cn(
               'focus-visible:ring-ring/50 rounded-md px-2.5 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-[3px]',
-              pathname === '/schedules'
+              isCurrent('/kits')
                 ? 'bg-secondary text-foreground'
                 : 'text-muted-foreground hover:bg-accent hover:text-foreground'
             )}
           >
-            Schedules
+            Kits
           </Link>
           <form action="/api/auth/logout" method="post">
             <Button variant="outline" size="sm" type="submit">

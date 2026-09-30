@@ -14,6 +14,7 @@ export const auditKit = {
   ],
   endpoints: [
     { method: 'POST', path: '/api/v1/reports/audit', auth: 'producer', scope: 'audit', contract: 'audit-v1', summary: 'Publishes one audit report.' },
+    { method: 'POST', path: '/api/v1/reports/audit/validate', auth: 'producer-or-session', scope: 'audit', contract: 'audit-v1', summary: 'Checks an audit report as publishing would, and stores nothing.' },
     { method: 'POST', path: '/api/v1/reports/audit/:id/assets', auth: 'producer', scope: 'audit', summary: 'Uploads one linked evidence file for a report this producer published.' },
   ],
   downloads: [

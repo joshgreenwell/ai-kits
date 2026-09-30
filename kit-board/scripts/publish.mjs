@@ -7,7 +7,7 @@ import { resolve, dirname } from 'node:path';
 // Every job uses the same client, with its own producer credential. Payloads and
 // credentials never go into command arguments or normal logs.
 const args = Object.fromEntries(process.argv.slice(2).map((arg, i, all) => arg.startsWith('--') ? [arg.slice(2), all[i + 1]?.startsWith('--') ? true : all[i + 1] ?? true] : []).filter(row => row.length));
-if (!args.kind || !args.file || !args.producer) throw new Error('Required: --kind --producer --file; optional --html --period --subject --title --produced-at --status --config --dry-run');
+if (!args.kind || !args.file || !args.producer) throw new Error('Required: --kind --producer --file; optional --html --period --subject --title --produced-at --status --config --dry-run --offline');
 const kinds = ['usage', 'tasks', 'standup', 'readings', 'audit'];
 if (!kinds.includes(args.kind)) throw new Error('Unknown report kind');
 const text = await readFile(resolve(args.file), 'utf8');
@@ -30,13 +30,37 @@ const input = args.kind === 'usage' ? payload : {
 if (args.kind !== 'usage' && (!args.period || !args['produced-at'])) throw new Error('Non-usage reports require their real --period and --produced-at, including timezone; do not replace observation time with upload time');
 const body = JSON.stringify(input);
 if (Buffer.byteLength(body) > 4_000_000) throw new Error('Report exceeds the 4 MB upload limit');
-if (args['dry-run']) { console.log(JSON.stringify({ valid: true, kind: args.kind, bytes: Buffer.byteLength(body), content_hash: contentHash })); process.exit(0); }
 const configPath = resolve(args.config ?? process.env.PERSONAL_HUB_CONFIG ?? `${homedir()}/.config/personal-hub/publish.json`);
-const config = JSON.parse(await readFile(configPath, 'utf8'));
-const url = new URL(config.url);
-if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname)) throw new Error('HTTPS is required');
-const credential = config.producers[args.producer];
-if (!credential?.key || !credential.kinds.includes(args.kind)) throw new Error('No credential for this producer and report kind');
+async function destination() {
+  let config;
+  // A parse error quotes the file, and the file holds keys.
+  try { config = JSON.parse(await readFile(configPath, 'utf8')); } catch (error) { throw error.code === 'ENOENT' ? new Error(`No publisher config at ${configPath}`) : new Error('The publisher config could not be read as JSON'); }
+  const url = new URL(config.url);
+  if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname)) throw new Error('HTTPS is required');
+  const credential = config.producers?.[args.producer];
+  if (!credential?.key || !credential.kinds.includes(args.kind)) throw new Error('No credential for this producer and report kind');
+  return { url, credential };
+}
+// A dry run asks the board, which checks the body as publishing would and stores nothing. Without a
+// credential, with --offline, or for usage, it checks only what it can here: the arguments and the size.
+async function boardCheck() {
+  if (args.offline || args.kind === 'usage') return null;
+  let target;
+  try { target = await destination(); } catch (error) { console.error(`Checked locally only: ${error.message}.`); return null; }
+  let response;
+  try {
+    response = await fetch(new URL(`/api/v1/reports/${args.kind}/validate`, target.url), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${target.credential.key}` }, body, signal: AbortSignal.timeout(45_000), redirect: 'error' });
+  } catch { console.error('Checked locally only: the board could not be reached.'); return null; }
+  if (response.status === 401) throw new Error('The board refused this producer key');
+  if (!response.ok) { console.error(`Checked locally only: the board answered ${response.status}.`); return null; }
+  return response.json();
+}
+if (args['dry-run']) {
+  const board = await boardCheck();
+  console.log(JSON.stringify({ valid: board ? board.accepted : true, kind: args.kind, bytes: Buffer.byteLength(body), content_hash: contentHash, checked: board ? 'board' : 'local', ...(board ? { envelope: board.envelope, contract: board.contract } : {}) }));
+  process.exit(board && !board.accepted ? 1 : 0);
+}
+const { url, credential } = await destination();
 const endpoint = new URL(args.kind === 'usage' ? '/api/reports' : `/api/v1/reports/${args.kind}`, url);
 const spool = resolve(dirname(configPath), 'outbox', `${args.kind}-${contentHash}.json`);
 await mkdir(dirname(spool), { recursive: true, mode: 0o700 });

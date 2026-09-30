@@ -122,7 +122,7 @@ Restore the Codex directory to `~/.codex/skills/analyze-monthly-token-usage/` an
 
 ## Publish external workflow results
 
-`scripts/publish.mjs` accepts `--kind --producer --file`, optionally `--html`, with real `--period` and `--produced-at` for non-usage reports. Always pass `--subject` for the intended report owner (the legacy default is personal). Use `--dry-run` to check input sizing/envelope construction without reading publisher credentials or uploading; this is not full server validation. The private config shape is:
+`scripts/publish.mjs` accepts `--kind --producer --file`, optionally `--html`, with real `--period` and `--produced-at` for non-usage reports. Always pass `--subject` for the intended report owner (the legacy default is personal). Use `--dry-run` to check a report without storing it: when the config holds a credential for the producer and kind, it posts the body to `/api/v1/reports/<kind>/validate`, which answers with the envelope and payload-contract result ingestion would reach, and exits 1 if ingestion would refuse it. Add `--offline` (or run without a config) to check only the arguments and size locally; usage envelopes are always checked locally. The private config shape is:
 
 ```json
 {"url":"https://your-observatory.example","producers":{"audit-local":{"key":"REPLACE_PRIVATELY","kinds":["audit"]}}}

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { checkEnvelope, reportEnvelope, type ReportInput, type ReportKind } from './contracts';
+import { checkEnvelope, reportEnvelope, reportSchema, type ReportInput, type ReportKind } from './contracts';
 import { reportContract, type ContractId, type Enforcement } from './kits';
 
 /*
@@ -184,11 +184,33 @@ export type ContractIssue = { path: (string | number)[]; message: string };
 export type ContractResult = { id: ContractId; enforcement: Enforcement; valid: boolean; issues: ContractIssue[] };
 
 const MAX_ISSUES = 20;
+const issuesOf = (error: z.ZodError): ContractIssue[] =>
+  error.issues.slice(0, MAX_ISSUES).map(({ path, message }) => ({ path: path.map(part => typeof part === 'symbol' ? String(part) : part), message }));
 
 /** Checks an envelope-valid report against its kind's payload contract. */
 export function checkReportContract(kind: Exclude<ReportKind, 'usage'>, report: ReportInput | unknown): ContractResult {
   const { contract: id, enforcement } = reportContract(kind);
   const result = reportContractRegistry[id as ReportContractId].schema.safeParse(report);
-  const issues = result.success ? [] : result.error.issues.slice(0, MAX_ISSUES).map(({ path, message }) => ({ path: path.map(part => typeof part === 'symbol' ? String(part) : part), message }));
-  return { id, enforcement, valid: result.success, issues };
+  return { id, enforcement, valid: result.success, issues: result.success ? [] : issuesOf(result.error) };
+}
+
+export type ReportValidation = {
+  kind: Exclude<ReportKind, 'usage'>;
+  /** Whether ingestion would store this body today: a valid envelope, and a matching payload unless the contract is only observed. */
+  accepted: boolean;
+  envelope: { valid: boolean; issues: ContractIssue[] };
+  contract: ContractResult;
+};
+
+/** What POST /api/v1/reports/:kind would decide about a body, without storing it. */
+export function validateReport(kind: Exclude<ReportKind, 'usage'>, body: unknown): ReportValidation {
+  const envelope = reportSchema.safeParse(body);
+  // Ingestion checks the contract against the parsed envelope, defaults applied; so does this.
+  const contract = checkReportContract(kind, envelope.success ? envelope.data : body);
+  return {
+    kind,
+    accepted: envelope.success && (contract.valid || contract.enforcement === 'observe'),
+    envelope: { valid: envelope.success, issues: envelope.success ? [] : issuesOf(envelope.error) },
+    contract,
+  };
 }

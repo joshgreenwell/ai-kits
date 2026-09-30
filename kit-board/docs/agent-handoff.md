@@ -31,7 +31,7 @@ One password-protected shell combines five report areas:
 | Daily tasks | `/tasks` | One day picker (`lib/daily-tasks.ts`): that day's standup as markdown with its copy button, above the briefing's isolated report document. `/standup` redirects here, keeping `?report=` |
 | Readings | `/readings` | Published report envelope; isolated report document |
 | Luumen AI audit | `/audit` | Full audit report plus authenticated linked evidence assets |
-| Schedules | `/schedules` | Static operating/status summary |
+| Kits | `/kits`, `/kits/[kit]` | Each kit's contracts with field tables, examples, a validate form and how recent revisions match; its endpoints, schedules (static `connected` flags from the manifests), collectors and downloads. `/schedules` redirects here |
 | PR watch | `/reviews` | Queue of pull requests that get a follow-up AI review when the author pushes; a local launchd runner polls and starts the review sessions ([PR watch queue](pr-watch.md)) |
 
 The global shell and usage views are native React. Stored report HTML is intentionally served as an isolated, sandboxed document. Do not insert report HTML into the portal DOM, weaken its CSP, or make artifact data public merely to simplify rendering.
@@ -40,7 +40,7 @@ The global shell and usage views are native React. Stored report HTML is intenti
 
 | Concern | Start here |
 | --- | --- |
-| Global page shell, login boundary, navigation | `app/layout.tsx`, `app/(private)/layout.tsx`, `app/(private)/[section]/page.tsx`, `components/navigation.tsx`, `lib/auth.ts`; the kit manifests in `lib/kits/` list the pages, report kinds, producer scopes, schedules and endpoints (`tests/kit-manifests.test.ts` holds them to the routes and `proxy.ts`) |
+| Global page shell, login boundary, navigation | `app/layout.tsx`, `app/(private)/layout.tsx`, `app/(private)/[section]/page.tsx`, `components/navigation.tsx`, `lib/auth.ts`; the kit manifests in `lib/kits/` (rendered by `app/(private)/kits/`, `components/kit-docs.tsx`) list the pages, report kinds, producer scopes, schedules and endpoints (`tests/kit-manifests.test.ts` holds them to the routes and `proxy.ts`) |
 | Shared design system | `app/theme.css`, `app/portal.css`, `app/observatory.css`, `components/ui/`, `components/page-header.tsx` |
 | Monthly usage dashboard | `app/(private)/usage/page.tsx`, `app/usage-header.css`, `lib/usage.ts`, `app/api/reports/route.ts`, `scripts/telemetry/detailed_report.py` |
 | API-equivalent pricing and environmental estimate (shared by the query layer and the monthly page) | `lib/usage-pricing.ts` with `lib/pricing-catalog.json`, `lib/environmental-estimate.ts` with `lib/environmental-factors.json` |
@@ -54,7 +54,7 @@ The global shell and usage views are native React. Stored report HTML is intenti
 | Usage capability and roadmap matrix, per provider, surface, and process | `docs/usage-coverage.md` (capability when enabled, not production status; update it with any collector or provider change) |
 | PR watch queue | `docs/pr-watch.md`, `app/(private)/reviews/page.tsx`, `components/pr-watch-queue.tsx`, `lib/pr-watch-contract.ts`, `lib/pr-watch-store.ts`, `app/api/pr-watches/` (session), `app/api/v1/pr-watches/` (`pr-watch` producer key), `scripts/pr-watch.mjs` (runner, launchd) with `scripts/pr-watch-core.mjs` (every decision), `tests/pr-watch.test.ts`, `tests/pr-watch-store.integration.test.ts` |
 | Reset feeds | `lib/reset-feeds.ts`, `lib/reset-feed-store.ts`, `app/api/reset-feeds/route.ts` |
-| Generic report ingestion | `lib/contracts.ts` (envelope), `lib/report-contracts.ts` (per-kind payloads, observe mode), `lib/db.ts`, `app/api/v1/reports/[kind]/route.ts`, `scripts/publish.mjs` |
+| Generic report ingestion | `lib/contracts.ts` (envelope), `lib/report-contracts.ts` (per-kind payloads, observe mode, `validateReport`), `lib/db.ts`, `app/api/v1/reports/[kind]/route.ts`, `app/api/v1/reports/[kind]/validate/route.ts` (checks and stores nothing), `scripts/publish.mjs` |
 | HTML report isolation and assets | `lib/artifact.ts`, `lib/artifact-runtime.ts`, `components/report-frame.tsx`, `app/api/artifacts/`, `scripts/publish-assets.mjs` |
 | Migrations and database policies | `supabase/migrations/` |
 | Hosting cron schedules | `vercel.json`, `app/api/internal/` |

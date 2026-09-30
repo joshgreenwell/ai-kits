@@ -14,6 +14,7 @@ export const readingsKit = {
   ],
   endpoints: [
     { method: 'POST', path: '/api/v1/reports/readings', auth: 'producer', scope: 'readings', contract: 'readings-v1', summary: "Publishes one edition of the day's readings." },
+    { method: 'POST', path: '/api/v1/reports/readings/validate', auth: 'producer-or-session', scope: 'readings', contract: 'readings-v1', summary: 'Checks an edition as publishing would, and stores nothing.' },
   ],
   downloads: [
     { label: 'Publisher', path: 'kit-board/scripts/publish.mjs', summary: 'Zero-dependency client that wraps a payload in the envelope and posts it.' },

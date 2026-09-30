@@ -53,13 +53,25 @@ It exits 1 when the report does not match. It also refuses a schema that uses a 
 
 Each ingestion receipt carries `contract: { id, enforcement, valid, issues }`, with at most 20 issues. `scripts/publish.mjs` prints it, and writes a warning to stderr when a stored report does not match.
 
+`POST /api/v1/reports/:kind/validate` answers what ingestion would decide about a body and stores nothing: `{ kind, accepted, envelope: { valid, issues }, contract }`. It takes the kind's producer key when an `Authorization` header is sent, and otherwise a signed-in, same-origin browser session; either way it authenticates before it reads the body. `scripts/publish.mjs --dry-run` calls it when the config holds a credential, and `--offline` keeps the check local.
+
+## The kits pages
+
+`/kits` lists every kit with its contracts, how many of the last 20 revisions of each kind match the current contract, and the board's own endpoints. `/kits/<id>` documents one kit:
+
+- **Contracts.** Each contract's mode, the recent-revision match with its most common issues (array indexes folded, each counted once per revision), a field table derived from the generated JSON Schema by `lib/contract-fields.ts`, the example body, and a form that posts a pasted body to the validate endpoint.
+- **Endpoints, schedules and collectors.** The manifest's endpoints and schedules; the AI usage kit also shows each collection source and reset feed, the table that used to sit on `/schedules`.
+- **Downloads.** Links to the repository on GitHub, pinned to the commit the deployment was built from (`VERCEL_GIT_COMMIT_SHA`, or `main` outside Vercel), with a raw link for single files. The repository is public, so there is no download route; schemas and examples come from `lib/generated/contracts/` at that commit.
+
+`/schedules` redirects to `/kits`. The match counts read stored revisions and show only field paths and contract messages, never field values.
+
 ## Extraction order
 
 | Phase | Work | Status |
 |---|---|---|
 | 0 | This page and the layout rules in `CONTRIBUTING.md` | Done |
 | 1 | Kit manifests, payload contracts, generated schemas, observe-mode validation | Done |
-| 2 | The `/kits` documentation page, the validate and contract endpoints | Pending |
+| 2 | The `/kits` documentation pages and the validate endpoint | Done |
 | 3 | `kit-daily-tasks/` and `kit-readings/` | Pending |
 | 4 | `kit-pr-watch/` | Pending |
 | 5 | `kit-audit/`, then a structured `audit-v2` payload | Not started |

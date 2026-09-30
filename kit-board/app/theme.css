@@ -146,7 +146,7 @@
   line-height: 1.4; text-align: left; cursor: pointer; box-shadow: 0 1px 2px #0002;
 }
 [data-slot="select-trigger"]:hover { background: var(--secondary); border-color: #55725e; }
-[data-slot="select-trigger"]:focus-visible, [data-slot="button"]:focus-visible, [data-slot="input"]:focus-visible {
+[data-slot="select-trigger"]:focus-visible, [data-slot="button"]:focus-visible, [data-slot="input"]:focus-visible, [data-slot="textarea"]:focus-visible {
   outline: 2px solid var(--ring); outline-offset: 3px;
 }
 [data-slot="select-value"] { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -196,6 +196,7 @@
 [data-slot="button"]:disabled { opacity: .5; cursor: wait; }
 .machine-focus-button { align-self: flex-start; margin-top: auto; white-space: normal; }
 [data-slot="input"] { height: 44px; padding: 10px 14px; border: 1px solid var(--input); border-radius: var(--radius-control); color: var(--foreground); background: var(--background); }
+[data-slot="textarea"] { min-height: 180px; padding: 10px 14px; border: 1px solid var(--input); border-radius: var(--radius-control); color: var(--foreground); background: var(--background); }
 /* Preflight is not imported, so a vendored `border-b` falls back to currentColor - the foreground -
    rather than the border token. The ledger primitives name the token here instead. */
 [data-slot="table-row"], [data-slot="table-header"] tr { border-bottom-color: var(--border); }

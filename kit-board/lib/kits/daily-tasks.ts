@@ -18,6 +18,8 @@ export const dailyTasksKit = {
   endpoints: [
     { method: 'POST', path: '/api/v1/reports/tasks', auth: 'producer', scope: 'tasks', contract: 'tasks-v1', summary: "Publishes one revision of the day's briefing." },
     { method: 'POST', path: '/api/v1/reports/standup', auth: 'producer', scope: 'standup', contract: 'standup-v1', summary: 'Publishes the final standup text.' },
+    { method: 'POST', path: '/api/v1/reports/tasks/validate', auth: 'producer-or-session', scope: 'tasks', contract: 'tasks-v1', summary: 'Checks a briefing as publishing would, and stores nothing.' },
+    { method: 'POST', path: '/api/v1/reports/standup/validate', auth: 'producer-or-session', scope: 'standup', contract: 'standup-v1', summary: 'Checks a standup as publishing would, and stores nothing.' },
   ],
   downloads: [
     { label: 'Publisher', path: 'kit-board/scripts/publish.mjs', summary: 'Zero-dependency client that wraps a payload in the envelope and posts it.' },

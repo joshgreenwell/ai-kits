@@ -60,11 +60,19 @@ test('the edge proxy admits exactly the endpoints the manifests mark as authenti
 
 test('producer endpoints carry a declared scope, and report endpoints name their kind\'s contract', () => {
   for (const endpoint of endpoints) {
-    if (endpoint.auth === 'producer') assert.ok(kits.some(kit => (kit.producers as readonly string[]).includes(endpoint.scope ?? '')), `${endpoint.path} scope`);
-    const kind = /^\/api\/v1\/reports\/([a-z]+)$/.exec(endpoint.path)?.[1];
-    if (kind) assert.equal('contract' in endpoint && endpoint.contract, reportContract(kind as typeof kinds[number]).contract, endpoint.path);
+    if (endpoint.auth === 'producer' || endpoint.auth === 'producer-or-session') assert.ok(kits.some(kit => (kit.producers as readonly string[]).includes(endpoint.scope ?? '')), `${endpoint.path} scope`);
+    const kind = /^\/api\/v1\/reports\/([a-z]+)(?:\/validate)?$/.exec(endpoint.path)?.[1];
+    if (kind) {
+      assert.equal('contract' in endpoint && endpoint.contract, reportContract(kind as typeof kinds[number]).contract, endpoint.path);
+      assert.equal(endpoint.scope, kind, `${endpoint.path} takes the ${kind} producer key`);
+    }
   }
-  for (const report of reportContracts) if (report.kind !== 'usage') assert.ok(report.contract in reportContractRegistry, report.contract);
+  for (const report of reportContracts) if (report.kind !== 'usage') {
+    assert.ok(report.contract in reportContractRegistry, report.contract);
+    // Each kind's validate route sits in the manifest of the kit that publishes the kind.
+    const owner = kits.find(kit => kit.id === report.kit)!;
+    assert.ok((owner.endpoints as readonly { path: string }[]).some(endpoint => endpoint.path === `/api/v1/reports/${report.kind}/validate`), `${report.kit} lists the ${report.kind} validate route`);
+  }
 });
 
 test('every download a kit offers exists in the repository', () => {
