@@ -6,7 +6,7 @@ Updated 2026-09-10 for the move into `joshgreenwell/ai-kits`, at repository-root
 
 ## What this checkout provides
 
-The application, lockfile, the baseline database migration and the seventeen archived ones it replaced, companion source, report publisher, audit asset publisher, a forwarder to the readings renderer in `kit-readings/`, fonts/notices, and tests are included. It receives externally produced reports and can run bounded deterministic feed/ingestion calculations. It does not run agents, scan email, modify Jira, or read an Obsidian vault itself. The retired v1 collectors are not served by the site and their production credentials are disabled.
+The application, lockfile, the baseline database migration and the seventeen archived ones it replaced, companion source, report publisher, audit asset publisher, fonts/notices, and tests are included. It receives externally produced reports and can run bounded deterministic feed/ingestion calculations. It does not run agents, scan email, modify Jira, or read an Obsidian vault itself. The retired v1 collectors are not served by the site and their production credentials are disabled.
 
 A fresh clone has **no private report history, configured accounts, password, publisher credentials, provider logs, or external analyzers**. The app can build without them; a working authenticated dashboard needs a configured database and login. Existing history requires restoring the existing database through its operator, not replaying empty migrations over production.
 
@@ -128,7 +128,7 @@ Restore the Codex directory to `~/.codex/skills/analyze-monthly-token-usage/` an
 {"url":"https://your-observatory.example","producers":{"audit-local":{"key":"REPLACE_PRIVATELY","kinds":["audit"]}}}
 ```
 
-`scripts/publish-assets.mjs --report-id <accepted-id> --html /private/report.html --allowed-root /private/report-root --producer audit-local --dry-run` inventories only explicitly linked evidence inside the approved root. Remove `--dry-run` only to publish to the configured destination. Preserve the original report and timestamps for retries; do not rerun source gathering to recover a failed upload. The readings presentation flow is `kit-readings/render-readings.mjs`; `scripts/render-readings.mjs` forwards to it until the readings task runs the kit's copy. Pending outbox files and receipts live alongside publisher configuration.
+`scripts/publish-assets.mjs --report-id <accepted-id> --html /private/report.html --allowed-root /private/report-root --producer audit-local --dry-run` inventories only explicitly linked evidence inside the approved root. Remove `--dry-run` only to publish to the configured destination. Preserve the original report and timestamps for retries; do not rerun source gathering to recover a failed upload. The readings presentation flow is `kit-readings/render-readings.mjs`. Pending outbox files and receipts live alongside publisher configuration.
 
 ## Hosting after relocation
 

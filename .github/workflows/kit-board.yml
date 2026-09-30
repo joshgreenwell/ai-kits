@@ -1,10 +1,9 @@
 name: kit-board
-# scripts/render-readings.mjs forwards to the readings kit's renderer until the readings task has run that copy.
 on:
   push:
-    paths: ['kit-board/**', 'kit-readings/render-readings.mjs', '.github/workflows/kit-board.yml']
+    paths: ['kit-board/**', '.github/workflows/kit-board.yml']
   pull_request:
-    paths: ['kit-board/**', 'kit-readings/render-readings.mjs', '.github/workflows/kit-board.yml']
+    paths: ['kit-board/**', '.github/workflows/kit-board.yml']
 permissions:
   contents: read
 jobs:

@@ -12,7 +12,7 @@ The readings kit feeds the Observatory's `/readings` page. A scheduled task on t
 
 The renderer reads the same file the publisher posts, so every valid fixture's payload must render too. It only makes `https:` links clickable, and it writes no script.
 
-The readings task runs this copy as `node ../kit-readings/render-readings.mjs` from `kit-board/` (repointed September 30). `kit-board/scripts/render-readings.mjs` still forwards to it, and will be removed once a run on the new path has published.
+The readings task runs this copy as `node ../kit-readings/render-readings.mjs` from `kit-board/` (repointed September 30). The board keeps no copy of the renderer.
 
 ## Contract
 
