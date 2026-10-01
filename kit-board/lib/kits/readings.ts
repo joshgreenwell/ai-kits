@@ -3,7 +3,7 @@ import type { KitManifest } from './types';
 export const readingsKit = {
   id: 'readings',
   title: 'Readings',
-  summary: 'A scheduled agent publishes the daily tech, AI and crypto readings as markdown, with a rendered HTML edition.',
+  summary: 'A scheduled agent publishes the daily tech, AI and crypto readings as markdown, and the board draws the page from it.',
   directory: 'kit-readings',
   extracted: true,
   page: { path: '/readings', empty: 'Connect the Claude daily readings task to start this history.' },
@@ -17,9 +17,8 @@ export const readingsKit = {
     { method: 'POST', path: '/api/v1/reports/readings/validate', auth: 'producer-or-session', scope: 'readings', contract: 'readings-v1', summary: 'Checks an edition as publishing would, and stores nothing.' },
   ],
   downloads: [
-    { label: 'Kit', path: 'kit-readings', summary: 'Renderer, schedule template, contract copy, synthetic fixtures and their tests.' },
-    { label: 'Readings renderer', path: 'kit-readings/render-readings.mjs', summary: 'Renders the readings markdown into the HTML edition.' },
-    { label: 'Schedule template', path: 'kit-readings/schedule/daily-tech-intel-snapshot.md', summary: 'What the daily readings task writes, and how it renders, checks and publishes it.' },
+    { label: 'Kit', path: 'kit-readings', summary: 'Schedule template, contract copy, synthetic fixtures and their tests.' },
+    { label: 'Schedule template', path: 'kit-readings/schedule/daily-tech-intel-snapshot.md', summary: 'What the daily readings task writes, and how it checks and publishes it.' },
     { label: 'Publisher', path: 'kit-board/scripts/publish.mjs', summary: 'Zero-dependency client that wraps a payload in the envelope and posts it.' },
   ],
 } as const satisfies KitManifest;

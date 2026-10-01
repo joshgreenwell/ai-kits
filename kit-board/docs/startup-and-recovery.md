@@ -128,7 +128,7 @@ Restore the Codex directory to `~/.codex/skills/analyze-monthly-token-usage/` an
 {"url":"https://your-observatory.example","producers":{"audit-local":{"key":"REPLACE_PRIVATELY","kinds":["audit"]}}}
 ```
 
-`scripts/publish-assets.mjs --report-id <accepted-id> --html /private/report.html --allowed-root /private/report-root --producer audit-local --dry-run` inventories only explicitly linked evidence inside the approved root. Remove `--dry-run` only to publish to the configured destination. Preserve the original report and timestamps for retries; do not rerun source gathering to recover a failed upload. The readings presentation flow is `kit-readings/render-readings.mjs`. Pending outbox files and receipts live alongside publisher configuration.
+`scripts/publish-assets.mjs --report-id <accepted-id> --html /private/report.html --allowed-root /private/report-root --producer audit-local --dry-run` inventories only explicitly linked evidence inside the approved root. Remove `--dry-run` only to publish to the configured destination. Preserve the original report and timestamps for retries; do not rerun source gathering to recover a failed upload. Readings publish as markdown alone, and `/readings` draws the page from it. Pending outbox files and receipts live alongside publisher configuration.
 
 ## Hosting after relocation
 

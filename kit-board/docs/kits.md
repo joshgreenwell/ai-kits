@@ -19,7 +19,7 @@ Some of the pieces named here arrive in later phases. The [extraction order](#ex
 |---|---|---|---|
 | AI usage | `kit-usage/` (not yet extracted) | companion, browser quota bridge, `scripts/telemetry/`, collector-side fixtures, machine-side docs | `lib/usage-contract.ts`, usage/telemetry/allowance/reset-feed libraries, `/api/v1/usage`, `/api/v1/companion/*`, `/api/reports`, `/usage`, `/settings/*` |
 | Daily tasks | `kit-daily-tasks/` | schedule template, fixtures, contract copies (`tasks-v1`, `standup-v1`) | `lib/daily-tasks.ts`, `lib/daily-briefing.ts`, `/tasks` |
-| Readings | `kit-readings/` | `render-readings.mjs`, schedule template, fixtures, contract copy (`readings-v1`) | `lib/readings.ts` and the readings view |
+| Readings | `kit-readings/` | schedule template, fixtures, contract copy (`readings-v1`) | `lib/readings.ts` and the readings view |
 | Audit | `kit-audit/` (not yet extracted) | `publish-assets.mjs`, fixtures, contract copy (`audit-v1`) | `lib/artifact*`, `lib/assets*`, `lib/report-selection.ts`, `/audit` |
 | PR watch | `kit-pr-watch/` | runner, decision core, decision tests, fixtures, contract copies (`pr-watch-work-v1`, `pr-watch-report-v1`) | `lib/pr-watch-contract.ts`, `lib/pr-watch-store.ts`, both route sets, `/reviews` |
 | Board core | — | — | auth, `proxy.ts`, `lib/db.ts`, the envelope, `scripts/publish.mjs`, migrations |
@@ -95,4 +95,4 @@ Before phase 6, confirm on each machine that no unpacked browser extension loads
 
 Moving kit files does not change the scheduled agents that produce reports: Codex `daily-personal-assistant`, `weekly-luumen-ai-audit` and `monthly-ai-usage`, and the Claude Desktop `daily-tech-intel-snapshot`. Their prompts and schedules live in those apps. Each kit's `schedule/` template records what the board needs from the schedule. It is documentation, not the schedule's source of truth.
 
-Two local jobs do run files from this checkout by path. The PR watch LaunchAgent runs `kit-pr-watch/pr-watch.mjs`, the path `install` wrote, so run `install` again after moving the checkout. The readings task runs `../kit-readings/render-readings.mjs` from `kit-board/` (repointed September 30), so change its prompt after moving the kit.
+Two local jobs do run files from this checkout by path. The PR watch LaunchAgent runs `kit-pr-watch/pr-watch.mjs`, the path `install` wrote, so run `install` again after moving the checkout. The readings task works in `kit-board/` and publishes with `scripts/publish.mjs`, so change its prompt after moving the checkout.

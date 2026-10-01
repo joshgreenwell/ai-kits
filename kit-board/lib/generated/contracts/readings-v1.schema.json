@@ -59,7 +59,7 @@
           "pattern": "\\S"
         },
         "source": {
-          "description": "Who produced the edition, shown under the HTML edition.",
+          "description": "Names the task that wrote the edition.",
           "type": "string"
         }
       },

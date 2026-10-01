@@ -6,12 +6,12 @@
     "excerpt_or_raw": "raw"
   },
   "consumers": [
-    "kit-readings npm test (contract/validate.mjs and render-readings.mjs)",
+    "kit-readings npm test (contract/validate.mjs)",
     "POST /api/v1/reports/readings/validate, by hand"
   ],
   "valid": {
-    "readings-headings.json": { "contract": "readings-v1", "proves": "standard markdown headings, Worth Looking At items, and a coverage window pass and render" },
-    "readings-slack-mrkdwn.json": { "contract": "readings-v1", "proves": "bare headings, a section split across (1/2) and (2/2), and <https://…|label> links pass and render" },
+    "readings-headings.json": { "contract": "readings-v1", "proves": "standard markdown headings, Worth Looking At items, and a coverage window pass" },
+    "readings-slack-mrkdwn.json": { "contract": "readings-v1", "proves": "bare headings, a section split across (1/2) and (2/2), and <https://…|label> links pass" },
     "readings-markdown-only.json": { "contract": "readings-v1", "proves": "source is optional" }
   },
   "invalid": {

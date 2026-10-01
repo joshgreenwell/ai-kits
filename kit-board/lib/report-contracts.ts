@@ -92,7 +92,7 @@ const tasksPayload = z.looseObject({
 
 const markdownPayload = z.looseObject({ markdown: z.string().regex(/\S/, 'Must not be blank') });
 
-const readingsPayload = markdownPayload.extend({ source: text.optional().describe('Who produced the edition, shown under the HTML edition.') });
+const readingsPayload = markdownPayload.extend({ source: text.optional().describe('Names the task that wrote the edition.') });
 
 /** Each kind's full request body: the envelope with that kind's payload. */
 function body(payload: z.ZodType, extra: z.ZodRawShape = {}) {
