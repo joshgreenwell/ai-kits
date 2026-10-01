@@ -66,7 +66,7 @@ jobs:
           cd "$(mktemp -d)"
           uvx --from "${GITHUB_WORKSPACE}"/agentlint/dist/agentlint-*.whl agentlint --version
           uvx --from "${GITHUB_WORKSPACE}"/agentlint/dist/agentlint-*.whl agentlint analyze "${GITHUB_WORKSPACE}"/agentlint/tests/e2e/healthy_run/bundle.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: agentlint-dist
           path: agentlint/dist/
