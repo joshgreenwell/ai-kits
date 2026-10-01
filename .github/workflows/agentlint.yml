@@ -84,7 +84,7 @@ jobs:
       id-token: write   # trusted publishing; no API token is stored
       contents: read
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: agentlint-dist
           path: dist/
