@@ -46,6 +46,10 @@ pub enum ValueError {
     MeterKey,
     #[error("expected a tool name of 1 to 80 characters from [a-zA-Z0-9_.-] or h:<16 hex>")]
     ToolName,
+    #[error(
+        "expected a git branch name of 1 to 200 characters from [A-Za-z0-9._/+@-], starting alphanumeric"
+    )]
+    GitBranchName,
     #[error("expected a decimal amount with at most 12 integer and 6 fractional digits")]
     Amount,
     #[error("expected an account id matching ^[a-z0-9][a-z0-9-]{{1,79}}$")]
@@ -595,6 +599,20 @@ pattern_string!(
 );
 
 pattern_string!(
+    /// A git branch name as the provider recorded it:
+    /// `^[A-Za-z0-9][A-Za-z0-9._/+@-]{0,199}$`. A name outside this set is not
+    /// sent; the request says `unknown` instead.
+    GitBranchName,
+    GitBranchName,
+    |text| {
+        let bytes = text.as_bytes();
+        (1..=200).contains(&bytes.len())
+            && bytes[0].is_ascii_alphanumeric()
+            && bytes.iter().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'/' | b'+' | b'@' | b'-'))
+    }
+);
+
+pattern_string!(
     /// A decimal money amount as a string: `^-?\d{1,12}(\.\d{1,6})?$`.
     Amount,
     Amount,
@@ -1026,6 +1044,10 @@ mod tests {
         assert!(MeterKey::from_str("seven_day_claude_opus").is_ok());
         assert!(ToolName::from_str("h:0123456789abcdef").is_ok());
         assert!(ToolName::from_str("h:0123").is_err());
+        assert!(GitBranchName::from_str("feat/LUUM-3317-group-connect").is_ok());
+        assert!(GitBranchName::from_str("-x").is_err());
+        assert!(GitBranchName::from_str("feat/caf\u{e9}").is_err());
+        assert!(GitBranchName::from_str(&"a".repeat(201)).is_err());
         assert!(Amount::from_str("-12.500000").is_ok());
         assert!(Amount::from_str("1234567890123").is_err());
         assert!(Amount::from_str("1.").is_err());

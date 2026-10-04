@@ -37,10 +37,12 @@ export const companionCapabilitiesSchema = z.object({
     claude_oauth_keepalive: z.boolean().default(false),
     /** Sends `name.label`, `project.catalog` and `project.membership` records (companion 2.2.0). Absent on older builds. */
     labels: z.boolean().optional(),
+    /** `branch_attribution` values this build honours (companion 2.3.0). Absent on older builds. */
+    branch_attribution: z.array(code).max(8).optional(),
   }).strict(),
   effective: z.object({
     settings_version_applied: counter, config_source: z.enum(['fetched', 'cached', 'defaults']), paused: z.boolean(),
-    cadence_minutes: counter, detail_level: code, tool_detail: code, project_attribution: code, include_subagents: z.boolean(),
+    cadence_minutes: counter, detail_level: code, tool_detail: code, project_attribution: code, branch_attribution: code.optional(), include_subagents: z.boolean(),
     resource_attribution: z.enum(['on', 'no_resources', 'denied_locally', 'detail_level']), resources_configured: counter,
     readers: z.object({ claude: code, codex: code, cursor: code }).strict(),
   }).strict(),

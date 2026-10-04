@@ -649,6 +649,35 @@
                 ],
                 "additionalProperties": false
               },
+              "git_branch": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/+@-]{0,199}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "basis": {
+                    "type": "string",
+                    "enum": [
+                      "recorded",
+                      "detached",
+                      "unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "basis"
+                ],
+                "additionalProperties": false
+              },
               "project_hash": {
                 "anyOf": [
                   {

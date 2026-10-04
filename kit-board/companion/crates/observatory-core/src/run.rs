@@ -12,7 +12,7 @@ use jiff::Timestamp;
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
 use observatory_contract::IdentityRequest;
-use observatory_contract::settings::{DetailLevel, ProjectAttribution, ToolDetail};
+use observatory_contract::settings::{BranchAttribution, DetailLevel, ProjectAttribution, ToolDetail};
 use observatory_contract::{
     AdapterCapability, AdapterCoverage, AgentClass, Arch, BackfillState, BindingCapability, BindingIdentity,
     BucketEntry, BuildInfo, CapabilitiesDocument, CapabilityCoverage, Code, CollectionSettings,
@@ -831,6 +831,19 @@ fn pending_records_for_agent_setting_with_limit(
                         }
                     }
                     apply_current_privacy_policy(&mut record, detail_level, project_attribution, tool_detail);
+                    // A branch leaves only under a current `plain` setting the
+                    // deny list allows; without that policy it stays home.
+                    let branch_attribution = local_policy.map_or(BranchAttribution::Off, |policy| {
+                        crate::adapter::restrict_branch_attribution(
+                            policy.settings.execution.branch_attribution,
+                            policy.deny,
+                        )
+                    });
+                    if branch_attribution == BranchAttribution::Off
+                        && let Record::ActivityRequest(request) = &mut record
+                    {
+                        request.git_branch = None;
+                    }
                     let revised = serde_json::to_string(&record).map_err(|_| StateError::Corrupt)?;
                     if revised != row.record {
                         let content_hash = observatory_contract::stable_json::content_hash(&record)
@@ -1500,11 +1513,12 @@ fn build_modes(adapter: AdapterId, implemented: bool) -> Vec<Code> {
 /// Every mode path a deny entry can name, whatever the server currently selects: an
 /// entry for a mode that is not selected today still removes it if it is selected
 /// later, so it is recognized and reported rather than counted as noise.
-const KNOWN_MODE_PATHS: [&str; 17] = [
+const KNOWN_MODE_PATHS: [&str; 18] = [
     "execution.claude_local_logs",
     "execution.codex_local_history",
     "execution.cursor_local_state",
     "execution.project_attribution.hashed",
+    "execution.branch_attribution.plain",
     "execution.resource_attribution",
     "allowance.claude_reader.statusline",
     "allowance.claude_reader.oauth_usage",
@@ -1589,6 +1603,7 @@ pub fn capabilities_document(
         account_history: true,
         claude_oauth_keepalive: true,
         labels: true,
+        branch_attribution: codes(&["off", "plain"]),
     };
     let fingerprint = digest(&serde_json::json!([adapter_rows, features]));
     let resource_attribution = if settings.execution.detail_level != DetailLevel::RequestsWithTools {
@@ -1641,6 +1656,7 @@ pub fn capabilities_document(
             detail_level: code(settings.execution.detail_level.as_str()),
             tool_detail: code(settings.execution.tool_detail.as_str()),
             project_attribution: code(settings.execution.project_attribution.as_str()),
+            branch_attribution: Some(code(settings.execution.branch_attribution.as_str())),
             include_subagents: settings.execution.include_subagents,
             resource_attribution,
             resources_configured: counter(ctx.resources.resources.len() as u64),
@@ -2104,6 +2120,58 @@ mod tests {
         assert!(record_matches_execution_settings(&first_allowed[0], DetailLevel::Requests, false));
         assert_eq!(state.clear_outbox().unwrap(), 1);
         assert_eq!(state.outbox_len().unwrap(), 0);
+    }
+
+    /// A queued branch leaves only under a current `plain` setting the deny list
+    /// allows; an upload with no current policy keeps it home. Stripping is
+    /// persisted, like the other tightenings: turning the setting back on
+    /// re-emits from saved events rather than restoring the queued copy.
+    #[test]
+    fn queued_branch_follows_the_current_branch_setting() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/usage-v2/wire/valid/detail-contract-events.json"
+        ))
+        .unwrap();
+        let mut value = fixture["records"][0].clone();
+        value["git_branch"] = json!({ "name": "feature/SYN-1-synthetic", "basis": "recorded" });
+        let record: Record = serde_json::from_value(value).unwrap();
+        let queued = || {
+            let dir = tempfile::tempdir().unwrap();
+            let state = State::open(&dir.path().join("state.sqlite3")).unwrap();
+            save_record(&state, &record, "2026-09-02T04:01:00.000Z");
+            (dir, state)
+        };
+        let branch = |records: Vec<Record>| match records.as_slice() {
+            [Record::ActivityRequest(request)] => request.git_branch.clone(),
+            other => panic!("expected one request, got {}", other.len()),
+        };
+        let none = ResourceConfiguration::default();
+        let current = |setting| {
+            let mut settings = CollectionSettings::defaults();
+            settings.execution.detail_level = DetailLevel::Requests;
+            settings.execution.include_subagents = true;
+            settings.execution.branch_attribution = setting;
+            settings
+        };
+        let deny = ["execution.branch_attribution".to_owned()];
+        for (setting, deny, kept) in [
+            (BranchAttribution::Plain, &[][..], true),
+            (BranchAttribution::Off, &[][..], false),
+            (BranchAttribution::Plain, &deny[..], false),
+        ] {
+            let (_dir, state) = queued();
+            let pending = pending_records_for_current_settings(&state, &current(setting), deny, &none);
+            assert_eq!(branch(pending.unwrap()).is_some(), kept, "{setting} with deny {deny:?}");
+        }
+        let (_dir, state) = queued();
+        let offline = pending_records_for_agent_setting(
+            &state,
+            DetailLevel::Requests,
+            true,
+            ProjectAttribution::Off,
+            ToolDetail::Off,
+        );
+        assert!(branch(offline.unwrap()).is_none());
     }
 
     #[test]

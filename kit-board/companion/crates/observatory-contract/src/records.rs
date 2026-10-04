@@ -9,15 +9,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::enums::{
     AccessEvidenceBasis, AccessKind, Adapter, AgentClass, AgentEventKind, AgentRole, AllowanceKind,
-    AllowanceUnit, Basis, Channel, CompositionState, EntryKind, EventOutcome, ExecutionHost, IdentityBasis,
-    LabelKind, MembershipKind, MembershipResolution, MoneyUnit, ParentIdentityBasis, ProjectApp,
-    ProjectBasis, ProjectState, Reader, RecordType, ReferenceKind, RequestOutcome, SessionIdentity, Surface,
-    ToolClass, ToolEventKind,
+    AllowanceUnit, Basis, BranchBasis, Channel, CompositionState, EntryKind, EventOutcome, ExecutionHost,
+    IdentityBasis, LabelKind, MembershipKind, MembershipResolution, MoneyUnit, ParentIdentityBasis,
+    ProjectApp, ProjectBasis, ProjectState, Reader, RecordType, ReferenceKind, RequestOutcome,
+    SessionIdentity, Surface, ToolClass, ToolEventKind,
 };
 use crate::envelope::Violation;
 use crate::newtypes::{
-    Amount, Code, Counter, LabelKey, LabelText, MeterKey, Nullable, ProjectName, Real, Sha256Hex, Stamp,
-    Text, ToolName, Uuid, ValueError,
+    Amount, Code, Counter, GitBranchName, LabelKey, LabelText, MeterKey, Nullable, ProjectName, Real,
+    Sha256Hex, Stamp, Text, ToolName, Uuid, ValueError,
 };
 use crate::{FUTURE_TOLERANCE_SECONDS, MAX_TOOLS_PER_REQUEST};
 
@@ -96,6 +96,16 @@ pub struct ProjectAttribution {
     pub basis: ProjectBasis,
 }
 
+/// The git branch the provider recorded for the request's session. Sent only
+/// when `execution.branch_attribution` is `plain`; the name is the branch as
+/// written, never a path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitBranch {
+    pub name: Nullable<GitBranchName>,
+    pub basis: BranchBasis,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolIdentity {
@@ -162,6 +172,12 @@ pub struct ActivityRequest {
         deserialize_with = "crate::newtypes::deserialize_optional_non_null"
     )]
     pub project: Option<ProjectAttribution>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::newtypes::deserialize_optional_non_null"
+    )]
+    pub git_branch: Option<GitBranch>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -542,6 +558,14 @@ impl ProjectAttribution {
     }
 }
 
+impl GitBranch {
+    fn validate(&self, path: &str, out: &mut Vec<Violation>) {
+        if (self.basis == BranchBasis::Recorded) != self.name.as_ref().is_some() {
+            out.push(Violation { path: format!("{path}.name"), rule: "branch name must match its basis" });
+        }
+    }
+}
+
 impl TokenAccounting {
     fn validate(
         &self,
@@ -811,6 +835,9 @@ impl Record {
                 }
                 if let Some(agent) = &r.agent {
                     agent.validate(&format!("{path}.agent"), out);
+                }
+                if let Some(branch) = &r.git_branch {
+                    branch.validate(&format!("{path}.git_branch"), out);
                 }
                 if let Some(project) = &r.project {
                     project.validate(&format!("{path}.project"), out);

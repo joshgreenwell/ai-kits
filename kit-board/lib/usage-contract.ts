@@ -74,6 +74,19 @@ export const projectAttributionSchema = z.object({
   }
 });
 
+/** A git branch name as the provider recorded it; the commit and repository URL are never read. */
+const gitBranchName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._\/+@-]{0,199}$/);
+
+/** The branch of the directory a session was launched from (USG-035). `detached` is a recorded `HEAD`. */
+export const gitBranchSchema = z.object({
+  name: gitBranchName.nullable(),
+  basis: z.enum(['recorded','detached','unknown']),
+}).strict().superRefine((branch, ctx) => {
+  if ((branch.basis === 'recorded') !== (branch.name !== null)) {
+    ctx.addIssue({ code: 'custom', path: ['name'], message: 'Branch name must match its basis' });
+  }
+});
+
 type TokenEvidence = { input_fresh: number | null; input_cached: number | null; input_cache_write: number | null;
   output: number | null; reasoning: number | null };
 function validateTokenAccounting(tokens: TokenEvidence, accounting: z.infer<typeof tokenAccountingSchema>,
@@ -124,6 +137,7 @@ export const activityRequestSchema = z.object({ ...header, record_type: z.litera
   tool_calls: nullableCounter,
   tools: z.array(z.object({ name: privacySafeName, calls: counter }).strict()).max(50).optional(),
   project: projectAttributionSchema.optional(),
+  git_branch: gitBranchSchema.optional(),
   project_hash: sha256.nullable(), client_version: z.string().max(40).nullable(),
   latency_ms: nullableCounter, outcome: z.enum(['completed','failed','cancelled','unknown']),
 }).strict().superRefine((request, ctx) => {

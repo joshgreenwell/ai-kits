@@ -3,14 +3,16 @@
 //! total and privacy-filtered tool names. `project_hash` is filled only when
 //! `project_attribution` is `hashed`; the hash is of the working directory
 //! alone (`jsonl::project_hash`) and the path stays on this machine.
+//! `git_branch` is filled only when `branch_attribution` is `plain`.
 
 use observatory_contract::settings::{
-    DetailLevel, ProjectAttribution as ProjectAttributionSetting, ToolDetail,
+    BranchAttribution, DetailLevel, ProjectAttribution as ProjectAttributionSetting, ToolDetail,
 };
 use observatory_contract::{
-    ActivityRequest, Adapter, Basis, CapabilityCoverage, CapabilityDimension, CapabilityState, Channel, Code,
-    CompositionState, Counter, ExecutionHost, Nullable, PricingEvidence, ProjectAttribution, ProjectBasis,
-    Record, RequestOutcome, SessionIdentity, Sha256Hex, Stamp, Surface, Text, TokenAccounting, Tokens, Uuid,
+    ActivityRequest, Adapter, Basis, BranchBasis, CapabilityCoverage, CapabilityDimension, CapabilityState,
+    Channel, Code, CompositionState, Counter, ExecutionHost, GitBranch, GitBranchName, Nullable,
+    PricingEvidence, ProjectAttribution, ProjectBasis, Record, RequestOutcome, SessionIdentity, Sha256Hex,
+    Stamp, Surface, Text, TokenAccounting, Tokens, Uuid,
 };
 use observatory_core::adapter::record_id;
 use observatory_core::privacy::PrivacyKey;
@@ -240,6 +242,19 @@ pub fn request_matches_agent_setting(event: &EventRow, include_subagents: bool) 
                 )))
 }
 
+/// The stored branch as the contract carries it. A recorded basis without a
+/// name the contract accepts degrades to `unknown` rather than dropping the request.
+fn git_branch_from_event(event: &EventRow) -> GitBranch {
+    let name = event.git_branch.clone().and_then(|value| GitBranchName::try_from(value).ok());
+    match (event.git_branch_basis.parse::<BranchBasis>().unwrap_or(BranchBasis::Unknown), name) {
+        (BranchBasis::Recorded, Some(name)) => {
+            GitBranch { name: Nullable::some(name), basis: BranchBasis::Recorded }
+        }
+        (BranchBasis::Detached, _) => GitBranch { name: Nullable::NULL, basis: BranchBasis::Detached },
+        _ => GitBranch { name: Nullable::NULL, basis: BranchBasis::Unknown },
+    }
+}
+
 /// Builds the request record for one saved event; `None` when a stored value is
 /// outside the contract.
 #[allow(clippy::too_many_arguments)]
@@ -250,6 +265,7 @@ pub fn request_from_event(
     parser_version: &str,
     detail_level: DetailLevel,
     project_attribution: ProjectAttributionSetting,
+    branch_attribution: BranchAttribution,
     tool_detail: ToolDetail,
     include_subagents: bool,
     tools: &ToolIndex<'_>,
@@ -286,6 +302,7 @@ pub fn request_from_event(
         }
         ProjectAttributionSetting::Off => None,
     };
+    let git_branch = (branch_attribution == BranchAttribution::Plain).then(|| git_branch_from_event(event));
     let project_hash = project.as_ref().and_then(|value| {
         (value.basis == ProjectBasis::WorkingDirectory).then(|| value.key.as_ref().cloned()).flatten()
     });
@@ -407,6 +424,7 @@ pub fn request_from_event(
         tools,
         project_hash: Nullable(project_hash),
         project,
+        git_branch,
         agent,
         client_version: Nullable(event.client_version.clone().and_then(|v| Text::truncated(&v).ok())),
         latency_ms: Nullable::NULL,

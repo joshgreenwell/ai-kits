@@ -90,6 +90,16 @@ export type InstallSummary = { id: string; machine_label: string; kind: 'compani
     accepted_buckets: number; accepted_records: number; rejected_records: number; accepted_by_type: AcceptedByType; received_at: string } | null };
 export type InstallsSummary = { installs: InstallSummary[]; settings: CollectionSettings; settings_version: number; latest_companion_version: string | null; settings_updated_at: string };
 
+/** The first companion build whose settings parser accepts `execution.branch_attribution` (USG-035). */
+const BRANCH_ATTRIBUTION_SINCE: readonly [number, number, number] = [2, 3, 0];
+/** The version a companion names in its `observatory/<version>` User-Agent; null for any other client. */
+export function companionBuild(userAgent: string | null | undefined): [number, number, number] | null {
+  const match = userAgent?.match(/^observatory\/(\d+)\.(\d+)\.(\d+)/);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+}
+const buildAtLeast = (build: readonly number[], floor: readonly number[]) =>
+  build[0] !== floor[0] ? build[0] > floor[0] : build[1] !== floor[1] ? build[1] > floor[1] : build[2] >= floor[2];
+
 const CHANNEL_RANK = "CASE channel WHEN 'provider_api' THEN 0 WHEN 'app_server' THEN 1 WHEN 'local_file' THEN 2 WHEN 'local_db' THEN 2 ELSE 3 END";
 /**
  * activity_requests columns that describe a sighting rather than the request: they are dropped when two
@@ -245,14 +255,21 @@ export function createUsageStore(getDatabase?: () => Sql) {
       latest_companion_version: (row.latest_companion_version as string | null) ?? null, updated_at: row.updated_at as string };
   }
 
-  /** The config document (section 1.2) and its ETag. */
-  async function companionConfig(install: CompanionInstallRow) {
+  /**
+   * The config document (section 1.2) and its ETag. `userAgent` is the requesting client's header: a
+   * companion before 2.3.0 rejects an unknown execution key and falls back to its cached config, so
+   * `branch_attribution` is sent only as `plain` and only to a build that names 2.3.0 or later. `off`
+   * is the companion's own default, so leaving it out changes nothing and keeps older builds' ETag.
+   */
+  async function companionConfig(install: CompanionInstallRow, userAgent: string | null = null) {
     const db = await sql();
     const global = await globalSettings(db);
     const bindings = await db`SELECT id AS binding_id, account_id, provider, enabled, identity_hash FROM personal_hub.companion_bindings
       WHERE install_id = ${install.id} ORDER BY created_at, id`;
     const settings = mergeSettings(global.stored, install.settings);
     settings.paused = settings.paused || install.paused;
+    const build = companionBuild(userAgent);
+    if (settings.execution.branch_attribution !== 'plain' || !build || !buildAtLeast(build, BRANCH_ATTRIBUTION_SINCE)) delete settings.execution.branch_attribution;
     const document = { schema_version: 2, settings_version: global.settings_version,
       install: { id: install.id, kind: install.kind, machine_label: install.machine_label, paused: install.paused },
       bindings: clone(bindings), settings, companion: { latest_version: global.latest_companion_version } };
@@ -487,6 +504,7 @@ export function createUsageStore(getDatabase?: () => Sql) {
               agent_class: record.agent?.class ?? null, agent_name: record.agent?.name ?? null, agent_depth: record.agent?.depth ?? null,
               tool_calls: record.tool_calls, tools: tx.json((record.tools ?? null) as postgres.JSONValue), project_hash: record.project_hash, client_version: record.client_version,
               project_key: record.project?.key ?? null, project_basis: record.project?.basis ?? null,
+              git_branch: record.git_branch?.name ?? null, git_branch_basis: record.git_branch?.basis ?? null,
               latency_ms: record.latency_ms, outcome: record.outcome, parser_version: record.parser_version });
             break;
           case 'account.usage_bucket': {

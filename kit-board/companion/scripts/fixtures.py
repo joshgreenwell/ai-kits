@@ -369,6 +369,14 @@ def valid_envelopes() -> dict[str, dict]:
 
     nested_start = agent_event("nested-start", "start", "nested")
     nested_start["agent"] = agent("nested", "custom", 2, "child")
+
+    # USG-035: only the branch name a transcript recorded, sent when branch_attribution is plain.
+    branch_recorded = activity_request("branch-recorded")
+    branch_recorded["git_branch"] = {"name": "feature/SYN-1-synthetic", "basis": "recorded"}
+    branch_detached = activity_request("branch-detached")
+    branch_detached["git_branch"] = {"name": None, "basis": "detached"}
+    branch_unknown = activity_request("branch-unknown")
+    branch_unknown["git_branch"] = {"name": None, "basis": "unknown"}
     return {
         "companion-buckets-and-coverage": {"schema_version": 2, "run": run_block(),
             "buckets": [bucket(B_CLAUDE, "claude-opus-4-1", "2026-09-02T02:00:00.000Z", (5, 20, 8, 24), calls=2),
@@ -391,6 +399,9 @@ def valid_envelopes() -> dict[str, dict]:
                          coverage("codex_browser", "prerequisite_missing", "no_tab"),
                          coverage("cursor_browser", "disabled_by_setting", "mode_off")]},
         "minimal-coverage-only": {"schema_version": 2, "run": run_block(), "coverage": []},
+        "git-branch-requests": {"schema_version": 2, "run": run_block(), "buckets": [],
+            "records": [branch_recorded, branch_detached, branch_unknown],
+            "coverage": [coverage("claude_execution", "ok", records_emitted=3)]},
         "allowance-non-percent-kinds": {"schema_version": 2, "run": run_block(),
             "records": [
                 allowance("codex_account", "app_server", B_CODEX, "app_server", "codex:credits", "Codex credits", 42.25, None, None, "credits",
@@ -494,6 +505,11 @@ def invalid_envelopes() -> dict[str, tuple[str, bool, dict]]:
     null_request_agent = activity_request("null-request-agent"); null_request_agent["agent"] = None
     null_request_project = activity_request("null-request-project"); null_request_project["project"] = None
     null_request_tools = activity_request("null-request-tools"); null_request_tools["tools"] = None
+    null_request_git_branch = activity_request("null-request-git-branch"); null_request_git_branch["git_branch"] = None
+    branch_basis_mismatch = activity_request("branch-basis-mismatch")
+    branch_basis_mismatch["git_branch"] = {"name": "main", "basis": "detached"}
+    branch_unsafe_name = activity_request("branch-unsafe-name")
+    branch_unsafe_name["git_branch"] = {"name": "has space", "basis": "recorded"}
     null_bucket_pricing = usage_bucket("null-bucket-pricing"); null_bucket_pricing["dimensions"]["pricing"] = None
     null_bucket_accounting = usage_bucket("null-bucket-accounting"); null_bucket_accounting["token_accounting"] = None
     null_capabilities = coverage("claude_execution", "ok"); null_capabilities["capabilities"] = None
@@ -533,6 +549,9 @@ def invalid_envelopes() -> dict[str, tuple[str, bool, dict]]:
         "null-request-agent": ("null_optional_block", True, base(records=[null_request_agent])),
         "null-request-project": ("null_optional_block", True, base(records=[null_request_project])),
         "null-request-tools": ("null_optional_block", True, base(records=[null_request_tools])),
+        "null-request-git-branch": ("null_optional_block", True, base(records=[null_request_git_branch])),
+        "git-branch-basis-mismatch": ("git_branch_basis_mismatch", False, base(records=[branch_basis_mismatch])),
+        "git-branch-unsafe-name": ("git_branch_name", True, base(records=[branch_unsafe_name])),
         "null-bucket-pricing": ("null_optional_block", True, base(records=[null_bucket_pricing])),
         "null-bucket-accounting": ("null_optional_block", True, base(records=[null_bucket_accounting])),
         "null-capabilities": ("null_optional_block", True, base(coverage_rows=[null_capabilities])),

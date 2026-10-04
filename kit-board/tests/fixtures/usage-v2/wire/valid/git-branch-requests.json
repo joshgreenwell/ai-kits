@@ -1,0 +1,143 @@
+{
+  "schema_version": 2,
+  "run": {
+    "run_id": "9c0f1a2b-3d4e-4f50-8a6b-7c8d9e0f1a2b",
+    "started_at": "2026-09-02T04:00:00.000Z",
+    "finished_at": "2026-09-02T04:00:02.500Z",
+    "companion_version": "2.0.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "settings_version": 3
+  },
+  "buckets": [],
+  "records": [
+    {
+      "record_id": "724b8449-80ce-57ea-98e8-07e944333b68",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:15:30.500Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "activity.request",
+      "semantic_key": "ac58616052cc50a58e254b4bb4a84149ac58616052cc50a58e254b4bb4a84149",
+      "product": "claude_code",
+      "surface": "cli",
+      "execution_host": "local",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "session_identity": "provider",
+      "parent_session_hash": null,
+      "model_requested": null,
+      "model_actual": "claude-sonnet-4",
+      "started_at": null,
+      "ended_at": "2026-09-02T03:15:30.500Z",
+      "tokens": {
+        "input_fresh": 100,
+        "input_cached": 0,
+        "input_cache_write": 0,
+        "output": 50,
+        "reasoning": null
+      },
+      "tool_calls": null,
+      "project_hash": null,
+      "client_version": "1.0.101",
+      "latency_ms": null,
+      "outcome": "completed",
+      "git_branch": {
+        "name": "feature/SYN-1-synthetic",
+        "basis": "recorded"
+      }
+    },
+    {
+      "record_id": "f5ba1c5e-531c-5d3a-a077-6dd8bb32c659",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:15:30.500Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "activity.request",
+      "semantic_key": "8cfd13c184795db2b5328c89a42eaabf8cfd13c184795db2b5328c89a42eaabf",
+      "product": "claude_code",
+      "surface": "cli",
+      "execution_host": "local",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "session_identity": "provider",
+      "parent_session_hash": null,
+      "model_requested": null,
+      "model_actual": "claude-sonnet-4",
+      "started_at": null,
+      "ended_at": "2026-09-02T03:15:30.500Z",
+      "tokens": {
+        "input_fresh": 100,
+        "input_cached": 0,
+        "input_cache_write": 0,
+        "output": 50,
+        "reasoning": null
+      },
+      "tool_calls": null,
+      "project_hash": null,
+      "client_version": "1.0.101",
+      "latency_ms": null,
+      "outcome": "completed",
+      "git_branch": {
+        "name": null,
+        "basis": "detached"
+      }
+    },
+    {
+      "record_id": "9eeb75a3-bcb7-53d6-af38-24c0731c4eba",
+      "binding_id": "5d1b2c3e-4f50-4a6b-8c7d-0e1f2a3b4c5d",
+      "adapter": "claude_execution",
+      "channel": "local_file",
+      "observed_at": "2026-09-02T03:15:30.500Z",
+      "basis": "exact",
+      "parser_version": "2.0.0+v1.1.0",
+      "record_type": "activity.request",
+      "semantic_key": "45576c569c6c5907b69aa99b9c32c4d445576c569c6c5907b69aa99b9c32c4d4",
+      "product": "claude_code",
+      "surface": "cli",
+      "execution_host": "local",
+      "session_hash": "da2d51cbfcf0535a92121eda4c706119da2d51cbfcf0535a92121eda4c706119",
+      "session_identity": "provider",
+      "parent_session_hash": null,
+      "model_requested": null,
+      "model_actual": "claude-sonnet-4",
+      "started_at": null,
+      "ended_at": "2026-09-02T03:15:30.500Z",
+      "tokens": {
+        "input_fresh": 100,
+        "input_cached": 0,
+        "input_cache_write": 0,
+        "output": 50,
+        "reasoning": null
+      },
+      "tool_calls": null,
+      "project_hash": null,
+      "client_version": "1.0.101",
+      "latency_ms": null,
+      "outcome": "completed",
+      "git_branch": {
+        "name": null,
+        "basis": "unknown"
+      }
+    }
+  ],
+  "coverage": [
+    {
+      "adapter": "claude_execution",
+      "state": "ok",
+      "detail_code": null,
+      "stores_discovered": 0,
+      "files": 0,
+      "bytes_read": 0,
+      "records_emitted": 3,
+      "malformed": 0,
+      "rejected_by_server": 0,
+      "duration_ms": 1,
+      "cursor_state": "complete",
+      "probe_requests": 0,
+      "parser_version": "2.0.0+v1.1.0"
+    }
+  ]
+}

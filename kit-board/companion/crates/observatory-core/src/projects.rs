@@ -775,6 +775,8 @@ mod tests {
             agent_class: "main".into(),
             agent_name: None,
             agent_depth: Some(0),
+            git_branch: None,
+            git_branch_basis: "unknown".into(),
         }
     }
 

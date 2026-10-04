@@ -231,6 +231,16 @@ string_enum! {
 }
 
 string_enum! {
+    /// How a request's git branch is known: the provider recorded a branch
+    /// name, recorded a detached `HEAD`, or recorded nothing usable.
+    BranchBasis {
+        Recorded = "recorded",
+        Detached = "detached",
+        Unknown = "unknown",
+    }
+}
+
+string_enum! {
     AccessKind {
         Read = "read",
         Search = "search",

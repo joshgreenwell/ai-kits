@@ -303,12 +303,12 @@ fn bucket_accounting_uses_reasoning_as_the_output_lower_bound() {
 #[test]
 fn optional_extensions_allow_omission_but_reject_explicit_null() {
     let mut legacy_request = activity_request();
-    for field in ["token_accounting", "pricing", "agent", "project", "tools"] {
+    for field in ["token_accounting", "pricing", "agent", "project", "git_branch", "tools"] {
         legacy_request.as_object_mut().unwrap().remove(field);
     }
     assert!(serde_json::from_value::<Record>(legacy_request).is_ok());
 
-    for field in ["token_accounting", "pricing", "agent", "project", "tools"] {
+    for field in ["token_accounting", "pricing", "agent", "project", "git_branch", "tools"] {
         let mut value = activity_request();
         value[field] = Value::Null;
         assert!(serde_json::from_value::<Record>(value).is_err(), "activity.request.{field}");

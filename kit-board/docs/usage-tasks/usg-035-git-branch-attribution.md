@@ -1,0 +1,54 @@
+# USG-035: Carry the recorded git branch on each request when enabled
+
+[Backlog index](README.md) · [Coverage P2](../usage-coverage.md#p2-hashed-project-attribution-and-surface) · [Upgrading to 2.3.0](../usage-collection.md#upgrading-to-230-server-then-companions-then-the-setting)
+
+Status: In progress
+Priority: P2
+Scope: Follow-up
+Stage: 2. Collection
+Dependencies: [USG-003](usg-003-extend-detail-contract-and-storage.md), [USG-004](usg-004-collect-request-and-pricing-evidence.md), [USG-007](usg-007-map-project-identities.md)
+Created: 2026-10-02
+
+## Outcome
+
+A request can say which git branch its transcript recorded, so usage can later be tied to the work a branch names (a ticket, a story, a release). The field is optional everywhere: off by default, absent from the record when off, and safe to ignore for every reader that predates it.
+
+## Current gap
+
+Claude transcripts write `gitBranch` on every assistant line and Codex rollouts write `session_meta.git.branch`, but the contract had no field for it, so the branch never left the machine. `usage-coverage.md` also described the Codex field as rarely present; on this machine on 2026-10-02 it was present on 299 of the 300 most recent rollouts.
+
+## Acceptance criteria
+
+1. `activity.request` has an optional `git_branch: { name, basis }` block in zod, the generated JSON Schema, its vendored copy, and the Rust contract. Omission is valid; an explicit `null` is not. `basis` is `recorded` (name present), `detached` (the transcript wrote `HEAD`), or `unknown` (absent, empty, or not 1 to 200 bytes of `[A-Za-z0-9._/+@-]` starting with a letter or digit); a name appears exactly when the basis is `recorded`.
+2. A new setting `execution.branch_attribution` is `off` by default and `plain` to enable. Under `off` no request carries the block. A local deny (`execution.branch_attribution`) keeps it home for fresh and queued records, and the upload-time check strips it from queued requests whenever the current setting is not `plain`.
+3. Only the branch name leaves the transcript. Commit hashes, remote URLs, and paths are never read into the record.
+4. The setting is part of the emission fingerprint, so enabling it re-emits retained requests with the branch, as revisions.
+5. Companions before 2.3.0 keep working unchanged: they reject unknown execution keys, so the config route sends the key only as `plain` and only to a client whose `observatory/<version>` User-Agent names 2.3.0 or later. `off` is never sent, so older builds' documents and ETags do not change.
+6. The server stores the block in two nullable `activity_requests` columns, `git_branch` and `git_branch_basis`, with CHECK constraints for the basis values and for name-exactly-when-recorded. Earlier rows and rows without the block stay NULL.
+7. The Collection settings matrix offers the setting, notes that both providers record the branch of the folder the session was launched from, and gates `plain` on the companion reporting the `branch_attribution` feature.
+8. Docs state the field, the launch-folder limitation, and the deployment order: migration and server, then companions with the setting off, then the setting.
+
+## Verification
+
+- Rust: `tests/git_branch.rs` (absent by default, plain carries only the name, enabling re-emits, local deny), the upload-strip test in `run.rs`, wire tests for omission versus explicit null, refreshed adapter snapshots (parser version only), `cargo fmt`, `clippy -D warnings`, `cargo test --workspace`.
+- Fixtures: `git-branch-requests` (valid: recorded, detached, unknown) and `null-request-git-branch`, `git-branch-basis-mismatch` (not expressible in JSON Schema), `git-branch-unsafe-name` (invalid); `python3 scripts/fixtures.py check`; `npm run usage-schema` leaves no diff.
+- Server: `npm run typecheck`, `npm test`, and `npm run test:db`. The integration test covers the User-Agent gate (2.3.0, 2.10.0, 10.0.0 receive `plain`; 2.2.9, 1.9.0, a browser, and no User-Agent do not; `off` keeps one ETag across builds), the stored columns, the revision on enabling, and the presence CHECK.
+
+Apply the common completion requirements in the [backlog index](README.md).
+
+## Starting points
+
+- [companion/crates/observatory-adapters/src/jsonl.rs](<../../companion/crates/observatory-adapters/src/jsonl.rs>) (`git_branch_from`)
+- [companion/crates/observatory-contract/src/records.rs](<../../companion/crates/observatory-contract/src/records.rs>), [settings.rs](<../../companion/crates/observatory-contract/src/settings.rs>)
+- [lib/usage-contract.ts](<../../lib/usage-contract.ts>), [lib/companion-settings.ts](<../../lib/companion-settings.ts>), [lib/usage-store.ts](<../../lib/usage-store.ts>) (`companionConfig`, `companionBuild`)
+- [supabase/migrations/20261002090000_activity_request_git_branch.sql](<../../supabase/migrations/20261002090000_activity_request_git_branch.sql>)
+
+## Execution record
+
+2026-10-02, on branch `kit-board/usg-035-git-branch-attribution`; merged to `main` on October 4:
+
+- Implemented criteria 1 to 8 across the Rust contract, adapters, core run loop (state schema 10), zod contract, settings matrix, capabilities, config route, ingestion, migration, fixtures, and docs. Companion version is 2.3.0 (CHANGELOG "2.3.0 — 2026-10-04").
+- Verified locally: Rust 340 tests, fmt and clippy clean; fixtures check OK; typecheck clean; `npm test` 226 pass; `npm run test:db` 41 of 42 pass, including the new git-branch test. The one failure, C2 in `usage-side-records.integration.test.ts`, creates a database with the Linux locale name `en_US.utf8`, which macOS lacks; it is unrelated to this change. On macOS the local cluster also needs `LC_ALL` set (for example `LC_ALL=en_US.UTF-8`), or the postmaster refuses to start.
+- October 4: the owner applied `20261002090000_activity_request_git_branch.sql` to Aurora before the server deploy; `supabase migration list` shows it applied and nothing pending.
+- Open: release the `observatory-v2.3.0` tag; upgrade each companion with the setting off and gate the first run; then turn the setting on. No read model uses the columns yet; the factory kit will add one.
+- Known limit: neither provider follows the folder a session works in. Claude writes the launch folder's branch on every line; Codex records git once, at session start. A session launched from a workspace root on `main` that works in a nested checkout on a feature branch reports `main`. Ticket attribution needs the session launched in the story checkout or worktree, or an explicit session-to-ticket link.

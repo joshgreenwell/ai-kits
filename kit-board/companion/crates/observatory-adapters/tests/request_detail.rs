@@ -308,6 +308,8 @@ fn parser_generation_backfills_retained_v2_events() {
                 agent_class: "unknown".into(),
                 agent_name: None,
                 agent_depth: None,
+                git_branch: None,
+                git_branch_basis: "unknown".into(),
             },
         )
         .unwrap();
@@ -390,6 +392,8 @@ fn unbackfilled_rows_expose_their_coverage_limit() {
                 agent_class: "unknown".into(),
                 agent_name: None,
                 agent_depth: None,
+                git_branch: None,
+                git_branch_basis: "unknown".into(),
             },
         )
         .unwrap();

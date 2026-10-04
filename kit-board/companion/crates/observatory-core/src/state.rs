@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use crate::privacy::{PrivacyKey, project_key, tool_name_hash, tool_namespace_hash};
 
-pub const SCHEMA_VERSION: &str = "9";
+pub const SCHEMA_VERSION: &str = "10";
 
 /// The local-only rejection mark on a queued `resource.access` record whose
 /// key or configuration token no longer matches this machine's configuration.
@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS events (binding_id TEXT NOT NULL, id TEXT NOT NULL, s
   agent_key TEXT, agent_identity_basis TEXT NOT NULL DEFAULT 'unknown', parent_agent_key TEXT,
   parent_agent_identity_basis TEXT NOT NULL DEFAULT 'unknown', agent_class TEXT NOT NULL DEFAULT 'unknown',
   agent_name TEXT, agent_depth INTEGER, change_generation INTEGER NOT NULL DEFAULT 0,
+  git_branch TEXT, git_branch_basis TEXT NOT NULL DEFAULT 'unknown',
   PRIMARY KEY (binding_id, id));
 CREATE INDEX IF NOT EXISTS event_hours ON events(binding_id, hour, session, model);
 CREATE TABLE IF NOT EXISTS agent_profiles (binding_id TEXT NOT NULL, agent_key TEXT NOT NULL,
@@ -300,6 +301,12 @@ pub struct EventRow {
     /// applied when a record is built.
     pub agent_name: Option<String>,
     pub agent_depth: Option<i64>,
+    /// v10: the branch name the provider recorded for the session, kept
+    /// locally whatever the setting; upload policy is applied when a record
+    /// is built.
+    pub git_branch: Option<String>,
+    /// v10: `recorded`, `detached`, or `unknown`.
+    pub git_branch_basis: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -717,6 +724,15 @@ impl State {
         if !self.has_column("app_projects_seen", "position")? {
             self.conn.execute("ALTER TABLE app_projects_seen ADD COLUMN position INTEGER", [])?;
         }
+        // Version 10: the git branch the provider recorded. Rows saved earlier read
+        // as unknown until a replay fills them.
+        for (column, definition) in
+            [("git_branch", "TEXT"), ("git_branch_basis", "TEXT NOT NULL DEFAULT 'unknown'")]
+        {
+            if !self.has_column("events", column)? {
+                self.conn.execute(&format!("ALTER TABLE events ADD COLUMN {column} {definition}"), [])?;
+            }
+        }
         // Any earlier file gains the change stamp; existing rows read as generation 0,
         // and an adapter with no emission mark emits everything once regardless.
         for table in CHANGE_STAMPED_TABLES {
@@ -1131,7 +1147,8 @@ impl State {
                         detail_input_cache_write, detail_output, detail_reasoning, reported_total, model_requested,
                         reasoning_effort, service_tier, speed, context_window_tokens, cache_write_ttl, outcome,
                         agent_observed, agent_key, agent_identity_basis, parent_agent_key,
-                        parent_agent_identity_basis, agent_class, agent_name, agent_depth
+                        parent_agent_identity_basis, agent_class, agent_name, agent_depth,
+                        git_branch, git_branch_basis
                    FROM events WHERE binding_id = ?1 AND id = ?2",
                 params![binding, id],
                 event_from_row,
@@ -1148,10 +1165,10 @@ impl State {
                                  reported_total, model_requested, reasoning_effort, service_tier, speed,
                                  context_window_tokens, cache_write_ttl, outcome, agent_observed, agent_key,
                                  agent_identity_basis, parent_agent_key, parent_agent_identity_basis,
-                                 agent_class, agent_name, agent_depth)
+                                 agent_class, agent_name, agent_depth, git_branch, git_branch_basis)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                      ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
-                     ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41)",
+                     ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43)",
             params![
                 binding,
                 row.id,
@@ -1193,7 +1210,9 @@ impl State {
                 row.parent_agent_identity_basis,
                 row.agent_class,
                 row.agent_name,
-                row.agent_depth
+                row.agent_depth,
+                row.git_branch,
+                row.git_branch_basis
             ],
         )?;
         Ok(())
@@ -1280,7 +1299,8 @@ impl State {
                     detail_input_cache_write, detail_output, detail_reasoning, reported_total, model_requested,
                     reasoning_effort, service_tier, speed, context_window_tokens, cache_write_ttl, outcome,
                     agent_observed, agent_key, agent_identity_basis, parent_agent_key,
-                    parent_agent_identity_basis, agent_class, agent_name, agent_depth
+                    parent_agent_identity_basis, agent_class, agent_name, agent_depth,
+                    git_branch, git_branch_basis
                FROM events WHERE binding_id = ?1 AND bucket_eligible = 1 ORDER BY hour, session, id",
         )?;
         let rows = statement.query_map(params![binding], event_from_row)?;
@@ -1298,7 +1318,8 @@ impl State {
                     detail_input_cache_write, detail_output, detail_reasoning, reported_total, model_requested,
                     reasoning_effort, service_tier, speed, context_window_tokens, cache_write_ttl, outcome,
                     agent_observed, agent_key, agent_identity_basis, parent_agent_key,
-                    parent_agent_identity_basis, agent_class, agent_name, agent_depth
+                    parent_agent_identity_basis, agent_class, agent_name, agent_depth,
+                    git_branch, git_branch_basis
                FROM events WHERE binding_id = ?1 ORDER BY hour, session, id",
         )?;
         let rows = statement.query_map(params![binding], event_from_row)?;
@@ -3116,6 +3137,8 @@ fn event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EventRow> {
         agent_class: row.get(37)?,
         agent_name: row.get(38)?,
         agent_depth: row.get(39)?,
+        git_branch: row.get(40)?,
+        git_branch_basis: row.get(41)?,
     })
 }
 
@@ -3180,6 +3203,8 @@ mod tests {
             agent_class: "main".into(),
             agent_name: None,
             agent_depth: Some(0),
+            git_branch: None,
+            git_branch_basis: "unknown".into(),
         }
     }
 

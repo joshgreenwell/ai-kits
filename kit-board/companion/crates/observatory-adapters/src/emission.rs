@@ -143,6 +143,7 @@ pub fn fingerprint(ctx: &RunContext, parser_version: &str, shape: &str) -> Strin
         execution.tool_detail.as_str(),
         execution.include_subagents,
         ctx.effective_project_attribution().as_str(),
+        ctx.effective_branch_attribution().as_str(),
         ctx.effective_resource_attribution(),
         ctx.resources.scan_digest,
     ]))
@@ -198,6 +199,7 @@ pub fn emit_detail(
     let tool_detail = ctx.settings.execution.tool_detail;
     let include_subagents = ctx.settings.execution.include_subagents;
     let project_attribution = ctx.effective_project_attribution();
+    let branch_attribution = ctx.effective_branch_attribution();
     let mut emission = Emission::default();
     if detail_level == DetailLevel::BucketsOnly {
         return Ok(emission);
@@ -222,6 +224,7 @@ pub fn emit_detail(
             parser_version,
             detail_level,
             project_attribution,
+            branch_attribution,
             tool_detail,
             include_subagents,
             &index,

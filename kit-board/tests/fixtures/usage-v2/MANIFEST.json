@@ -70,6 +70,8 @@
     "wire/invalid/empty-usage-bucket.json",
     "wire/invalid/expired-allowance-reading.json",
     "wire/invalid/future-observed-at.json",
+    "wire/invalid/git-branch-basis-mismatch.json",
+    "wire/invalid/git-branch-unsafe-name.json",
     "wire/invalid/invalid-uuid.json",
     "wire/invalid/missing-nullable-field.json",
     "wire/invalid/negative-counter.json",
@@ -78,6 +80,7 @@
     "wire/invalid/null-capabilities.json",
     "wire/invalid/null-request-accounting.json",
     "wire/invalid/null-request-agent.json",
+    "wire/invalid/null-request-git-branch.json",
     "wire/invalid/null-request-pricing.json",
     "wire/invalid/null-request-project.json",
     "wire/invalid/null-request-tools.json",
@@ -101,6 +104,7 @@
     "wire/valid/companion-all-record-types.json",
     "wire/valid/companion-buckets-and-coverage.json",
     "wire/valid/detail-contract-events.json",
+    "wire/valid/git-branch-requests.json",
     "wire/valid/minimal-coverage-only.json"
   ]
 }

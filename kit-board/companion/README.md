@@ -183,7 +183,8 @@ effective(adapter, mode) =
 
 A deny entry matches an adapter id (`codex_account`), a provider switch (`providers.cursor`), an
 exact mode path (`allowance.codex_reader.app_server`), project attribution
-(`execution.project_attribution` or `execution.project_attribution.hashed`), knowledge-source
+(`execution.project_attribution` or `execution.project_attribution.hashed`), branch attribution
+(`execution.branch_attribution` or `execution.branch_attribution.plain`), knowledge-source
 attribution (`execution.resource_attribution`, which has no settings-document counterpart: sources
 are local configuration and this entry is the only switch), or a dotted prefix of one
 (`allowance.codex_reader` or `execution`). The deny list can only remove. Every adapter reports its effective
@@ -207,17 +208,17 @@ keeps its existing meaning as the adapter's gate under that mode.
 | --- | --- | --- |
 | `claude_execution` | 1 | Ported. Buckets; nullable token accounting and recorded effort, tier, speed, reasoning, and cache TTL on `activity.request` at `detail_level` `requests`. The statusline inbox belongs to `claude_account`. |
 | `codex_execution` | 1 | Ported. Buckets; embedded `rate_limits` as `allowance.reading` (reader `embedded`, meter `<limit_id>:<minutes>`) and the Codex `allowance` capability row; nullable token accounting and recorded effort, context size, reasoning, and reported totals on `activity.request` at `requests`. |
-| `claude_account` | 2 | The Claude allowance meter (parser version `2.2.0+statusline1`). Ingests the statusline inbox, binds each sample by the identity stamped on it, quarantines what it cannot bind, and emits `allowance.reading` (reader `statusline`, meters `five_hour`, `seven_day`, and every model-scoped weekly window `seven_day_<model>`, labelled `Claude · weekly · <Model>`) plus the Claude `allowance` capability row. Mode `oauth_usage` also calls `GET https://api.anthropic.com/api/oauth/usage` with the existing Claude Code sign-in. Observatory never POSTs a refresh_token; `allowance.claude_oauth_keepalive` (off by default) may spawn Claude Code (`claude auth status`) so Claude Code refreshes its own store. Statusline stays the documented fallback, reported as `reader_fallback_statusline` when OAuth fails. |
-| `codex_account` | 2 | App-server allowance via `codex app-server` JSON-RPC `account/rateLimits/read` (parser `2.2.0+appserver1`, reader `app_server`, meter `<limit_id>:<minutes>`). On Windows the desktop install under `%LOCALAPPDATA%\OpenAI\Codex\bin` is used when `codex` is not on PATH. `web_backend` stays unimplemented. |
-| `cursor_execution` | 3 | Local `state.vscdb` counters as `activity.request` on channel `local_db` (parser `2.2.0+cursor-local2`, product `cursor_ide`). Never billed, never hourly buckets, never a project from a timestamp. A record is observed at the bubble's own `createdAt`, else its composer's `createdAt`, never the run clock; a bubble the store holds no time for is counted as malformed and skipped. Current Cursor builds write every `tokenCount` field as zero for nearly every bubble, so the local store proves that requests exist and little about their size: zero-counter bubbles are skipped, the capability rows say `local_counters_zero` when nothing in a store has tokens, and Cursor token evidence comes from `cursor_account`. Each binding remembers the content digest it last emitted per record (`cursor_emitted`) and re-emits only new or changed bubbles; a parser or emission shape change re-emits everything once. |
-| `cursor_account` | 3 | Hosted allowance (`GET https://cursor.com/api/usage-summary`, reader `usage_summary`; one meter per named `*PercentUsed` pool) and billed events (`POST https://cursor.com/api/dashboard/get-filtered-usage-events` with `Origin: https://cursor.com`, reader `dashboard_rpc`) using the Cursor session (parser `2.2.0+cursor-hosted1`). Event totals are the sum of present exclusive classes; the event `model` is stored as reported. Emits only to the confirmed Cursor identity. |
-| `anthropic_api`, `openai_api` | 5 | Admin usage and cost reports (parser `2.2.0+admin-usage1`) from `secrets.json`. Organization buckets and money entries; identity is none, so each runnable org binding receives a copy. |
+| `claude_account` | 2 | The Claude allowance meter (parser version `2.3.0+statusline1`). Ingests the statusline inbox, binds each sample by the identity stamped on it, quarantines what it cannot bind, and emits `allowance.reading` (reader `statusline`, meters `five_hour`, `seven_day`, and every model-scoped weekly window `seven_day_<model>`, labelled `Claude · weekly · <Model>`) plus the Claude `allowance` capability row. Mode `oauth_usage` also calls `GET https://api.anthropic.com/api/oauth/usage` with the existing Claude Code sign-in. Observatory never POSTs a refresh_token; `allowance.claude_oauth_keepalive` (off by default) may spawn Claude Code (`claude auth status`) so Claude Code refreshes its own store. Statusline stays the documented fallback, reported as `reader_fallback_statusline` when OAuth fails. |
+| `codex_account` | 2 | App-server allowance via `codex app-server` JSON-RPC `account/rateLimits/read` (parser `2.3.0+appserver1`, reader `app_server`, meter `<limit_id>:<minutes>`). On Windows the desktop install under `%LOCALAPPDATA%\OpenAI\Codex\bin` is used when `codex` is not on PATH. `web_backend` stays unimplemented. |
+| `cursor_execution` | 3 | Local `state.vscdb` counters as `activity.request` on channel `local_db` (parser `2.3.0+cursor-local2`, product `cursor_ide`). Never billed, never hourly buckets, never a project from a timestamp. A record is observed at the bubble's own `createdAt`, else its composer's `createdAt`, never the run clock; a bubble the store holds no time for is counted as malformed and skipped. Current Cursor builds write every `tokenCount` field as zero for nearly every bubble, so the local store proves that requests exist and little about their size: zero-counter bubbles are skipped, the capability rows say `local_counters_zero` when nothing in a store has tokens, and Cursor token evidence comes from `cursor_account`. Each binding remembers the content digest it last emitted per record (`cursor_emitted`) and re-emits only new or changed bubbles; a parser or emission shape change re-emits everything once. |
+| `cursor_account` | 3 | Hosted allowance (`GET https://cursor.com/api/usage-summary`, reader `usage_summary`; one meter per named `*PercentUsed` pool) and billed events (`POST https://cursor.com/api/dashboard/get-filtered-usage-events` with `Origin: https://cursor.com`, reader `dashboard_rpc`) using the Cursor session (parser `2.3.0+cursor-hosted1`). Event totals are the sum of present exclusive classes; the event `model` is stored as reported. Emits only to the confirmed Cursor identity. |
+| `anthropic_api`, `openai_api` | 5 | Admin usage and cost reports (parser `2.3.0+admin-usage1`) from `secrets.json`. Organization buckets and money entries; identity is none, so each runnable org binding receives a copy. |
 
 `web_backend` and the v2 browser adapters never make a network request, spawn a process, or read a credential.
 
 ### App projects and readable names (2.2.0)
 
-After the adapters, each run builds three side record types (parser `2.2.0+sides1`) on one carrier
+After the adapters, each run builds three side record types (parser `2.3.0+sides1`) on one carrier
 binding, the smallest binding id the server registered; they never enter a ledger and never change
 a ledger record's content:
 
@@ -424,6 +425,18 @@ folder. Parser-generation replay backfills retained source evidence when it is s
 The path itself is never uploaded. See `docs/usage-coverage.md` for what this does and does not
 cover.
 
+The `git_branch` block (2.3.0) is emitted only when `execution.branch_attribution` is `plain`
+(default `off`) and the local deny list permits it; the upload-time outbox check strips it from
+queued requests whenever the current setting is not `plain`. Claude reads `gitBranch` from each
+assistant line, and Codex reads `session_meta.git.branch` once per rollout. Its basis is
+`recorded` with the name as written (1 to 200 bytes of `[A-Za-z0-9._/+@-]`, starting with a letter
+or digit), `detached` for `HEAD`, or `unknown` for anything else. The name is not hashed. Commit
+hashes, remote URLs and paths are never read into the record. Both providers record the branch of
+the folder the session started in, not of each folder it later works in. The setting is part of
+the emission fingerprint, so turning it on re-emits retained requests with the branch. The
+companion sends its version in the `observatory/<version>` User-Agent, and the server sends this
+key only to 2.3.0 or later, because older builds reject unknown execution settings.
+
 ### Decisions made during the port
 
 These settle points the handoff left open or that the port could not follow literally. The
@@ -508,7 +521,8 @@ the site turns them into support chips on Settings → Collection, the health la
 Counters, hashed identifiers, model names, allowlisted or hashed tool names (custom names keyed
 under the install's privacy key), allowance readings,
 provider aggregates and charges, coverage codes, versions, only when project attribution is
-`hashed`, a keyed hash of each request's working directory, and, only for knowledge sources configured
+`hashed`, a keyed hash of each request's working directory, only when branch attribution is `plain`,
+the git branch name each request's transcript recorded, and, only for knowledge sources configured
 in `companion.json` at `requests_with_tools`, each matched call's source key, opaque configuration
 token, and typed access, evidence, and outcome codes. Never: prompts, responses, file paths,
 vault roots, connector ids, repository names, credentials, raw provider payloads, free-text errors. Credentials are
@@ -558,7 +572,7 @@ Bearer: the install key (`Authorization: Bearer <key>`), except `pair`.
 | Endpoint | Request | Response |
 | --- | --- | --- |
 | `POST /api/v1/companion/pair` | `{ code, machine_label, kind, platform, arch }` | `{ install_id, key }` |
-| `GET /api/v1/companion/config` | `If-None-Match` | `ConfigDocument` with `ETag`; `304` when unchanged |
+| `GET /api/v1/companion/config` | `If-None-Match`, `User-Agent: observatory/<version>` | `ConfigDocument` with `ETag`; `304` when unchanged. Settings an older build cannot parse are left out for it (`execution.branch_attribution` before 2.3.0) |
 | `POST /api/v1/companion/bindings` | `{ account_id, provider, account_label, identity_hash }` | `{ binding_id, account_id, provider, enabled, identity_hash }` (201 created, 200 existing) |
 | `PUT /api/v1/companion/settings` | `InstallOverride` | `{ ok, settings_version }` |
 | `POST /api/v1/companion/bindings/<id>/identity` | `{ identity_hash }` | `{ ok, binding_id, identity_hash, enabled }` |

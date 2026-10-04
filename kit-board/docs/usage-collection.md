@@ -69,6 +69,16 @@ Copy-Item .\target\release\observatory.exe $companionExe -Force
 
 `service install` is intentionally repeated after replacing the binary: it refreshes the task command and cadence, reads the task back, and immediately reports the new build's capabilities. The first run after a parser-generation change replays retained source files and can take longer than a normal hourly run.
 
+### Upgrading to 2.3.0: server, then companions, then the setting
+
+Companion 2.3.0 adds the optional git branch on requests (`execution.branch_attribution`, see [usage coverage P2](usage-coverage.md#p2-hashed-project-attribution-and-surface)). Its parser version changes, so the first run replays retained transcripts. With the setting `off`, a replayed request is identical to the stored one, so the 2.2.0 gate below applies unchanged and must report no request revisions.
+
+1. Apply `20261002090000_activity_request_git_branch.sql`, then deploy the server. The migration only adds two nullable columns. A 2.2.0 companion rejects any execution key it does not know, so the config route sends `branch_attribution` only as `plain`, and only to a client whose User-Agent names `observatory/2.3.0` or later. `off` is never sent, so a 2.2.0 companion keeps receiving the same document and ETag.
+2. Upgrade each companion with the setting still `off`, following the backup and gate steps for 2.2.0 below with the 2.3.0 build.
+3. Set `execution.branch_attribution` to `plain` in Usage → Settings. The next run re-emits retained requests with the branch as new revisions. That is expected, and it is why the gate runs with the setting off.
+
+Downgrading from 2.3.0 to 2.2.0 is safe while the server is reachable: the next fetch omits the key for the older build. If that fetch fails and the cached document holds `plain`, 2.2.0 cannot parse the cache and runs that once on default settings.
+
 ### Upgrading to 2.2.0: back up, gate, then install
 
 Companion 2.2.0 adds readable names beside the hashes, the projects you create in the Codex app, and nested Codex MCP calls (see [usage coverage P13](usage-coverage.md#p13-app-projects-and-readable-names)). Its labels can only name hashes computed under the salt the state database holds, so **back up the state database before every upgrade**; the backup carries the salt (`meta.privacy_salt`). The server migrations `20260923090000` to `20260923090300` and the server deploy go first; a 2.1.0 companion keeps working against them and its machine shows "companion update needed" under Projects until it upgrades.
@@ -230,7 +240,7 @@ The Claude statusline reader moved out of `claude_execution` into the `claude_ac
 
 **Receipts are not readings.** An install's and a source's `last_seen_at` mean the collector contacted the server, and a coverage-only envelope advances them. The meter's own freshness comes from the ledgers instead: Connections shows each binding's newest `last_observation.allowance` (with its reset and reader) and `last_received.allowance` beside "last contact", each browser source the same way, and each run's `accepted_by_type` counts accepted, duplicate, and rejected records per record type (plus `invalid` for records that failed to parse), merged key-wise across the envelopes of one run.
 
-**Deployment order.** The server and the `20260914010000_allowance_basis_and_run_counts.sql` migration go first, and the migration before the server code that writes `basis`: envelope v2 has no runtime negotiation and `ConfigDocument` rejects unknown fields, so a companion carrying the new `allowance` coverage row must not be installed before the server that accepts it. No production activation happens here; that is USG-025.
+**Deployment order.** The server and the `20260914010000_allowance_basis_and_run_counts.sql` migration go first, and the migration before the server code that writes `basis`: envelope v2 has no runtime negotiation and `ConfigDocument` rejects unknown fields, so a companion carrying the new `allowance` coverage row must not be installed before the server that accepts it. No production activation happens here; that is USG-025. Companion 2.3.0 follows the same order: migration and server first, then companions, then the setting (see [Upgrading to 2.3.0](#upgrading-to-230-server-then-companions-then-the-setting)).
 
 ## Detailed monthly report, refreshed hourly
 

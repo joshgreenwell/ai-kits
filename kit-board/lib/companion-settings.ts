@@ -20,6 +20,9 @@ export const collectionSettingsSchema = z.object({
     detail_level: z.enum(['buckets_only','requests','requests_with_tools']),
     tool_detail: z.enum(['off','builtin_only','hashed_custom']),
     project_attribution: z.enum(['off','hashed']),
+    // Optional so a stored document from before companion 2.3.0 still parses. The config route sends
+    // it only as `plain`, and only to a build whose User-Agent names 2.3.0 or later (see usage-store companionConfig).
+    branch_attribution: z.enum(['off','plain']).optional(),
   }).strict(),
   allowance: z.object({
     claude_reader: z.enum(['off','statusline','oauth_usage']),   // oauth_usage keeps statusline as passive fallback
@@ -44,7 +47,7 @@ export const defaultCollectionSettings: CollectionSettings = {
   schema_version: 1, paused: false, cadence_minutes: 60,
   providers: { claude: true, codex: true, cursor: false, anthropic_api: false, openai_api: false },
   execution: { claude_local_logs: true, codex_local_history: true, cursor_local_state: true, include_subagents: true,
-    detail_level: 'buckets_only', tool_detail: 'builtin_only', project_attribution: 'off' },
+    detail_level: 'buckets_only', tool_detail: 'builtin_only', project_attribution: 'off', branch_attribution: 'off' },
   allowance: { claude_reader: 'statusline', codex_reader: 'embedded', cursor_reader: 'off', claude_oauth_keepalive: false },
   account_history: { cursor_usage_events: false, lookback_days: 30 },
   billing: { anthropic_admin_api: false, openai_admin_api: false },
@@ -133,6 +136,7 @@ export const settingsMatrix: { group: string; rows: SettingRow[] }[] = [
     { path: 'execution.detail_level', label: 'Detail level', kind: 'select', options: ['buckets_only', 'requests', 'requests_with_tools'], requires: { buckets_only: 'always', requests: { feature: 'detail_levels', value: 'requests' }, requests_with_tools: { feature: 'detail_levels', value: 'requests_with_tools' } } },
     { path: 'execution.tool_detail', label: 'Tool names', kind: 'select', options: ['off', 'builtin_only', 'hashed_custom'], note: 'Hashed: the hash is the identity, and a readable name is stored beside it for display. Folder paths are never sent.', requires: { off: 'always', builtin_only: { feature: 'tool_detail', value: 'builtin_only' }, hashed_custom: { feature: 'tool_detail', value: 'hashed_custom' } } },
     { path: 'execution.project_attribution', label: 'Project attribution', kind: 'select', options: ['off', 'hashed'], note: 'Hashed: the hash is the identity, and a readable name is stored beside it for display. Folder paths are never sent. With companion 2.2.0 the projects you create in your apps, and which of them each folder and session belongs to, arrive with it; see docs/usage-coverage.md.', requires: { off: 'always', hashed: { feature: 'project_attribution', value: 'hashed' } } },
+    { path: 'execution.branch_attribution', label: 'Git branch', kind: 'select', options: ['off', 'plain'], note: 'Plain: each request carries the git branch name its transcript recorded, as written. Claude Code and Codex record the branch of the folder the session was started in, not of every folder it later works in. Commits, remotes and paths are never sent. Needs companion 2.3.0.', requires: { off: 'always', plain: { feature: 'branch_attribution', value: 'plain' } } },
   ] },
   { group: 'Allowance readers', rows: [
     { path: 'allowance.claude_reader', label: 'Claude reader', kind: 'select', options: ['off', 'statusline', 'oauth_usage'], note: 'oauth_usage reads allowance metadata (tokens, model, effort, windows) through your existing Claude Code sign-in. Observatory never POSTs a refresh token. Statusline stays as the fallback when OAuth fails, and Connections / Allowances say so.', requires: { off: 'always', statusline: { adapter: 'claude_account', mode: 'statusline' }, oauth_usage: { adapter: 'claude_account', mode: 'oauth_usage' } } },

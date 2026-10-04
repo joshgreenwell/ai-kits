@@ -118,6 +118,28 @@ choice! { DetailLevel { BucketsOnly = "buckets_only", Requests = "requests", Req
 choice! { ToolDetail { Off = "off", BuiltinOnly = "builtin_only", HashedCustom = "hashed_custom" } }
 choice! { ProjectAttribution { Off = "off", Hashed = "hashed" } }
 choice! {
+    /// Whether requests carry the git branch the provider recorded. Added in
+    /// settings after envelope v2 shipped, so `off` is the absent key: a server
+    /// omits it, and this build never writes it, which keeps the document a
+    /// 2.2.0 companion accepts.
+    BranchAttribution { Off = "off", Plain = "plain" }
+}
+
+impl BranchAttribution {
+    pub fn is_off(&self) -> bool {
+        *self == BranchAttribution::Off
+    }
+}
+
+// `choice!` cannot mark a `#[default]` variant, so the impl stays hand-written.
+#[allow(clippy::derivable_impls)]
+impl Default for BranchAttribution {
+    fn default() -> Self {
+        BranchAttribution::Off
+    }
+}
+
+choice! {
     /// `oauth_usage` keeps the statusline as a passive fallback. When
     /// `claude_oauth_keepalive` is on, the companion may spawn Claude Code so
     /// *it* refreshes its own store; Observatory never POSTs a refresh_token.
@@ -162,6 +184,8 @@ pub struct ExecutionSettings {
     pub detail_level: DetailLevel,
     pub tool_detail: ToolDetail,
     pub project_attribution: ProjectAttribution,
+    #[serde(default, skip_serializing_if = "BranchAttribution::is_off")]
+    pub branch_attribution: BranchAttribution,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -305,6 +329,7 @@ impl CollectionSettings {
                 detail_level: DetailLevel::BucketsOnly,
                 tool_detail: ToolDetail::BuiltinOnly,
                 project_attribution: ProjectAttribution::Off,
+                branch_attribution: BranchAttribution::Off,
             },
             allowance: AllowanceSettings {
                 claude_reader: ClaudeReader::Statusline,
@@ -410,6 +435,24 @@ mod tests {
         );
         assert!(serde_json::from_str::<InstallOverride>(r#"{"roots":["/x"]}"#).is_err());
         assert!(serde_json::from_str::<InstallOverride>(r#"{"cadence_minutes":45}"#).is_err());
+    }
+
+    #[test]
+    fn branch_attribution_is_optional_and_absent_when_off() {
+        let text = serde_json::to_string(&CollectionSettings::defaults()).unwrap();
+        assert!(!text.contains("branch_attribution"));
+        let plain = text.replace(
+            "\"project_attribution\":\"off\"",
+            "\"project_attribution\":\"off\",\"branch_attribution\":\"plain\"",
+        );
+        let back: CollectionSettings = serde_json::from_str(&plain).unwrap();
+        assert_eq!(back.execution.branch_attribution, BranchAttribution::Plain);
+        assert_eq!(serde_json::to_string(&back).unwrap(), plain);
+        let unknown = text.replace(
+            "\"project_attribution\":\"off\"",
+            "\"project_attribution\":\"off\",\"branch_attribution\":\"hashed\"",
+        );
+        assert!(serde_json::from_str::<CollectionSettings>(&unknown).is_err());
     }
 
     #[test]

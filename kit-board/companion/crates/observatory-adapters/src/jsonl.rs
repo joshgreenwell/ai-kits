@@ -13,7 +13,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use observatory_contract::{Provider, Sha256Hex};
+use observatory_contract::{GitBranchName, Provider, Sha256Hex};
 use observatory_core::adapter::{AdapterError, BindingContext, RunContext};
 use observatory_core::paths::{file_identity, home_dir, mtime_ns, mtime_seconds};
 use observatory_core::privacy::{PrivacyKey, project_key};
@@ -86,6 +86,16 @@ pub struct Ctx {
     /// assigned to it together with `pending_tool_invocations`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_nested_invocations: Vec<String>,
+    /// 2.3.0: the branch Codex recorded in `session_meta.git`, at session start.
+    /// Claude carries `gitBranch` on every line instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
+    #[serde(default = "unknown_project_basis", skip_serializing_if = "is_unknown")]
+    pub git_branch_basis: String,
+}
+
+fn is_unknown(value: &str) -> bool {
+    value == "unknown"
 }
 
 impl Ctx {
@@ -107,6 +117,8 @@ impl Ctx {
             pending_tool_invocations: Vec::new(),
             open_exec: BTreeMap::new(),
             pending_nested_invocations: Vec::new(),
+            git_branch: None,
+            git_branch_basis: unknown_project_basis(),
         }
     }
 }
@@ -147,6 +159,9 @@ pub struct Attribution<'a> {
     pub project_basis: &'a str,
     pub surface: Option<&'a str>,
     pub agent: Option<&'a AgentEvidence>,
+    /// The branch name, set only when `git_branch_basis` is `recorded`.
+    pub git_branch: Option<&'a str>,
+    pub git_branch_basis: &'a str,
 }
 
 fn unknown_project_basis() -> String {
@@ -190,6 +205,17 @@ fn project_attribution_from_cwd(value: Option<&Value>) -> (Option<&str>, &'stati
         Some(Value::Null) => (None, "none"),
         Some(Value::String(cwd)) if normalize_cwd(cwd).is_some() => (Some(cwd.as_str()), "working_directory"),
         Some(_) => (None, "unknown"),
+    }
+}
+
+/// The branch a transcript line recorded: a name the contract can carry, a
+/// detached `HEAD`, or nothing usable. Both providers record the branch of the
+/// directory the session started in, not of a later working directory.
+fn git_branch_from(value: Option<&Value>) -> (Option<&str>, &'static str) {
+    match value.and_then(Value::as_str) {
+        Some("HEAD") => (None, "detached"),
+        Some(name) if GitBranchName::try_from(name.to_owned()).is_ok() => (Some(name), "recorded"),
+        _ => (None, "unknown"),
     }
 }
 
@@ -1183,6 +1209,7 @@ pub fn save_event(
                 (old, new) => old.or(new),
             };
             let fill_project_attribution = old.project_basis == "unknown";
+            let fill_branch = old.git_branch_basis == "unknown";
             let merged_project_basis =
                 if fill_project_attribution { project_basis.to_owned() } else { old.project_basis.clone() };
             state.insert_event(
@@ -1263,6 +1290,16 @@ pub fn save_event(
                     },
                     agent_name: old.agent_name.or_else(|| agent.and_then(|value| value.name.clone())),
                     agent_depth: old.agent_depth.or_else(|| agent.and_then(|value| value.depth)),
+                    git_branch: if fill_branch {
+                        attribution.git_branch.map(str::to_owned)
+                    } else {
+                        old.git_branch
+                    },
+                    git_branch_basis: if fill_branch {
+                        attribution.git_branch_basis.to_owned()
+                    } else {
+                        old.git_branch_basis
+                    },
                 },
             )?;
         }
@@ -1319,6 +1356,8 @@ pub fn save_event(
                     agent_class: agent.map_or_else(|| "unknown".into(), |value| value.class.clone()),
                     agent_name: agent.and_then(|value| value.name.clone()),
                     agent_depth: agent.and_then(|value| value.depth),
+                    git_branch: attribution.git_branch.map(str::to_owned),
+                    git_branch_basis: attribution.git_branch_basis.to_owned(),
                 },
             )?;
         }
@@ -1458,6 +1497,11 @@ pub fn process_line(
                     ctx.cwd = cwd.map(|value| value.chars().take(400).collect());
                     ctx.project_basis = project_basis.into();
                 }
+                // Only the branch name: the commit and repository URL stay unread.
+                let (branch, branch_basis) =
+                    git_branch_from(payload.get("git").and_then(|git| git.get("branch")));
+                ctx.git_branch = branch.map(str::to_owned);
+                ctx.git_branch_basis = branch_basis.into();
                 let originator = get(&payload, "originator").ok().flatten().and_then(Value::as_str);
                 let source = get(&payload, "source").ok().flatten().and_then(Value::as_str);
                 ctx.surface = Some(codex_surface(originator, source).to_owned());
@@ -1710,6 +1754,8 @@ pub fn process_line(
                                 project_basis: &ctx.project_basis,
                                 surface: ctx.surface.as_deref(),
                                 agent: Some(&request_agent),
+                                git_branch: ctx.git_branch.as_deref(),
+                                git_branch_basis: &ctx.git_branch_basis,
                             },
                         )?;
                         state.assign_tool_caller_request(
@@ -1781,11 +1827,14 @@ pub fn process_line(
     let mut evidence = claude_evidence(object, usage);
     evidence.model_requested = agent.model_requested.clone();
     let (cwd, project_basis) = project_attribution_from_cwd(object.get("cwd"));
+    let (git_branch, git_branch_basis) = git_branch_from(object.get("gitBranch"));
     let attribution = Attribution {
         cwd,
         project_basis,
         surface: Some(claude_surface(object.get("entrypoint").and_then(Value::as_str))),
         agent: Some(&agent),
+        git_branch,
+        git_branch_basis,
     };
     save_event(
         state,
@@ -2114,7 +2163,14 @@ mod tests {
                 &evidence,
                 &extras,
                 None,
-                Attribution { cwd, project_basis, surface: Some("cli"), agent: None },
+                Attribution {
+                    cwd,
+                    project_basis,
+                    surface: Some("cli"),
+                    agent: None,
+                    git_branch: None,
+                    git_branch_basis: "unknown",
+                },
             )
             .unwrap();
         };

@@ -89,6 +89,11 @@ pub struct Features {
     /// server's optional field reads it as absent.
     #[serde(default, skip_serializing_if = "is_false")]
     pub labels: bool,
+    /// The `execution.branch_attribution` values this build honors (2.3.0).
+    /// Empty and omitted for an older build; the server sends the setting only
+    /// to an install that lists the value.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub branch_attribution: Vec<Code>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -113,6 +118,9 @@ pub struct EffectiveSettings {
     pub detail_level: Code,
     pub tool_detail: Code,
     pub project_attribution: Code,
+    /// Absent from a build before 2.3.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_attribution: Option<Code>,
     pub include_subagents: bool,
     pub resource_attribution: ResourceAttributionState,
     pub resources_configured: Counter,
@@ -223,6 +231,7 @@ impl CapabilitiesDocument {
             &self.features.detail_levels,
             &self.features.tool_detail,
             &self.features.project_attribution,
+            &self.features.branch_attribution,
             &self.features.hooks,
         ];
         if lists.iter().any(|list| list.len() > 8) || self.adapters.iter().any(|row| row.modes.len() > 8) {

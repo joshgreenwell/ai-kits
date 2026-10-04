@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use jiff::Timestamp;
-use observatory_contract::settings::ProjectAttribution;
+use observatory_contract::settings::{BranchAttribution, ProjectAttribution};
 use observatory_contract::{
     AccountId, CapabilityCoverage, CollectionSettings, ConfigDocument, CoverageState, CursorState,
     DetailCode, Provider, Record, Sha256Hex, Uuid,
@@ -182,6 +182,12 @@ impl RunContext {
         restrict_project_attribution(self.settings.execution.project_attribution, &self.deny)
     }
 
+    /// The branch preference after the machine-local deny list, which wins as
+    /// it does for project attribution.
+    pub fn effective_branch_attribution(&self) -> BranchAttribution {
+        restrict_branch_attribution(self.settings.execution.branch_attribution, &self.deny)
+    }
+
     /// Whether `resource.access` rows may leave this machine: some source is
     /// configured and the local deny list does not keep the rows home. Gates
     /// emission and the upload-time filter only; classification itself runs
@@ -216,6 +222,19 @@ pub fn restrict_project_attribution(setting: ProjectAttribution, deny: &[String]
         })
     {
         ProjectAttribution::Off
+    } else {
+        setting
+    }
+}
+
+pub fn restrict_branch_attribution(setting: BranchAttribution, deny: &[String]) -> BranchAttribution {
+    let mode_path = "execution.branch_attribution.plain";
+    if setting == BranchAttribution::Plain
+        && deny.iter().any(|entry| {
+            mode_path == entry || mode_path.strip_prefix(entry).is_some_and(|rest| rest.starts_with('.'))
+        })
+    {
+        BranchAttribution::Off
     } else {
         setting
     }
@@ -396,6 +415,20 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
         assert!(a.as_str().chars().nth(14) == Some('5'));
+    }
+
+    #[test]
+    fn branch_attribution_deny_uses_mode_path_prefixes() {
+        for entry in ["execution", "execution.branch_attribution", "execution.branch_attribution.plain"] {
+            assert_eq!(
+                restrict_branch_attribution(BranchAttribution::Plain, &[entry.into()]),
+                BranchAttribution::Off
+            );
+        }
+        assert_eq!(
+            restrict_branch_attribution(BranchAttribution::Plain, &["execution.project_attribution".into()]),
+            BranchAttribution::Plain
+        );
     }
 
     #[test]

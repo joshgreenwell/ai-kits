@@ -928,3 +928,55 @@ maybe('tool projection maintenance converges under every arrival order an upload
     assert.deepEqual(shape(await state(lateKey)), [true, null, 'unknown']);
   } finally { await sql.end({ timeout: 1 }); }
 });
+
+maybe('git branch: the config gate follows the companion build, and the ledger stores what the request carried', async () => {
+  const { createUsageStore, companionBuild } = await import('../lib/usage-store');
+  const sql = postgres(url!, options);
+  const store = createUsageStore(() => sql);
+  const account = `claude-${randomUUID().slice(0, 8)}`;
+  try {
+    assert.deepEqual(companionBuild('observatory/2.3.0 (darwin; arm64)'), [2, 3, 0]);
+    assert.equal(companionBuild('Mozilla/5.0 observatory/2.3.0'), null, 'only a companion User-Agent names a build');
+    assert.equal(companionBuild(null), null);
+
+    const issued = await store.issuePairingCode({ machine_label: 'branch-mac' });
+    const paired = await store.pairInstall({ code: issued.code, machine_label: 'branch-mac', kind: 'companion', platform: 'darwin', arch: 'arm64' }, '203.0.113.9');
+    const install = await store.companionInstall(bearer(paired.key));
+    const bindingId = (await store.createBinding(install,
+      { account_id: account, provider: 'claude', account_label: 'Claude branch', identity_hash: sha('identity-branch') })).binding.binding_id;
+    const config = async (userAgent: string | null) => store.companionConfig(await store.companionInstall(bearer(paired.key)), userAgent);
+    const branch = async (userAgent: string | null) => (await config(userAgent)).document.settings.execution.branch_attribution;
+
+    // Off is the companion's own default, so it is never sent: every build sees the same document and ETag.
+    for (const userAgent of ['observatory/2.3.0', 'observatory/2.2.0', null]) assert.equal(await branch(userAgent), undefined);
+    assert.equal((await config('observatory/2.3.0')).etag, (await config('observatory/2.2.0')).etag, 'off leaves older builds\' ETag alone');
+
+    // Plain goes only to a build whose settings parser accepts the key.
+    const { execution } = (await config(null)).document.settings;
+    await store.updateInstallSettings(install, { execution: { ...execution, branch_attribution: 'plain' } });
+    for (const userAgent of ['observatory/2.3.0', 'observatory/2.10.0', 'observatory/10.0.0 (linux; amd64)']) assert.equal(await branch(userAgent), 'plain', userAgent);
+    for (const userAgent of ['observatory/2.2.9', 'observatory/1.9.0', 'Mozilla/5.0', null]) assert.equal(await branch(userAgent), undefined, String(userAgent));
+
+    // The ledger keeps the block as two columns; a request without it stores NULLs.
+    const named = { ...request(bindingId, 'claude_execution', 'branch-named'), git_branch: { name: 'feature/SYN-1-synthetic', basis: 'recorded' } };
+    const detached = { ...request(bindingId, 'claude_execution', 'branch-detached'), git_branch: { name: null, basis: 'detached' } };
+    const absent = request(bindingId, 'claude_execution', 'branch-absent');
+    const first = await store.ingestUsage(install, envelope({ records: [named, detached, absent], coverage: [coverage('claude_execution')] }));
+    assert.deepEqual(first.accepted, { buckets: 0, records: 3 }); assert.deepEqual(first.rejected, []);
+    const stored = async () => new Map((await sql`SELECT semantic_key, git_branch, git_branch_basis FROM personal_hub.activity_requests
+      WHERE binding_id = ${bindingId} ORDER BY received_at`).map(row => [row.semantic_key as string, [row.git_branch, row.git_branch_basis]]));
+    const rows = await stored();
+    assert.deepEqual(rows.get(sha('branch-named')), ['feature/SYN-1-synthetic', 'recorded']);
+    assert.deepEqual(rows.get(sha('branch-detached')), [null, 'detached']);
+    assert.deepEqual(rows.get(sha('branch-absent')), [null, null]);
+
+    // Turning the setting on re-emits saved requests with the block: a revision, not a duplicate.
+    const revised = await store.ingestUsage(install, envelope({ records: [{ ...absent, record_id: randomUUID(), git_branch: { name: 'main', basis: 'recorded' } }] }));
+    assert.deepEqual([revised.accepted.records, revised.duplicates], [1, 0]);
+    assert.deepEqual((await stored()).get(sha('branch-absent')), ['main', 'recorded']);
+
+    // The table refuses a name without a recorded basis, whatever writes it.
+    await assert.rejects(sql`UPDATE personal_hub.activity_requests SET git_branch = 'main' WHERE record_id = ${detached.record_id}`,
+      /activity_requests_git_branch_presence_check/);
+  } finally { await sql.end({ timeout: 1 }); }
+});

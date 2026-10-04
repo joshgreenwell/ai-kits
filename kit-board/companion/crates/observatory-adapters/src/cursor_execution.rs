@@ -264,6 +264,7 @@ fn request_record(
         tools: None,
         project_hash: Nullable::NULL,
         project: None,
+        git_branch: None,
         agent: None,
         client_version: Nullable::NULL,
         latency_ms: Nullable::NULL,

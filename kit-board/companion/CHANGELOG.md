@@ -2,9 +2,30 @@
 
 All notable changes to the `observatory` companion. Tags are `observatory-v<version>`.
 
-## Unreleased
+## 2.3.0 — 2026-10-04
 
-Ships as 2.2.0 (the workspace version is already 2.2.0; date this section when the tag is pushed).
+- Optional git branch on requests (USG-035). A new setting, `execution.branch_attribution`
+  (`off` or `plain`, default `off`), adds `git_branch: { name, basis }` to `activity.request`.
+  Claude carries `gitBranch` on every transcript line; Codex records `session_meta.git.branch`
+  once at session start, so both name the branch of the directory the session was launched from,
+  not of a later working directory. `HEAD` is `detached`; a missing value or a name outside the
+  contract pattern is `unknown`. Only the name is read: the commit and repository URL stay unread.
+  Cursor records no branch and omits the field. Branches are always kept in local state (schema
+  10 adds `git_branch` and `git_branch_basis` to `events`); a queued record loses its branch at
+  upload unless the current setting is `plain`, and the local deny `execution.branch_attribution`
+  keeps it home. The setting is part of the emission fingerprint, so turning it on re-emits saved
+  requests with the branch. The capability document reports `features.branch_attribution` and
+  `effective.branch_attribution`.
+- Compatibility: `off` is the absent key. This build never writes `branch_attribution` when it
+  is off, and the Observatory omits it from the config document unless the install reports
+  `features.branch_attribution` with `plain`, so a 2.2.0 companion, whose settings reject
+  unknown keys, keeps accepting its config. Deploy the Observatory first, then companions, then
+  turn the setting on. Upgrade with the setting off: requests are then unchanged, and
+  `upgrade-gate` stays strict about revised requests.
+- The parser version moves with the crate version, so the first run replays retained transcripts
+  and fills the branch for lines still on disk.
+
+## 2.2.0 — 2026-09-23
 
 - App projects and readable names. Each run now builds three side record types after the
   adapters, on one carrier binding (the smallest binding id the Observatory registered), with
