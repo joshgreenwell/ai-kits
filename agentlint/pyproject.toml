@@ -38,7 +38,7 @@ Privacy = "https://github.com/joshgreenwell/ai-kits/blob/main/agentlint/PRIVACY.
 Issues = "https://github.com/joshgreenwell/ai-kits/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "ruff>=0.16.10"]
 
 [project.scripts]
 agentlint = "agentlint.cli:main"
