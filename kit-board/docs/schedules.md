@@ -25,7 +25,7 @@ The canonical usage process inventory is [Usage: how the system actually works](
 
 ## Historical registry — September 8–13
 
-The remainder is dated operational evidence, not current installation guidance or permission to recreate old jobs. Where it conflicts with the current usage audit or the September 23 daily-report update, those take precedence. Human-facing times use America/Chicago. Supabase is the shared published report store; each producer retains its existing scheduler and local artifacts.
+The remainder is dated operational evidence, not current installation guidance or permission to recreate old jobs. Where it conflicts with the current usage audit or the September 23 daily-report update, those take precedence. Human-facing times use America/Chicago. The database is the shared published report store; each producer retains its existing scheduler and local artifacts.
 
 | Report / step | Scheduler | Schedule | Publishing |
 | --- | --- | --- | --- |
@@ -37,10 +37,10 @@ The remainder is dated operational evidence, not current installation guidance o
 | Daily standup | Codex `daily-standup-update` | Weekdays, 9:00 AM | Publishes the exact final standup text |
 | Daily tech intel snapshot | Claude cloud task | Daily, 10:00 AM | Existing generation and Slack DM delivery retained |
 | Readings publication relay | Codex standalone local job | Daily, 12:15, 3:15, 6:15 PM; needs Mac | Copies the completed Claude edition, with source IDs and actual timestamp; later checks catch delayed editions |
-| Weekly Luumen AI audit | Codex `weekly-luumen-ai-audit` | Tuesday, 9:00 AM | Publishes one complete report and linked private evidence files |
+| Weekly AI audit | Codex weekly AI audit automation | Tuesday, 9:00 AM | Publishes one complete report and linked private evidence files |
 | Other-computer usage compatibility sync | Vercel Cron | Daily, 18:00 UTC (1 PM CDT / noon CST) | Reads the old Token Observatory; appends only changed reports |
 
-The Monday `luumen-audit` remains the separate suite-wide assurance workflow. The Tuesday AI audit keeps its lightweight comparison with Monday's completed AI findings; it does not run the Monday workflow again. Its existing recurrence, model settings, and task destination were preserved.
+The Monday suite-wide audit remains the separate suite-wide assurance workflow. The Tuesday AI audit keeps its lightweight comparison with Monday's completed AI findings; it does not run the Monday workflow again. Its existing recurrence, model settings, and task destination were preserved.
 
 The paused local predecessor of the Claude tech snapshot stays paused. The active cloud task is `[private task ID omitted]`; the briefing contributor is `[private task ID omitted]`. No Slack message was sent while setting up this site.
 

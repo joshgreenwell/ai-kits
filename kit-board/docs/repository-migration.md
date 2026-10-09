@@ -38,4 +38,4 @@ Node 22.19.0 `npm ci` succeeded. JavaScript: 46 passed, one database integration
 
 ## Prior architecture context
 
-The proposed v3 direction remains local historical planning context at `/Users/joshgreenwell/github/luumen-workspace/docs/personal-observatory-architecture-handoff-v3-2026-09-10.md`. This migration implements directory ownership only: Usage first, host receives externally executed workflows, no upfront kit framework. It does not implement or approve the remainder of that roadmap.
+The proposed v3 direction remains local historical planning context (`personal-observatory-architecture-handoff-v3-2026-09-10.md`, kept in a private workspace repository outside this one). This migration implements directory ownership only: Usage first, host receives externally executed workflows, no upfront kit framework. It does not implement or approve the remainder of that roadmap.

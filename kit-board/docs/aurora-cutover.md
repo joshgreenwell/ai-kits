@@ -71,7 +71,7 @@ This step comes after validation.
 2. In `vercel.json`, change `regions` from `cle1` (Ohio, next to Supabase's `us-east-2`) to `iad1` (next to `us-east-1`).
 3. Deploy. Sign in, open each area, and confirm that the next hourly companion receipt lands on Aurora.
 4. To roll back, restore the previous two variables and the region. Supabase stays intact until the move has held.
-5. Then update `README.md`, `architecture.md`, `startup-and-recovery.md` and `agent-handoff.md`, and retire the Supabase project.
+5. `README.md`, `architecture.md`, `startup-and-recovery.md` and `agent-handoff.md` were updated on October 9, 2026. Before retiring the Supabase project, copy what exists only there: the `personal_hub_archive` schema, which holds the undo copies written by the September 24 prune migrations and which the data-only dump of `personal_hub` did not move. Then retire the project.
 
 ## Operating on Aurora
 

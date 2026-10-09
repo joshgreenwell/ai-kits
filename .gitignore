@@ -24,3 +24,9 @@ coverage/
 
 # Claude Code subagent worktrees
 .claude/worktrees/
+
+# Local CLI link state and environment files
+supabase/.temp/
+.env
+.env.*
+!.env.example

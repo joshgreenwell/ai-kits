@@ -6,7 +6,7 @@ Updated 2026-09-10 for the move into `joshgreenwell/ai-kits`, at repository-root
 
 ## What this checkout provides
 
-The application, lockfile, the baseline database migration and the seventeen archived ones it replaced, companion source, report publisher, audit asset publisher, fonts/notices, and tests are included. It receives externally produced reports and can run bounded deterministic feed/ingestion calculations. It does not run agents, scan email, modify Jira, or read an Obsidian vault itself. The retired v1 collectors are not served by the site and their production credentials are disabled.
+The application, lockfile, the database migrations, companion source, report publisher, audit asset publisher, fonts/notices, and tests are included. It receives externally produced reports and can run bounded deterministic feed/ingestion calculations. It does not run agents, scan email, modify Jira, or read an Obsidian vault itself. The retired v1 collectors are not served by the site and their production credentials are disabled.
 
 A fresh clone has **no private report history, configured accounts, password, publisher credentials, provider logs, or external analyzers**. The app can build without them; a working authenticated dashboard needs a configured database and login. Existing history requires restoring the existing database through its operator, not replaying empty migrations over production.
 
@@ -43,9 +43,9 @@ Create login and publisher secrets in a protected local setup session, then stor
 
 ## Database bootstrap and recovery
 
-The app uses postgres.js directly, not a public Supabase Data API. Use an isolated Supabase/Postgres database for development. Its administrator applies **all** SQL files in `supabase/migrations/` in lexicographic filename order. That is seventeen files, dated 2026-09-08 through 2026-09-21. Each file there is a migration, not an idempotent initialization script: track applied filenames and do not rerun them against an existing database. Keep `personal_hub` unexposed, RLS enabled and public grants revoked.
+The app uses postgres.js directly, with no Data API. Use an isolated PostgreSQL 17 database for development (`npm run test:db` builds a disposable one). Its administrator applies **all** SQL files in `supabase/migrations/` in lexicographic filename order, which `supabase db push --db-url "$DATABASE_URL"` does and records. Outside Supabase the owner needs `CREATEROLE`, and the stand-in roles `anon` and `authenticated` must exist first, because early migrations revoke from them; [aurora-cutover.md](aurora-cutover.md) lists the bootstrap. Each file there is a migration, not an idempotent initialization script: track applied filenames and do not rerun them against an existing database. Keep `personal_hub` unexposed, RLS enabled and public grants revoked.
 
-The baseline creates `personal_hub_app` without a password, guarded so an existing login role is left alone. Set a strong password using the administrator's protected channel (for example an interactive psql `\password personal_hub_app` session), then configure the application with only that restricted identity and the correct verified TLS connection. Retain the connection queue and disabled prepared statements in `lib/db.ts`.
+`20260908051221_personal_hub_app_role.sql` creates `personal_hub_app` without a password. Set a strong password using the administrator's protected channel (for example an interactive psql `\password personal_hub_app` session), then configure the application with only that restricted identity and the correct verified TLS connection. Retain the connection queue and disabled prepared statements in `lib/db.ts`.
 
 To verify all migrations and routing behavior safely, install `initdb`, `pg_ctl`, `psql`, and `createdb` on PATH and run:
 
@@ -59,16 +59,16 @@ For recovery of an existing installation, preserve the private database backup/h
 
 ## Operator location map
 
-These are locations verified on the migration Mac, not portable defaults. Replace the home/workspace prefixes on another machine. **Neither brain repository nor vault content is bundled.** The app needs published artifacts, not access to the whole vault.
+These are the kinds of locations the operator's Mac uses, not portable defaults. Replace `~` and the workspace prefixes on another machine. **Neither brain repository nor vault content is bundled.** The app needs published artifacts, not access to the whole vault.
 
 | Resource | Existing location / role |
 | --- | --- |
-| New application | `/Users/joshgreenwell/github/ai-kits/kit-board` |
-| Previous application location | `/Users/joshgreenwell/github/luumen-workspace/personal-hub`; compatibility may be retained there for old job commands |
-| Registered, open Obsidian vault | `/Users/joshgreenwell/Obsidian/Work`, verified from Obsidian's local `obsidian.json` path metadata |
-| Personal assistant working repository | `/Users/joshgreenwell/github/personal-assistant-brain`; its README says it can itself be opened as an Obsidian vault. This is distinct from the registered Work vault |
+| New application | `~/github/ai-kits/kit-board` |
+| Previous application location | A retired workspace repository; compatibility may be retained there for old job commands |
+| Registered, open Obsidian vault | `~/Obsidian/Work`, verified from Obsidian's local `obsidian.json` path metadata |
+| Personal assistant working repository | `~/github/personal-assistant-brain`; its README says it can itself be opened as an Obsidian vault. This is distinct from the registered Work vault |
 | Assistant merge contract | `personal-assistant-brain/reference/briefing-data-contract.md` under that repository |
-| Luumen agent brain | `/Users/joshgreenwell/github/luumen-brain`; separate private context, not an Observatory runtime dependency |
+| Work agent brain | A separate private repository under `~/github/`; separate private context, not an Observatory runtime dependency |
 | Generic publisher configuration | `~/.config/personal-hub/publish.json`; override with `--config` or `PERSONAL_HUB_CONFIG` |
 | Companion configuration and state | `~/.config/personal-hub/companion/`; use the same explicit `--config-dir` for connect, setup, status, and the installed service |
 | Codex report publisher | `~/.codex/token-usage-upload.json` |

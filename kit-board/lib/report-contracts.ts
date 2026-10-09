@@ -163,7 +163,7 @@ export const reportContractRegistry = {
   },
   'audit-v1': {
     id: 'audit-v1',
-    title: 'Luumen AI audit',
+    title: 'AI audit',
     summary: 'An HTML report, served sandboxed. coverage.presentation "full-audit" marks the report /audit opens by default.',
     schema: body(z.looseObject({ markdown: text.optional() }), {
       html: z.string().min(1).max(3_500_000),

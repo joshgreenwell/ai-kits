@@ -8,7 +8,7 @@ Both tabs share one table (`personal_hub.pr_watches`, told apart by `kind`), one
 
 ## Why the polling runs on the Mac
 
-Vercel cannot start a Claude session on the owner's machine, and the review needs the owner's `gh` login, the skill, and the Luumen checkouts. So the site only holds the queue, and a runner on the Mac does the work:
+Vercel cannot start a Claude session on the owner's machine, and the review needs the owner's `gh` login, the skill, and the repositories under review. So the site only holds the queue, and a runner on the Mac does the work:
 
 - **The site** (`/reviews` and `/reviews/comments`, `personal_hub.pr_watches`) stores which PRs are watched, what the runner last saw, and the state of each session. Each tab has three actions: paste a URL and **Watch**, **Review now** (or **Address now**), and **Stop**.
 - **The runner** (`kit-pr-watch/pr-watch.mjs`, run by launchd every 5 minutes) pulls both queues over a producer key and reads each PR through `gh`. When a rule below says a session is due, it starts `claude --bg`. The runner itself is plain code and spends no tokens.
