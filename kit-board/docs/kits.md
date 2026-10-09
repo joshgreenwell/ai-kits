@@ -93,6 +93,6 @@ Before phase 6, confirm on each machine that no unpacked browser extension loads
 
 ## Outside the repository
 
-Moving kit files does not change the scheduled agents that produce reports: Codex `daily-personal-assistant`, `weekly-luumen-ai-audit` and `monthly-ai-usage`, and the Claude Desktop `daily-tech-intel-snapshot`. Their prompts and schedules live in those apps. Each kit's `schedule/` template records what the board needs from the schedule. It is documentation, not the schedule's source of truth.
+Moving kit files does not change the scheduled agents that produce reports: Codex `daily-personal-assistant`, the weekly AI audit and `monthly-ai-usage`, and the Claude Desktop `daily-tech-intel-snapshot`. Their prompts and schedules live in those apps. Each kit's `schedule/` template records what the board needs from the schedule. It is documentation, not the schedule's source of truth.
 
 Two local jobs do run files from this checkout by path. The PR watch LaunchAgent runs `kit-pr-watch/pr-watch.mjs`, the path `install` wrote, so run `install` again after moving the checkout. The readings task works in `kit-board/` and publishes with `scripts/publish.mjs`, so change its prompt after moving the checkout.

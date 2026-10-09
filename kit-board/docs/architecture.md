@@ -2,11 +2,11 @@
 
 For the current usage feature inventory and verified operational gaps, start with [Usage: how the system actually works](usage-system.md). [V2 operation](usage-collection.md) and [v1 retirement](usage-v1-retirement.md) separate the supported collection path from migration/removal. Older verification notes below are historical.
 
-The new Vercel project is `the-mindful-pug/personal-hub`. Its source is an independent application under `ai-kits/kit-board/`, not Luumen product code. It combines existing report experiences behind one password and navigation header.
+The new Vercel project is `the-mindful-pug/personal-hub`. Its source is an independent application under `ai-kits/kit-board/`, not an employer's product code. It combines existing report experiences behind one password and navigation header.
 
 ## Data ownership
 
-Supabase Postgres owns the site's durable report history, selected by Josh on 2026-09-08. It also provides integrated object storage for a future larger artifact archive. No Neon database was created. The site connects through Supavisor transaction pooling with prepared statements disabled. Its tables live in the unexposed `personal_hub` schema with row-level security enabled and public grants revoked; browsers never receive database credentials.
+Postgres owns the site's durable report history. It was Supabase from 2026-09-08 and has been Aurora PostgreSQL Serverless v2 in `us-east-1` since September 30 (see [aurora-cutover.md](aurora-cutover.md)). The site connects directly, one connection per Vercel instance, with no pooler and prepared statements disabled. Its tables live in the unexposed `personal_hub` schema with row-level security enabled and public grants revoked; browsers never receive database credentials.
 
 Obsidian remains local shared working memory. Do not sync the entire vault to the website. The site receives deliberately published reports, source references, coverage, and timestamps. Linear and Jira remain the task-status authorities. Report imports do not create, resolve, or modify tasks.
 
@@ -18,7 +18,7 @@ Each report producer receives a separate bearer credential scoped to its report 
 
 Hourly usage is a separate subsystem: one companion per machine uploads envelope v2 to `POST /api/v1/usage`, with account-bound source rows created from its bindings. Both collector generations write hourly snapshots into `token_bucket_revisions`; the v2 rollout did not replace that table. The server retains revisions and selects canonical snapshots without double counting. Typed allowance readings, request activity, provider aggregates, money, agent lifecycle, tool events, and resource access use independent append-only ledgers. Optional v2 request blocks retain reported-total accounting, pricing, agent, and explicit project-state evidence while old producers remain valid. The monthly dashboard keeps the full analyzer envelope in `report_revisions`; a configured companion refreshes it separately from token buckets. See `usage-collection.md` for accounting boundaries.
 
-Companion install keys are random, stored only as hashes in Supabase, and revocable through the authenticated Connections page. Bindings scope records to their assigned accounts. Retired local-script collector keys are disabled and receive Gone from `POST /api/v1/telemetry`; existing enabled v1 browser keys remain accepted there for quota-only Claude readings until the v2 browser collector ships. The site no longer issues v1 connection files or bundles. Public reset feeds use an allowlist, bounded fetches, a shared refresh lease, and immutable normalized revisions. No collection or calculation invokes an AI model.
+Companion install keys are random, stored only as hashes in the database, and revocable through the authenticated Connections page. Bindings scope records to their assigned accounts. Retired local-script collector keys are disabled and receive Gone from `POST /api/v1/telemetry`; existing enabled v1 browser keys remain accepted there for quota-only Claude readings until the v2 browser collector ships. The site no longer issues v1 connection files or bundles. Public reset feeds use an allowlist, bounded fetches, a shared refresh lease, and immutable normalized revisions. No collection or calculation invokes an AI model.
 
 The generic endpoint is `POST /api/v1/reports/:kind` for `tasks`, `standup`, `readings`, and `audit`. The envelope requires schema version, report period, subject, stable revision key, title, real observation timestamp with timezone, status, coverage, payload, and optional HTML. Limits are measured while streaming the request, including requests without a Content-Length header.
 
@@ -50,20 +50,20 @@ Audit histories prefer the newest nonfailed revision marked `coverage.presentati
 
 Keep the old Token Observatory and local reports available until parity is confirmed. The old source is pinned at `3315a6b0b850f9711106d1cacbd1145b357124dc`; the dashboard presentation and environmental assumptions were copied from that version. No old reports are deleted by this application.
 
-The current merged Luumen AI audit artifact is about 3 MB. The generic HTTP limit is 4 MB, below Vercel's request ceiling. Publish HTML with a compact metadata payload, not a second copy of all embedded evidence. Keep raw execution logs and full source trees outside this site.
+The current merged AI audit artifact is about 3 MB. The generic HTTP limit is 4 MB, below Vercel's request ceiling. Publish HTML with a compact metadata payload, not a second copy of all embedded evidence. Keep raw execution logs and full source trees outside this site.
 
 ## References
 
 - [Vercel storage](https://vercel.com/docs/storage)
-- [Supabase platform](https://supabase.com/docs/guides/platform)
-- [Supabase database connections](https://supabase.com/docs/guides/database/connecting-to-postgres)
+- [Aurora Serverless v2](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2.html)
+- [postgres.js](https://github.com/porsager/postgres)
 - [Next.js authentication](https://nextjs.org/docs/app/guides/authentication)
 
 Checked 2026-09-08. This document describes the intended architecture; deployment and producer status belong in `schedules.md` and must be updated from verified receipts.
 
 ## Database loading reliability (September 9)
 
-Supavisor's transaction pooler exposed a postgres.js 3.4.8 pipelining failure: bursts of independent reads could leave query promises unresolved while Postgres waited for client input. The application now queues driver execution before creating queries, with one active operation per process. A transaction owns that gate through commit/rollback; its callback must await each statement. A process-global client survives development reloads. Prepared statements remain disabled, idle connections expire after five seconds, and connection lifetime is capped at 60 seconds. This keeps the existing parameterized SQL, restricted DB role, and report contracts.
+On Supabase, Supavisor's transaction pooler exposed a postgres.js 3.4.8 pipelining failure: bursts of independent reads could leave query promises unresolved while Postgres waited for client input. The application now queues driver execution before creating queries, with one active operation per process. A transaction owns that gate through commit/rollback; its callback must await each statement. A process-global client survives development reloads. Prepared statements remain disabled, idle connections expire after five seconds, and connection lifetime is capped at 60 seconds. This keeps the existing parameterized SQL, restricted DB role, and report contracts.
 
 A job's budget (`DATABASE_JOB_BUDGET_MS` in `lib/database-budget.ts`, 30 seconds plus a two-second grace for the driver) starts when the job starts, so work that waited behind a slow transaction keeps its whole budget; a wait longer than a separate limit (60 seconds) is refused as busy without executing. A timed-out active operation destroys its connection before the next job. Usage read transactions set Postgres's own `statement_timeout` and `transaction_timeout` to the same budget, and an exhausted budget is answered with 504, not 503. Writes are never automatically replayed; their existing idempotency keys and receipts still govern retries. Short private in-memory caches coalesce simultaneous reads: 60 seconds for monthly reports and 30 seconds for the live snapshot. Authentication still precedes cache access; HTTP responses remain private/no-store. These caches are per process, so publication in another instance can take up to the TTL to appear.
 

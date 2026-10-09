@@ -99,12 +99,12 @@ test('background sessions are read from claude --bg and claude agents', () => {
 
 test('the review prompt invokes the skill and starts from what changed', () => {
   const watch = { owner: 'acme', repo: 'app', url: 'https://github.com/acme/app/pull/7' };
-  const followUp = reviewPrompt({ watch, pull: { head: { sha: B } }, reason: '2 new commits were pushed.', since: A, skill: 'luumen-ai-pr-review' });
-  assert.ok(followUp.startsWith('/luumen-ai-pr-review https://github.com/acme/app/pull/7\n'));
+  const followUp = reviewPrompt({ watch, pull: { head: { sha: B } }, reason: '2 new commits were pushed.', since: A, skill: 'ai-pr-review' });
+  assert.ok(followUp.startsWith('/ai-pr-review https://github.com/acme/app/pull/7\n'));
   assert.match(followUp, new RegExp(`gh api repos/acme/app/compare/${A}\\.\\.\\.${B}`));
   assert.match(followUp, /which remain open/);
   assert.match(followUp, /do not stop to ask a question/);
-  const first = reviewPrompt({ watch, pull: { head: { sha: B } }, reason: 'The owner asked.', since: null, skill: 'luumen-ai-pr-review' });
+  const first = reviewPrompt({ watch, pull: { head: { sha: B } }, reason: 'The owner asked.', since: null, skill: 'ai-pr-review' });
   assert.match(first, /full first review/);
   assert.doesNotMatch(first, /compare/);
 });

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/joshgreenwell/ai-kits/blob/main/kit-board/lib/generated/contracts/audit-v1.schema.json",
-  "title": "Luumen AI audit",
+  "title": "AI audit",
   "description": "An HTML report, served sandboxed. coverage.presentation \"full-audit\" marks the report /audit opens by default.",
   "type": "object",
   "properties": {

@@ -5,9 +5,30 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Major versions arrive as their own pull requests, so one breaking release cannot hold up the rest.
     groups:
+      # These are bundled into lib/generated/report-ui.json by `npm run build`. Dependabot cannot rebuild
+      # that file, so this group fails "Generated assets are current" until the bundle is regenerated from a
+      # clean Linux checkout (see kit-board/docs/agent-handoff.md) and committed to the pull request.
+      kit-board-report-ui:
+        patterns:
+          - react
+          - react-dom
+          - recharts
+          - esbuild
+          - tailwindcss
+          - '@tailwindcss/*'
+          - tailwind-merge
+          - tw-animate-css
+          - radix-ui
+          - lucide-react
+          - class-variance-authority
+          - clsx
+          - cn
+        update-types: [minor, patch]
       kit-board-dependencies:
         patterns: ['*']
+        update-types: [minor, patch]
   - package-ecosystem: npm
     directory: /agent-surface
     schedule:
@@ -16,6 +37,7 @@ updates:
     groups:
       agent-surface-dependencies:
         patterns: ['*']
+        update-types: [minor, patch]
   - package-ecosystem: uv
     directory: /agentlint
     schedule:
@@ -24,6 +46,7 @@ updates:
     groups:
       agentlint-dependencies:
         patterns: ['*']
+        update-types: [minor, patch]
   - package-ecosystem: cargo
     directory: /kit-board/companion
     schedule:
@@ -32,10 +55,15 @@ updates:
     groups:
       companion-dependencies:
         patterns: ['*']
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    # release.yml is generated and owned by `dist generate` (dist-workspace.toml). A hand edit, including a
+    # version bump, makes `dist plan` fail with an out-of-date workflow.
+    exclude-paths:
+      - .github/workflows/release.yml
     ignore:
       # The action's version tag is the Rust toolchain version, pinned together with
       # kit-board/companion/rust-toolchain.toml and rust-version in Cargo.toml.

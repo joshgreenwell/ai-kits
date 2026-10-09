@@ -2,15 +2,15 @@ import type { KitManifest } from './types';
 
 export const auditKit = {
   id: 'audit',
-  title: 'Luumen AI audit',
-  summary: 'A weekly agent publishes the Luumen AI audit as an HTML report, with its linked evidence files uploaded beside it.',
+  title: 'AI audit',
+  summary: 'A weekly agent publishes the AI audit as an HTML report, with its linked evidence files uploaded beside it.',
   directory: 'kit-board',
   extracted: false,
-  page: { path: '/audit', empty: 'Published Luumen AI audit reports will appear here.' },
+  page: { path: '/audit', empty: 'Published AI audit reports will appear here.' },
   reports: [{ kind: 'audit', contract: 'audit-v1', enforcement: 'observe' }],
   producers: ['audit'],
   schedules: [
-    { name: 'Luumen AI audit', kind: 'audit', owner: 'Codex', cadence: 'Tuesdays · 9:00 AM', source: 'weekly-luumen-ai-audit', connected: true },
+    { name: 'AI audit', kind: 'audit', owner: 'Codex', cadence: 'Tuesdays · 9:00 AM', source: 'weekly-ai-audit', connected: true },
   ],
   endpoints: [
     { method: 'POST', path: '/api/v1/reports/audit', auth: 'producer', scope: 'audit', contract: 'audit-v1', summary: 'Publishes one audit report.' },

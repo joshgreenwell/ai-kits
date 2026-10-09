@@ -125,9 +125,9 @@ test('the address prompt runs the babysit skill once, in a worktree, and pushes 
   const watch = { url: 'https://github.com/acme/app/pull/7' };
   const pull = { head: { sha: A, ref: 'fix/encrypt', repo: { full_name: 'acme/app' } }, base: { ref: 'develop' } };
   const comments = Array.from({ length: 25 }, (_, i) => ({ source: 'inline', login: 'zach', at: minutesAgo(30 - i), url: `https://github.com/acme/app/pull/7#discussion_r${i}`, path: 'src/a.ts' }));
-  const common = { watch, pull, reason: '25 new comments from zach.', comments, skill: 'luumen-pr-babysit', resultPath: '/w/tmp/pr-watch/results/9.json', worktree: '/w/tmp/pr-watch/worktrees/app-7' };
+  const common = { watch, pull, reason: '25 new comments from zach.', comments, skill: 'pr-babysit', resultPath: '/w/tmp/pr-watch/results/9.json', worktree: '/w/tmp/pr-watch/worktrees/app-7' };
   const prompt = addressPrompt({ ...common, clone: '/w/app' });
-  assert.ok(prompt.startsWith('/luumen-pr-babysit https://github.com/acme/app/pull/7\n'));
+  assert.ok(prompt.startsWith('/pr-babysit https://github.com/acme/app/pull/7\n'));
   assert.match(prompt, /the newest 20 of 25/);
   assert.ok(!prompt.includes('discussion_r4\n') && prompt.includes('discussion_r24'), 'the newest comments are the ones listed');
   assert.match(prompt, /git -C \/w\/app worktree add --detach \/w\/tmp\/pr-watch\/worktrees\/app-7 FETCH_HEAD/);

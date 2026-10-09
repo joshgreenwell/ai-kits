@@ -61,12 +61,13 @@ SYNTHETIC_MARKER = re.compile(r"SYNTHETIC|synthetic")
 
 # The private identifiers of the application whose spike produced agentlint.
 # They are spelled out here, and only here, so that the check can grep for
-# them: two internal run-ID prefixes and the lowercase product name from the
-# JG-116 "no Luumen identifiers" acceptance criterion.
+# them: two internal run-ID prefixes and the private product name from the
+# JG-116 "no private identifiers" acceptance criterion. The name is split
+# below so that this public file does not spell it out.
 PRIVATE_IDENTIFIER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("private-run-id-prefix", re.compile(r"b6d8574d")),
     ("private-run-id-prefix", re.compile(r"f2e2ba50")),
-    ("private-product-name", re.compile(r"luumen", re.IGNORECASE)),
+    ("private-product-name", re.compile("lu" + "umen", re.IGNORECASE)),
 )
 
 
