@@ -21,7 +21,7 @@ import { markdownOf, reportDate, statusLabel } from '@/components/report-view';
 /** How many focus items show before the rest of the day's list is asked for. */
 export const FOCUS_LIMIT = 6;
 // The app's unlayered `button { font: inherit }` outranks a button's own text size, so containers set it.
-const LABEL = 'text-muted-foreground text-[10px] font-semibold tracking-wider uppercase';
+const LABEL = 'text-muted-foreground text-[10px] font-medium tracking-[.09em] uppercase';
 const FOOTER = 'border-border text-muted-foreground border-t p-3 text-xs leading-relaxed';
 
 const PRIORITY_BADGE: Record<BriefingPriority, React.ComponentProps<typeof Badge>['variant']> = {
@@ -48,7 +48,7 @@ function ItemLinks({ row }: { row: BriefingItem }) {
     <span className="flex flex-wrap gap-x-3 gap-y-1">
       {row.links.map(link => (
         <a key={link.href} href={link.href} target="_blank" rel="noreferrer"
-          className="text-primary! inline-flex items-center gap-0.5 text-xs font-medium underline-offset-4 hover:underline!">
+          className="text-link! inline-flex items-center gap-0.5 text-xs font-medium underline-offset-4 hover:underline!">
           {link.label}<ArrowUpRightIcon aria-hidden className="size-3" />
         </a>
       ))}
@@ -206,7 +206,7 @@ export function DayCard({ week }: { week: NonNullable<Briefing['week']> }) {
                 'focus-visible:ring-ring/50 grid min-w-0 justify-items-center gap-1 rounded-md border px-1 py-1.5 outline-none transition-colors focus-visible:ring-[3px]',
                 index === selected ? 'bg-secondary border-border' : 'hover:bg-accent/60 border-transparent',
               )}>
-              <span className={cn('text-[10px] font-semibold tracking-wider uppercase', item.today ? 'text-primary' : 'text-muted-foreground', item.weekend && !item.today && 'opacity-60')}>
+              <span className={cn('text-[10px] font-medium tracking-[.09em] uppercase', item.today ? 'text-primary' : 'text-muted-foreground', item.weekend && !item.today && 'opacity-60')}>
                 {weekday(item.date)}
               </span>
               <span className="font-mono text-sm leading-none tabular-nums">{Number(item.day) || item.day}</span>
@@ -407,7 +407,7 @@ function ShareRows({ rows, total, label }: { rows: { label: string; count: numbe
 
 const QUEUE_COLUMNS: Column<QueueRow>[] = [
   { id: 'id', header: 'Issue', width: '8rem', sortValue: row => row.id,
-    cell: row => (row.href ? <a href={row.href} target="_blank" rel="noreferrer" className="text-primary! font-mono text-xs underline-offset-4 hover:underline!">{row.id}</a> : <span className="font-mono text-xs">{row.id}</span>) },
+    cell: row => (row.href ? <a href={row.href} target="_blank" rel="noreferrer" className="text-link! font-mono text-xs underline-offset-4 hover:underline!">{row.id}</a> : <span className="font-mono text-xs">{row.id}</span>) },
   { id: 'title', header: 'Title', cell: row => <span className="block min-w-[14rem] text-[13px] whitespace-normal">{row.title}</span> },
   { id: 'priority', header: 'Priority', width: '6.5rem', sortValue: row => queuePriorityRank(row.priority),
     cell: row => <span className={cn('text-xs', queuePriorityRank(row.priority) <= 1 && 'text-warning')}>{row.priority}</span> },

@@ -86,7 +86,7 @@ export function RankedList<T>({
     <div data-slot="ranked-list" className={cn("@container/ranked grid min-w-0", className)} style={template} {...props}>
       <div
         aria-hidden="true"
-        className="text-muted-foreground hidden grid-cols-(--ranked-cols) gap-x-4 px-4 pb-2 text-[10px] font-semibold tracking-wider uppercase @min-[36rem]/ranked:grid"
+        className="text-muted-foreground hidden grid-cols-(--ranked-cols) gap-x-4 px-4 pb-2 text-[10px] font-medium tracking-[.09em] uppercase @min-[36rem]/ranked:grid"
       >
         <span>{nameHeader}</span>
         <span>{barHeader}</span>

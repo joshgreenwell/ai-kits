@@ -43,7 +43,7 @@ export function AllowanceAccordion({ views, expanded, onExpandedChange, now, tim
     <Accordion type="multiple" value={expanded} onValueChange={onExpandedChange} className="@container/accounts grid gap-4">
       {views.map(view => (
         <AccordionItem key={view.account.id} value={view.account.id} data-testid={`account-${view.account.id}`} id={allowanceAnchor(view.account.id)}
-          className="scroll-mt-28 bg-card text-card-foreground border-border overflow-hidden rounded-xl border shadow-sm last:border-b">
+          className="scroll-mt-28 bg-card text-card-foreground border-border overflow-hidden rounded-xl border shadow-[var(--shadow-panel)] last:border-b">
           <AccordionTrigger className="items-center gap-3 p-4 hover:no-underline">
             <span className="grid min-w-0 gap-1">
               <span className="flex flex-wrap items-center gap-2">

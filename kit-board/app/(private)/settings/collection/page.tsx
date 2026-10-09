@@ -97,7 +97,7 @@ export default function SettingsPage() {
                 <TableBody>
                   {settingsMatrix.map(group => (
                     <>
-                      <TableRow key={group.group} className="bg-muted/40 hover:bg-muted/40"><TableCell colSpan={2 + installs.length} className="text-[10px] font-semibold tracking-wider uppercase">{group.group}</TableCell></TableRow>
+                      <TableRow key={group.group} className="bg-muted/40 hover:bg-muted/40"><TableCell colSpan={2 + installs.length} className="text-[10px] font-medium tracking-[.09em] uppercase">{group.group}</TableCell></TableRow>
                       {group.rows.map(row => (
                         <TableRow key={row.path} className="even:bg-foreground/[0.03] border-b-0">
                           <TableCell className="align-top">

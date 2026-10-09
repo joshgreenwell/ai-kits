@@ -36,6 +36,21 @@ test('report documents cannot share origin, make network calls, submit forms, or
     assert.ok(csp.includes(`'sha256-${createHash('sha256').update(match[1]).digest('base64')}'`));
   }
 });
+
+test('only tabbed audit reports take the audit layout, under the same exact-script CSP', () => {
+  const audit = prepareArtifact('<html><head><title>Audit</title></head><body><header class="report-header"><h1>Audit</h1></header><nav class="tabs-shell"><button data-main-tab="overview">Overview</button></nav><main><section data-main-panel="overview"></section></main><script>console.log("tabs")</script></body></html>');
+  assert.match(audit.html, /<html class="[^"]*\bobservatory-audit\b/);
+  assert.match(audit.html, /<style data-personal-hub-audit>/);
+  // The layout builds the pinned bar before the runtime looks for it.
+  assert.ok(audit.html.indexOf('<script data-personal-hub-audit>') < audit.html.indexOf('<script data-personal-hub-layout>'));
+  for (const match of audit.html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
+    assert.ok(audit.csp.includes(`'sha256-${createHash('sha256').update(match[1]).digest('base64')}'`));
+  }
+  const plain = prepareArtifact('<html><head><title>Readings</title></head><body><nav class="tabs-shell"></nav><main></main></body></html>');
+  assert.doesNotMatch(plain.html, /observatory-audit|data-personal-hub-audit/);
+  const carbon = prepareArtifact('<html><head><style>:root { --border-glass: #fff; }</style></head><body><header class="report-header"></header><nav class="tabs-shell"></nav><section data-main-panel="overview"></section></body></html>');
+  assert.doesNotMatch(carbon.html, /observatory-audit|data-personal-hub-audit/);
+});
 test('stream limits are enforced even without a Content-Length header', async () => {
   const request = new Request('http://localhost', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: 'x'.repeat(500) }) });
   await assert.rejects(readJson(request, 50), /too large/);

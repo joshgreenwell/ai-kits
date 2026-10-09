@@ -27,7 +27,7 @@ export function TerminalBlock({
   return (
     <div
       data-slot="terminal-block"
-      className={cn("border-border overflow-hidden rounded-lg border bg-black/40", className)}
+      className={cn("border-glass bg-inset overflow-hidden rounded-lg border", className)}
       {...props}
     >
       {(caption || command) && (
@@ -36,7 +36,7 @@ export function TerminalBlock({
           {command ? <CopyButton value={command} label="Copy the command" size="xs" /> : null}
         </div>
       )}
-      <pre className="text-foreground/85 overflow-x-auto px-3 py-3 font-mono text-xs leading-relaxed">
+      <pre className="text-content-secondary overflow-x-auto px-3 py-3 font-mono text-xs leading-relaxed">
         {children}
       </pre>
       {exitCode !== undefined ? (

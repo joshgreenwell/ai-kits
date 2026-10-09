@@ -24,7 +24,7 @@ export function ListRow({
       data-slot="list-row"
       className={cn(
         "border-border flex flex-wrap items-center gap-4 border-b px-4 py-3 last:border-b-0",
-        tone === "destructive" && "bg-destructive/8 shadow-[inset_2px_0_0_var(--destructive)]",
+        tone === "destructive" && "bg-destructive/[.04] shadow-[inset_2px_0_0_var(--destructive)]",
         className
       )}
       {...props}

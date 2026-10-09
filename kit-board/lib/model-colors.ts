@@ -9,17 +9,22 @@
  * Sol takes the white blue-1 OpenAI gives its flagship Sol on the GPT-5.6 page; Terra is green-3 rather
  * than OpenAI's blue-3, which is nearly Astra's blue. Cursor's own chart color is its brand orange and
  * xAI charts in black and white, so Cursor's models take teal, which neither lab uses.
+ * Sonnet 5.5 and GPT-6.1 Sol came later and were set by the owner to their lab's family: an apricot
+ * between Fable 5.1's peach and Opus 5's amber, and a blue a step deeper than Astra, the lighter blues
+ * being taken by the earlier Sols. Each sits at least 10 CIEDE2000 from every other line.
  */
 const PALETTE: Record<string, string> = {
   'claude-opus-5-5': '#EB6834',
   'claude-fable-5-1': '#F4BA96',
   'claude-opus-5': '#EDA100',
+  'claude-sonnet-5-5': '#E89A5B',
   'claude-sonnet-5': '#AC4F23',
   'claude-haiku-4-5': '#FBE8DB',
   'claude-opus-4-8': '#87401D',
   'gpt-6-astra': '#3A83F7',
   'gpt-6-sol': '#E8F3FE',
   'gpt-6-luna': '#B897F4',
+  'gpt-6.1-sol': '#1D5FD1',
   'gpt-5.6-sol': '#A4CDFB',
   'gpt-5.6-terra': '#6BC67F',
   'gpt-5.6-luna': '#7849D1',

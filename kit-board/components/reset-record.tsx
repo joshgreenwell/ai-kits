@@ -139,7 +139,7 @@ export function ResetRecord() {
                           {item.status.replaceAll('_', ' ')}{stale(feed) ? ' · stale source' : ''}
                         </span>
                       </div>
-                      <a href={item.url} target="_blank" rel="noreferrer" className="hover:text-primary mt-1 block text-sm font-semibold underline-offset-4 hover:underline">
+                      <a href={item.url} target="_blank" rel="noreferrer" className="hover:text-link mt-1 block text-sm font-semibold underline-offset-4 hover:underline">
                         {item.title.split('\n')[0]}
                       </a>
                       {item.title.includes('\n') && (

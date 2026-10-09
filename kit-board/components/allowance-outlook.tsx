@@ -80,7 +80,7 @@ export function AllowanceOutlook({ views, now, timezone, onSelect }: {
         <Stat label="Paused forecasts" value={paused.length} tone={paused.length ? 'warning' : 'default'}
           caption={paused.length ? 'a fresh reading resumes each one' : 'every reading is current'} />
       </StatGroup>
-      <div className="text-muted-foreground hidden grid-cols-[minmax(0,15rem)_minmax(0,1fr)_4.5rem_minmax(0,15rem)_6rem] gap-x-4 px-4 pt-3 pb-1 text-[10px] font-semibold tracking-wider uppercase md:grid">
+      <div className="text-muted-foreground hidden grid-cols-[minmax(0,15rem)_minmax(0,1fr)_4.5rem_minmax(0,15rem)_6rem] gap-x-4 px-4 pt-3 pb-1 text-[10px] font-medium tracking-[.09em] uppercase md:grid">
         <span>Window</span><span>Left until reset</span><span className="text-right">Left</span><span>Outlook</span><span className="text-right">Resets</span>
       </div>
       <ul className="divide-border divide-y" aria-label="Allowance windows by urgency">

@@ -81,7 +81,7 @@ export function ProjectRegistry() {
                 )} />
               {data.removed.length ? (
                 <div className="grid gap-2" data-testid="removed-projects">
-                  <h3 className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Removed in the app</h3>
+                  <h3 className="text-muted-foreground text-[10px] font-medium tracking-[.09em] uppercase">Removed in the app</h3>
                   <DataTable columns={columns} rows={data.removed} getRowId={row => row.id} defaultSort={{ id: 'requests', dir: 'desc' }} className="max-h-60 overflow-auto" />
                 </div>
               ) : null}

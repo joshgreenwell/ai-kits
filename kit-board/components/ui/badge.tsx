@@ -3,29 +3,31 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "cn"
 import { Slot } from "radix-ui"
 
-// One size: a thin pill that sits inside a line of small text without pushing the line apart. The
-// height is fixed so a badge in a flex row or grid cell never stretches to its neighbours.
+// One size: Carbon's 20px tag, which sits inside a line of small text without pushing the line apart.
+// The height is fixed so a badge in a flex row or grid cell never stretches to its neighbours. Every
+// tone is the same recipe - a 28% border and a 10% wash of the tone, lettered in the tone itself - and
+// the plain variants lean on it a little harder than the soft ones.
 const badgeVariants = cva(
-  "inline-flex h-[18px] w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-1.5 text-[11px] leading-none font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-2.5",
+  "inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-sm border border-transparent px-[7px] text-[11px] leading-none font-medium whitespace-nowrap transition-[color,background-color] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring aria-invalid:border-destructive/60 [&>svg]:pointer-events-none [&>svg]:size-2.5",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
+        default: "border-primary/40 bg-primary/16 text-primary [a&]:hover:bg-primary/22",
         secondary:
-          "bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90",
+          "border-interactive bg-fill-subtle text-muted-foreground [a&]:hover:bg-fill-control",
         destructive:
-          "bg-destructive text-white focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40 [a&]:hover:bg-destructive/90",
+          "border-destructive/40 bg-destructive/16 text-destructive [a&]:hover:bg-destructive/22",
         outline:
-          "border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
-        warning: "bg-warning text-warning-foreground [a&]:hover:bg-warning/90",
-        info: "bg-info text-info-foreground [a&]:hover:bg-info/90",
-        // Soft tones read better inside dense rows, where a solid fill shouts.
-        soft: "bg-primary/15 text-primary border-primary/35",
-        "soft-destructive": "bg-destructive/15 text-destructive border-destructive/35",
-        "soft-warning": "bg-warning/15 text-warning border-warning/35",
-        "soft-info": "bg-info/15 text-info border-info/35",
-        ghost: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
-        link: "text-primary underline-offset-4 [a&]:hover:underline",
+          "border-interactive text-content-secondary [a&]:hover:bg-fill-control [a&]:hover:text-foreground",
+        warning: "border-warning/40 bg-warning/16 text-warning [a&]:hover:bg-warning/22",
+        info: "border-info/40 bg-info/16 text-info [a&]:hover:bg-info/22",
+        // Soft tones read better inside dense rows, where a stronger wash shouts.
+        soft: "border-primary/28 bg-primary/10 text-primary",
+        "soft-destructive": "border-destructive/28 bg-destructive/10 text-destructive",
+        "soft-warning": "border-warning/28 bg-warning/10 text-warning",
+        "soft-info": "border-info/28 bg-info/10 text-info",
+        ghost: "text-content-secondary [a&]:hover:bg-fill-control [a&]:hover:text-foreground",
+        link: "text-link underline-offset-4 [a&]:hover:underline",
       },
     },
     defaultVariants: {

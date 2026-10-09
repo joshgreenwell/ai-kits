@@ -12,6 +12,8 @@
 @source not "../supabase";
 @source not "../browser";
 @source not "../public";
+/* The audit layout carries its CSS as text, whose property names read as utility classes. */
+@source not "../lib/audit-layout.ts";
 @custom-variant dark (&:is(.dark *));
 
 /* A dashboard step past 2xl, for a third card to a row. It is in rem so it sorts after xl: an
@@ -49,6 +51,21 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  /* Carbon's own roles, for the glass surfaces shadcn has no name for */
+  --color-panel: var(--panel);
+  --color-inset: var(--surface-inset);
+  --color-glass: var(--border-glass);
+  --color-interactive: var(--border-interactive);
+  --color-line-strong: var(--border-strong);
+  --color-fill-subtle: var(--fill-subtle);
+  --color-fill-control: var(--fill-control);
+  --color-fill-emphasis: var(--fill-emphasis);
+  --color-control: var(--control-fill);
+  --color-track: var(--control-track);
+  --color-raised: var(--selection-raised);
+  --color-content-secondary: var(--content-secondary);
+  --color-link: var(--link);
+  --color-brand: var(--brand);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -62,59 +79,109 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) * 1.4);
   --radius-2xl: calc(var(--radius) * 1.8);
-  --font-sans: Manrope, ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'DM Mono', ui-monospace, monospace;
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
 }
 
 /* ---------------------------------------------------------------------------
-   Palette: near-black ground, green accent.
+   Palette: Carbon, set down on the observatory's own ground.
 
-   The ground is a near-black neutral carrying a faint green bias, so the
-   primary reads as native to the surface rather than pasted onto a pure grey.
-   It is a decision, not a default: every step from --background to --input is
-   the same hue, separated only by lightness.
+   The ground stays #070807. Everything above it is Carbon - the Prism tokens
+   shared by the Carbon web and terminal design systems - laid on as glass: a
+   panel is the Carbon canvas at 74% over the ground, and every line, hover and
+   track is translucent white rather than a fixed grey, so it reads the same on
+   any surface. Controls are bordered in 24% grey, and the primary action is
+   the content colour itself (#ededef on dark ink) rather than a hue.
 
-   --primary is the one meaning-bearing colour: validated, within allowance,
-   added, connected. It is never spent on decoration. --destructive, --warning
-   and --info carry severity and provider identity and are tuned to sit beside
-   the green without vibrating.
+   Hue carries meaning and nothing else. --primary is Carbon's green -
+   validated, within allowance, added, connected - and --destructive, --warning
+   and --info are its red, amber and blue. --chart-1..5 carry provider identity
+   and do not move with the palette, nor do lib/model-colors.ts and
+   lib/provider-colors.ts.
 
    SHAPE IS DERIVED. --radius is the single knob; every other radius in the app
-   is calc()'d from it, so nothing can drift out of the scale by hand. 0.5rem is
-   shadcn's compact ("Nova") setting: right for dense tables and ledgers.
+   is calc()'d from it, so nothing can drift out of the scale by hand. .625rem
+   gives Carbon's 8px controls and 14px panels.
    --------------------------------------------------------------------------- */
 
 :root {
-  /* surfaces — one hue, lightness only */
+  color-scheme: dark;
+
+  /* the ground - the one value that is the observatory's, not Carbon's */
   --background: #070807;
-  --card: #0d0e0d;
-  --popover: #121413;
-  --secondary: #161817;
-  --muted: #121413;
-  --accent: #1d1f1e;
+
+  /* Carbon surfaces */
+  --surface-canvas: #0e0e11;
+  --surface-floating: #161619;
+  --surface-raised: #1f1f23;
+  --surface-muted: #1c1c21;
+  --surface-inset: #080809;
+  --panel: color-mix(in srgb, var(--surface-canvas) 74%, transparent);
+  --bar-glass: color-mix(in srgb, var(--surface-canvas) 62%, transparent);
+
+  /* Carbon content */
+  --content-primary: #ededef;
+  --content-secondary: #d4d4d8;
+  --content-muted: #8b8b96;
+
+  /* Carbon lines and fills - translucent, so they hold on any surface */
+  --border-strong: #2a2a31;
+  --border-glass: rgba(237, 237, 239, .08);
+  --border-interactive: rgba(139, 139, 150, .24);
+  --fill-subtle: rgba(237, 237, 239, .025);
+  --fill-control: rgba(237, 237, 239, .045);
+  --fill-emphasis: rgba(237, 237, 239, .08);
+  --control-fill: rgba(237, 237, 239, .04);
+  --control-border: rgba(139, 139, 150, .24);
+  --control-track: rgba(237, 237, 239, .04);
+  --selection-raised: rgba(237, 237, 239, .09);
+  --focus-border: #8b8b96;
+  --scrollbar-thumb: rgba(255, 255, 255, .14);
+  --link: #8ec5ff;
+  --brand: #fecc34;
+
+  /* Carbon depth: a 1px sheen on the top edge, and a long soft drop */
+  --sheen: rgba(255, 255, 255, .05);
+  --shadow-ink: rgba(0, 0, 0, .4);
+  --shadow-flyout: rgba(0, 0, 0, .5);
+  --shadow-panel: inset 0 1px 0 var(--sheen), 0 18px 40px -28px var(--shadow-flyout);
+  --shadow-menu: inset 0 1px 0 var(--sheen), 0 20px 25px -5px rgba(0, 0, 0, .48), 0 8px 10px -6px rgba(0, 0, 0, .48);
+  --ease: cubic-bezier(.4, 0, .2, 1);
+
+  /* type - next/font sets the variables on <html>; sandboxed documents embed the same faces */
+  --font-ui: var(--font-geist, "Geist"), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-code: var(--font-geist-mono, "Geist Mono"), ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  /* shadcn roles, mapped onto Carbon. A card is the glass panel flattened onto the
+     ground: the same colour, but opaque, so sticky table heads stay solid. */
+  --card: #0c0c0e;
+  --popover: #131316;
+  --secondary: var(--surface-muted);
+  --muted: var(--fill-emphasis);
+  --accent: var(--fill-control);
 
   /* text */
-  --foreground: #eceeec;
-  --muted-foreground: #8d918f;
+  --foreground: var(--content-primary);
+  --muted-foreground: var(--content-muted);
 
   /* lines */
-  --border: #1f2120;
-  --input: #2a2d2b;
-  --ring: #4fa57e;
+  --border: var(--border-glass);
+  --input: var(--control-border);
+  --ring: var(--focus-border);
 
   /* the meaning stop */
-  --primary: #63bc93;
-  --primary-foreground: #04130c;
+  --primary: #5ee9b5;
+  --primary-foreground: #03160e;
 
   /* severity */
-  --destructive: #d66a5b;
-  --destructive-foreground: #150605;
-  --warning: #cfa24f;
-  --warning-foreground: #181205;
-  --info: #7e90cc;
-  --info-foreground: #0a0d1b;
+  --destructive: #ff8a8d;
+  --destructive-foreground: #1f0607;
+  --warning: #ffba00;
+  --warning-foreground: #1c1400;
+  --info: #8ec5ff;
+  --info-foreground: #041120;
 
-  /* charts / provider identity */
+  /* charts / provider identity - unchanged by the Carbon palette */
   --chart-1: #63bc93;
   --chart-2: #5b92ae;
   --chart-3: #7e90cc;
@@ -122,81 +189,94 @@
   --chart-5: #d66a5b;
 
   /* sidebar */
-  --sidebar: #0a0b0a;
-  --sidebar-foreground: #eceeec;
-  --sidebar-primary: #63bc93;
-  --sidebar-primary-foreground: #04130c;
-  --sidebar-accent: #1d1f1e;
-  --sidebar-accent-foreground: #eceeec;
-  --sidebar-border: #1f2120;
-  --sidebar-ring: #4fa57e;
+  --sidebar: #0a0a0c;
+  --sidebar-foreground: var(--content-primary);
+  --sidebar-primary: var(--content-primary);
+  --sidebar-primary-foreground: #131316;
+  --sidebar-accent: var(--fill-control);
+  --sidebar-accent-foreground: var(--content-primary);
+  --sidebar-border: var(--border-glass);
+  --sidebar-ring: var(--focus-border);
 
-  /* ONE KNOB — every corner in the app derives from this */
-  --radius: .5rem;
+  /* ONE KNOB - every corner in the app derives from this */
+  --radius: .625rem;
   --radius-card: calc(var(--radius) * 1.4);
   --radius-control: calc(var(--radius) * .8);
 }
 
-/* Component shapes and states are shared by the app and sandboxed documents. */
+/* Component shapes and states are shared by the app and sandboxed documents. They follow Carbon's
+   control recipe: a 24% grey border over a 4% white fill, a white wash on hover, and a solid grey
+   focus ring set 2px off the edge. Colour for buttons lives in the variants (components/ui/button.tsx)
+   so a caller's text colour still applies; only the shape is fixed here. */
 [data-slot="select-trigger"] {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  height: 44px; min-width: 0; max-width: 100%; padding: 10px 14px;
-  border: 1px solid var(--input); border-radius: var(--radius-control);
-  color: var(--foreground); background: var(--card); font: inherit; font-size: 14px;
-  line-height: 1.4; text-align: left; cursor: pointer; box-shadow: 0 1px 2px #0002;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  height: 36px; min-width: 0; max-width: 100%; padding: 0 10px 0 12px;
+  border: 1px solid var(--control-border); border-radius: var(--radius-control);
+  color: var(--foreground); background: var(--control-fill); font: inherit; font-size: 13px;
+  line-height: 1.4; text-align: left; cursor: pointer; box-shadow: none;
+  transition: background-color .15s var(--ease), border-color .15s var(--ease);
 }
-[data-slot="select-trigger"]:hover { background: var(--secondary); border-color: #55725e; }
+[data-slot="select-trigger"][data-size="sm"] { height: 32px; font-size: 12.5px; }
+[data-slot="select-trigger"]:hover { background: var(--fill-emphasis); }
+[data-slot="select-trigger"][data-state="open"] { border-color: var(--focus-border); }
 [data-slot="select-trigger"]:focus-visible, [data-slot="button"]:focus-visible, [data-slot="input"]:focus-visible, [data-slot="textarea"]:focus-visible {
-  outline: 2px solid var(--ring); outline-offset: 3px;
+  outline: 2px solid var(--focus-border); outline-offset: 2px; box-shadow: none;
 }
 [data-slot="select-value"] { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 [data-slot="select-trigger"] > svg { flex: none; width: 16px; height: 16px; color: var(--muted-foreground); }
 [data-slot="select-content"], [data-slot="hover-card-content"], [data-slot="tooltip-content"] {
-  z-index: 100; box-sizing: border-box; border: 1px solid var(--input);
+  z-index: 100; box-sizing: border-box; border: 1px solid var(--border-glass);
   border-radius: var(--radius); color: var(--foreground); background: var(--popover);
-  box-shadow: 0 18px 48px #0007; font-family: Manrope, ui-sans-serif, system-ui, sans-serif;
+  box-shadow: var(--shadow-menu); font-family: var(--font-ui);
 }
 [data-slot="select-content"] {
   width: max(12rem, var(--radix-select-trigger-width));
   max-width: min(32rem, calc(100vw - 32px));
   max-height: min(360px, var(--radix-select-content-available-height));
-  overflow: hidden; padding: 5px;
+  overflow: hidden; padding: 4px;
 }
 [data-radix-select-viewport] { padding: 0 !important; min-width: 0 !important; }
 [data-slot="select-item"] {
   position: relative; display: flex; align-items: center; width: 100%; box-sizing: border-box;
-  min-height: 40px; padding: 10px 34px 10px 12px; border-radius: calc(var(--radius-control) - 3px);
-  color: var(--foreground); background: transparent; font-size: 14px; line-height: 1.45;
+  min-height: 32px; padding: 6px 30px 6px 10px; border-radius: calc(var(--radius) - 4px);
+  color: var(--content-secondary); background: transparent; font-size: 13px; line-height: 1.45;
   white-space: normal; overflow-wrap: anywhere; cursor: pointer; outline: none;
 }
-[data-slot="select-item"][data-highlighted] { background: var(--accent); color: var(--primary); }
-[data-slot="select-item"][data-state="checked"] { color: var(--primary); }
-[data-slot="select-item-indicator"] { position: absolute; right: 11px; display: flex; align-items: center; width: 16px; }
-[data-slot="select-item"] svg, [data-slot="select-scroll-up-button"] svg, [data-slot="select-scroll-down-button"] svg { width: 16px; height: 16px; }
+/* :focus as well as [data-highlighted], so a document's own --accent never shows through the vendored focus utility. */
+[data-slot="select-item"]:focus, [data-slot="select-item"][data-highlighted] { background: var(--fill-control); color: var(--content-primary); }
+[data-slot="select-item"][data-state="checked"] { color: var(--content-primary); font-weight: 500; }
+[data-slot="select-item-indicator"] { position: absolute; right: 9px; display: flex; align-items: center; width: 16px; color: var(--content-primary); }
+[data-slot="select-item"] svg, [data-slot="select-scroll-up-button"] svg, [data-slot="select-scroll-down-button"] svg { width: 15px; height: 15px; }
 [data-slot="select-scroll-up-button"], [data-slot="select-scroll-down-button"] { display: flex; justify-content: center; padding: 4px; color: var(--muted-foreground); }
-[data-slot="select-trigger"]:disabled, [data-slot="select-item"][data-disabled] { opacity: .5; cursor: not-allowed; }
-[data-slot="hover-card-content"] { padding: 20px; max-width: calc(100vw - 32px); }
+[data-slot="select-trigger"]:disabled, [data-slot="select-item"][data-disabled] { opacity: .48; cursor: not-allowed; }
+[data-slot="hover-card-content"] { padding: 18px; max-width: calc(100vw - 32px); }
 /* A tooltip is the same surface as a select menu, only sized for a sentence. Without this it kept
    the vendored Tailwind defaults - a different radius, shadow and font from every other overlay. */
 [data-slot="tooltip-content"] {
-  max-width: min(22rem, calc(100vw - 32px)); padding: 8px 10px;
-  border-radius: var(--radius-control); font-size: 12px; line-height: 1.45;
+  max-width: min(22rem, calc(100vw - 32px)); padding: 6px 9px;
+  border-radius: var(--radius-control); color: var(--content-secondary); font-size: 12px; line-height: 1.45;
 }
 
 [data-slot="button"] {
-  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  min-height: 40px; padding: 10px 16px; border: 1px solid transparent;
-  border-radius: var(--radius-control); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 36px; padding: 6px 14px; border-width: 1px; border-style: solid;
+  border-radius: var(--radius-control); font: inherit; font-size: 13px; font-weight: 500; line-height: 1.25; cursor: pointer;
+  transition: background-color .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease);
 }
-[data-slot="button"][data-variant="default"] { background: var(--primary); color: var(--primary-foreground); }
-[data-slot="button"][data-variant="outline"] { background: transparent; color: var(--foreground); border-color: var(--input); }
-[data-slot="button"][data-variant="ghost"] { background: transparent; color: var(--foreground); }
-[data-slot="button"]:hover { filter: brightness(1.1); }
-[data-slot="button"][data-variant="outline"]:hover, [data-slot="button"][data-variant="ghost"]:hover { background: var(--secondary); }
-[data-slot="button"]:disabled { opacity: .5; cursor: wait; }
+[data-slot="button"][data-size="lg"] { min-height: 40px; padding: 8px 18px; }
+[data-slot="button"][data-size="sm"] { min-height: 32px; padding: 4px 12px; font-size: 12.5px; }
+[data-slot="button"][data-size="xs"] { min-height: 24px; padding: 2px 8px; font-size: 12px; }
+[data-slot="button"][data-size^="icon"] { min-height: 0; padding: 0; }
+[data-slot="button"]:disabled { opacity: .48; cursor: wait; }
 .machine-focus-button { align-self: flex-start; margin-top: auto; white-space: normal; }
-[data-slot="input"] { height: 44px; padding: 10px 14px; border: 1px solid var(--input); border-radius: var(--radius-control); color: var(--foreground); background: var(--background); }
-[data-slot="textarea"] { min-height: 180px; padding: 10px 14px; border: 1px solid var(--input); border-radius: var(--radius-control); color: var(--foreground); background: var(--background); }
+[data-slot="input"], [data-slot="textarea"] {
+  border: 1px solid var(--control-border); border-radius: var(--radius-control);
+  color: var(--foreground); background: var(--control-fill);
+  transition: background-color .15s var(--ease), border-color .15s var(--ease);
+}
+[data-slot="input"] { height: 36px; padding: 0 12px; }
+[data-slot="textarea"] { min-height: 180px; padding: 10px 12px; line-height: 1.55; }
+[data-slot="input"]:focus, [data-slot="textarea"]:focus { border-color: var(--focus-border); background: var(--fill-emphasis); outline: none; }
 /* Preflight is not imported, so a vendored `border-b` falls back to currentColor - the foreground -
    rather than the border token. The ledger primitives name the token here instead. */
 [data-slot="table-row"], [data-slot="table-header"] tr { border-bottom-color: var(--border); }
@@ -207,51 +287,82 @@
 .history-control { min-width: 0; width: min(420px, 100%); }
 .page-header-actions { display: flex; align-items: center; gap: 12px; min-width: 0; max-width: 100%; }
 .page-header-actions:has(.history-control) { width: min(360px, 45%); }
-.machine-reporters-badge { background: var(--primary); color: var(--primary-foreground); }
-.machine-reporters-content > p { color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
-.machine-reporters-content li { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.machine-reporters-badge {
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent);
+  background: color-mix(in srgb, var(--primary) 10%, transparent); color: var(--primary);
+}
+.machine-reporters-content > p { color: var(--muted-foreground); font-size: 10px; font-weight: 500; letter-spacing: .09em; text-transform: uppercase; }
+.machine-reporters-content li { display: flex; align-items: center; gap: 10px; color: var(--content-secondary); font-size: 13px; }
 .machine-reporters-content li::before { content: ''; width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--primary); }
 .history-control [data-slot="select-trigger"] { width: 100%; }
 .history-option { display: flex; flex-direction: column; gap: 4px; }
-.history-option strong { font-size: 13px; font-weight: 600; }
+.history-option strong { font-size: 13px; font-weight: 500; }
 .history-option small { color: var(--muted-foreground); font-size: 11px; }
 [data-slot="select-trigger"] .history-option small { display: none; }
 [data-slot="select-trigger"] .history-option strong { overflow: hidden; text-overflow: ellipsis; }
 .portal-header nav > a, .portal-account > a { border-radius: var(--radius-control); }
-.portal-header nav > a[aria-current="page"] { background: var(--secondary); color: var(--primary); }
+.portal-header nav > a[aria-current="page"] { background: var(--fill-emphasis); color: var(--foreground); box-shadow: inset 0 0 0 1px var(--border-glass); }
 
-/* Authored reports share the same surfaces without changing their evidence. */
-.observatory-document { --radius: 1rem !important; --radius-card: 1.5rem; --radius-control: .8rem; }
-.observatory-document :is(.content-card, .score-detail, .finding-domain, .capability-panel, .overview-ledger, .finding-counts, .header-ledger, .capability-tabs, .artifact-gallery figure, .domain, .review, main.shell > article > section) {
-  border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); box-shadow: none;
+/* Authored reports share the same surfaces without changing their evidence. A Carbon report
+   (.observatory-carbon) already draws these components itself, so only the older reports
+   (.observatory-legacy) are restyled into Carbon's glass panels, tonal badges and segmented tabs. */
+.observatory-document { --radius: .75rem !important; --radius-card: .875rem; --radius-control: .5rem; }
+.observatory-legacy :is(.content-card, .score-detail, .finding-domain, .capability-panel, .overview-ledger, .finding-counts, .header-ledger, .capability-tabs, .artifact-gallery figure, .domain, .review, main.shell > article > section) {
+  border: 1px solid var(--border-glass); border-radius: var(--radius-card); background: var(--panel); box-shadow: var(--shadow-panel);
 }
-.observatory-document :is(.structured-record, .capability-field, .finding-card, .fixture-record, .provenance-images article, .definition-grid, .verdict-grid, .table-scroll, .observatory-table-scroll) {
-  border-radius: var(--radius); border-color: var(--border); background: var(--background); box-shadow: none;
+.observatory-legacy :is(.structured-record, .capability-field, .finding-card, .fixture-record, .provenance-images article, .definition-grid, .verdict-grid, .table-scroll, .observatory-table-scroll) {
+  border-radius: var(--radius); border-color: var(--border-glass); background: var(--fill-subtle); box-shadow: none;
 }
-.observatory-document :is(.table-scroll, .observatory-table-scroll) { border: 1px solid var(--border); overflow: auto; }
-.observatory-document .finding-card { border-left-width: 4px; }
-.observatory-document :is(.badge, .quiet-pill, .meta .priority) { border-radius: 999px; padding: 6px 10px; line-height: 1.3; }
-.observatory-document details { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 20px; }
-.observatory-document summary { cursor: pointer; font-weight: 600; }
-.observatory-document summary:hover { color: var(--primary); }
-.observatory-document .main-tabs { gap: 6px; padding-block: 10px; }
-.observatory-document .main-tabs button { border: 0; border-radius: var(--radius-control); min-height: 42px; padding: 10px 14px; box-shadow: none; }
-.observatory-document .main-tabs button[aria-selected="true"], .observatory-document .capability-tabs button[aria-selected="true"] { background: var(--secondary); color: var(--primary); box-shadow: none; }
-.observatory-document .main-tabs button small { border: 0; border-radius: 6px; background: var(--background); }
-.observatory-document .capability-tabs { padding: 6px; }
-.observatory-document .capability-tabs button { border: 0; border-radius: var(--radius-control); }
-.observatory-document main > nav:not(.tabs-shell) { gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
-.observatory-document main > nav:not(.tabs-shell) a { padding: 10px 14px; border: 0; border-radius: var(--radius-control); text-decoration: none; font: 600 13px Manrope, sans-serif; }
-.observatory-document main > nav:not(.tabs-shell) a:hover, .observatory-document .capability-tabs button:hover { background: var(--secondary); }
-.observatory-document :is(.domain, .review, main.shell > article > section) { padding: clamp(20px, 2vw, 32px); margin-block: 16px; }
-.observatory-document .domain { gap: clamp(20px, 3vw, 48px); }
-.observatory-document .domain h2 { font-size: 26px; }
-.observatory-document :is(.notice, .stats) { border-radius: var(--radius); }
-.observatory-document .stats { border: 1px solid var(--border); background: var(--card); padding-inline: 20px; }
-.observatory-document .stats b { font-family: Manrope, ui-sans-serif, system-ui, sans-serif; }
-.observatory-document :is(input, textarea):not([data-slot]) { padding: 10px 14px; border: 1px solid var(--input); border-radius: var(--radius-control); }
-.observatory-document .footer-actions button { border-radius: var(--radius-control); padding: 10px 14px; }
+.observatory-legacy :is(.table-scroll, .observatory-table-scroll) { border: 1px solid var(--border-glass); overflow: auto; }
+.observatory-legacy .finding-card { border-left-width: 2px; }
+.observatory-legacy :is(.badge, .quiet-pill, .meta .priority) { border-radius: 6px; padding: 3px 7px; font: 500 11px/1.25 var(--font-ui); letter-spacing: 0; }
+.observatory-legacy details { border: 1px solid var(--border-glass); border-radius: var(--radius); padding: 14px 18px; }
+.observatory-legacy summary { cursor: pointer; color: var(--content-secondary); font-weight: 500; transition: color .15s var(--ease); }
+.observatory-legacy summary:hover { color: var(--content-primary); }
+.observatory-legacy .main-tabs { gap: 2px; padding-block: 10px; }
+.observatory-legacy :is(.main-tabs, .capability-tabs) button {
+  border: 1px solid transparent; border-radius: var(--radius-control); box-shadow: none;
+  color: var(--content-muted); font-size: 12.5px; transition: color .15s var(--ease), background-color .15s var(--ease);
+}
+.observatory-legacy .main-tabs button { min-height: 34px; padding: 6px 12px; }
+.observatory-legacy :is(.main-tabs, .capability-tabs) button:hover { color: var(--content-secondary); }
+.observatory-legacy :is(.main-tabs, .capability-tabs) button[aria-selected="true"] {
+  border-color: var(--border-interactive); background: var(--selection-raised); color: var(--content-primary);
+  font-weight: 500; box-shadow: 0 1px 3px var(--shadow-ink);
+}
+.observatory-legacy .main-tabs button small { border: 0; border-radius: 6px; background: var(--fill-emphasis); color: var(--content-muted); }
+.observatory-legacy .capability-tabs { padding: 4px; }
+.observatory-legacy main > nav:not(.tabs-shell) {
+  gap: 2px; padding: 4px; border: 1px solid var(--border-glass); border-radius: var(--radius);
+  background: var(--panel); box-shadow: var(--shadow-panel);
+}
+.observatory-legacy main > nav:not(.tabs-shell) a {
+  padding: 7px 11px; border: 0; border-radius: var(--radius-control); text-decoration: none;
+  color: var(--content-muted) !important; font: 500 12.5px var(--font-ui); transition: color .15s var(--ease), background-color .15s var(--ease);
+}
+.observatory-legacy main > nav:not(.tabs-shell) a:hover { background: var(--fill-control); color: var(--content-primary) !important; }
+.observatory-legacy :is(.domain, .review, main.shell > article > section) { padding: clamp(20px, 2vw, 28px); margin-block: 16px; }
+.observatory-legacy .domain { gap: clamp(20px, 3vw, 48px); }
+.observatory-legacy .domain h2 { font-size: 21px; font-weight: 600; letter-spacing: -.02em; }
+.observatory-legacy :is(.notice, .stats) { border-radius: var(--radius); }
+.observatory-legacy .stats { border: 1px solid var(--border-glass); background: var(--panel); padding-inline: 20px; box-shadow: var(--shadow-panel); }
+.observatory-legacy .stats b { font-family: var(--font-ui); font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.observatory-legacy :is(input:not([type="checkbox"], [type="radio"]), textarea):not([data-slot]) {
+  padding: 8px 12px; border: 1px solid var(--control-border); border-radius: var(--radius-control);
+  background: var(--control-fill); color: var(--content-primary);
+}
+.observatory-legacy :is(input, textarea):not([data-slot]):focus { border-color: var(--focus-border); outline: none; }
+.observatory-legacy .footer-actions button {
+  padding: 7px 12px; border: 1px solid var(--border-interactive); border-radius: var(--radius-control);
+  background: var(--control-fill); color: var(--content-primary); font-size: 12.5px; font-weight: 500;
+}
+.observatory-legacy .footer-actions button:hover { background: var(--fill-emphasis); }
 .observatory-document [data-observatory-select] { min-width: 0; display: inline-block; max-width: 100%; vertical-align: middle; }
 .observatory-document [data-observatory-select] [data-slot="select-trigger"] { width: 100%; min-width: 130px; }
 .observatory-document [data-observatory-native-select] { display: none !important; }
+/* A Carbon report's own filter select is 34px on the glass panel; the shared select takes its place at that size. */
+.observatory-carbon [data-observatory-select] [data-slot="select-trigger"] {
+  height: 34px; border-radius: 9px; background: var(--panel); color: var(--content-secondary); font-size: 12.5px;
+}
+.observatory-carbon [data-observatory-select] [data-slot="select-trigger"]:hover { background: var(--fill-emphasis); }
 @media (max-width: 700px) { .history-control, .page-header-actions:has(.history-control) { width: 100%; } }

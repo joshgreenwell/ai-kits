@@ -21,9 +21,9 @@ export function ReviewNavigation() {
             href={href}
             aria-current={current ? 'page' : undefined}
             className={cn(
-              'focus-visible:ring-ring/50 -mb-px rounded-t-sm border-b-2 pb-2.5 text-sm font-semibold outline-none transition-colors focus-visible:ring-[3px]',
+              'focus-visible:ring-ring/50 -mb-px rounded-t-sm border-b-2 pb-2.5 text-[13px] font-medium outline-none transition-colors focus-visible:ring-[3px]',
               current
-                ? 'border-primary text-foreground'
+                ? 'border-foreground text-foreground'
                 : 'text-muted-foreground hover:text-foreground border-transparent'
             )}
           >

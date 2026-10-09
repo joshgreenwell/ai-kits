@@ -8,7 +8,7 @@ const row = (overrides: Partial<PricingInputRow>): PricingInputRow => ({
 });
 
 test('the catalog is the analyzer’s, with the Anthropic list prices beside it', () => {
-  assert.equal(pricingCatalog.openai.catalog_version, '2026-09-22');
+  assert.equal(pricingCatalog.openai.catalog_version, '2026-10-09');
   assert.deepEqual(catalogThresholds(), { openai: 272000, anthropic: 200000, xai: 200000 });
   // The band follows the catalog the model prices under, not the provider that observed it.
   const between = { openai: false, anthropic: true, xai: false };   // logged input between 200,001 and 272,000
@@ -131,7 +131,7 @@ test('aggregations reconcile to the dimension rows and the catalog provenance tr
   ], 'the graph series keeps source price dates and reconciles model rows within each day');
   assert.equal(total(estimate.series), estimate.estimated_cost_usd);
   assert.equal(estimate.by_model.find(m => m.model === 'gpt-5.6-sol')?.calls, 2);
-  assert.deepEqual(estimate.pricing_catalog.versions, { openai: '2026-09-22', anthropic: '2026-09-22', xai: '2026-09-22' });
+  assert.deepEqual(estimate.pricing_catalog.versions, { openai: '2026-10-09', anthropic: '2026-10-09', xai: '2026-09-22' });
   assert.ok(estimate.pricing_catalog.sources.length >= 8 && estimate.pricing_catalog.provenance.openai?.includes('verbatim'));
 });
 
@@ -189,6 +189,37 @@ test('Claude Opus 5.5 prices from its published rates, including the two rules i
   assert.equal(at({ model: 'claude-opus-5-5-20260901' }), 6, 'a dated id prices as its undated model');
   // Fast plus a cache hit: caching multipliers apply on top of fast, so 0.05 x $8.
   assert.equal(at({ speed: 'fast', input_fresh: 0, input_cached: 1_000_000, output: 0, total_tokens: 1_000_000 }), 0.4);
+});
+
+test('GPT-6.1 Sol prices from its published rates, with cache hits at 5% and an Ultrafast band', () => {
+  // Model page, 2026-09-29 release: $2 input, $0.10 cached, $10 output per 1M standard short-band tokens.
+  // The row helper sends 1,000,000 fresh input and 100,000 output, with reasoning inside output.
+  const at = (extra: Partial<PricingInputRow> = {}) =>
+    priceUsage([row({ model: 'gpt-6.1-sol', rate_date: '2026-09-29', service_tier: 'standard', ...extra })]).by_model_effort_service_tier[0];
+  assert.deepEqual([at().estimated_cost_usd, at().rate_versions], [2 + 1, ['gpt-6.1-sol-2026-09-29']]);
+  assert.equal(at({ context_band: 'long' }).estimated_cost_usd, 4 + 1.5, 'above 272K: 2x input, 1.5x output');
+  assert.equal(at({ service_tier: 'priority' }).estimated_cost_usd, 4 + 2, 'priority is Fast, 2x the applicable rate');
+  assert.equal(at({ service_tier: 'batch' }).estimated_cost_usd, 1 + 0.5, 'Batch and Flex are half of Standard');
+  assert.equal(at({ service_tier: 'ultrafast' }).estimated_cost_usd, 12 + 6, 'Ultrafast is 6x Standard');
+  assert.equal(at({ service_tier: 'ultrafast', context_band: 'long' }).estimated_cost_usd, 24 + 9, 'and 6x the long band above 272K');
+  // Cache hits at 5% of input, where GPT-6 Sol is 10%: the rule most likely to be copied from the older Sol.
+  assert.equal(at({ input_fresh: 0, input_cached: 1_000_000, output: 0, reasoning: 0, total_tokens: 1_000_000 }).estimated_cost_usd, 0.1);
+  assert.equal(at({ input_fresh: 0, input_cache_write: 1_000_000, output: 0, reasoning: 0, total_tokens: 1_000_000 }).estimated_cost_usd, 2.5, 'cache writes at 1.25x');
+  const early = priceUsage([row({ model: 'gpt-6.1-sol', rate_date: '2026-09-28', service_tier: 'standard' })]);
+  assert.deepEqual([early.estimated_cost_usd, early.unpriced_reasons], [0, { no_rate_for_event_date: 1_100_000 }]);
+});
+
+test('Claude Sonnet 5.5 prices from its published rates, and at standard when a request records fast', () => {
+  // Pricing page, 2026-10-09: $2 input, $10 output, cache hits at 0.05x base input ($0.10), no fast tier.
+  const at = (extra: Partial<PricingInputRow> = {}) =>
+    priceUsage([row({ provider: 'claude', model: 'claude-sonnet-5-5', service_tier: 'standard', reasoning: 0, ...extra })]).estimated_cost_usd;
+  assert.equal(at(), 2 + 1, 'standard');
+  assert.equal(at({ service_tier: 'batch' }), 1 + 0.5, 'batch is half of standard');
+  assert.equal(at({ context_band: 'long' }), 2 + 1, 'the full window bills at standard rates');
+  assert.equal(at({ speed: 'fast' }), 2 + 1, 'Sonnet 5.5 has no fast rate, so a fast request prices at standard');
+  assert.equal(at({ input_fresh: 0, input_cached: 1_000_000, output: 0, total_tokens: 1_000_000 }), 0.1, 'cache hits at 0.05x');
+  assert.equal(at({ input_fresh: 0, input_cache_write: 1_000_000, output: 0, total_tokens: 1_000_000, cache_write_ttl: '5m' }), 2.5, '5-minute write at 1.25x');
+  assert.equal(at({ input_fresh: 0, input_cache_write: 1_000_000, output: 0, total_tokens: 1_000_000, cache_write_ttl: '1h' }), 4, '1-hour write at 2x');
 });
 
 test('Grok 4.7 prices from the xAI table, and its Fast tier from its own table rather than a derived one', () => {

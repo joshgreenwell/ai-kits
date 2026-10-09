@@ -15,7 +15,7 @@ import { ReportBody, ReportHistory, ReportStatus, markdownOf, reportDate, status
 
 type BadgeVariant = React.ComponentProps<typeof Badge>['variant'];
 
-const label = 'text-muted-foreground text-[10px] font-semibold tracking-wider uppercase';
+const label = 'text-muted-foreground text-[10px] font-medium tracking-[.09em] uppercase';
 const mono = 'text-muted-foreground font-mono text-[11px]';
 
 // The period key is a calendar date, so it is formatted in UTC to keep the day the producer meant.
@@ -229,7 +229,7 @@ function ItemCard({ item, compact }: { item: ReadingItem; compact?: boolean }) {
         </div>
         {item.link && (
           <footer className={cn('border-border text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-2 border-t py-3', compact ? 'px-4' : 'px-5')}>
-            <a href={item.link} target="_blank" rel="noreferrer noopener" className="text-primary! inline-flex items-center gap-1.5 text-sm font-semibold underline-offset-4 hover:underline!">
+            <a href={item.link} target="_blank" rel="noreferrer noopener" className="text-link! inline-flex items-center gap-1.5 text-sm font-semibold underline-offset-4 hover:underline!">
               Open source
               <ExternalLinkIcon aria-hidden className="size-3.5" />
               <span className="sr-only">(opens in a new tab)</span>

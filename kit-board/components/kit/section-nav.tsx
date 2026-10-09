@@ -40,15 +40,15 @@ export function SectionNav({ label, jumps, className }: { label: string; jumps: 
   // min-w-0: the link strip scrolls on its own, so it must not widen the page grid on a phone.
   return (
     <nav aria-label={label} className={cn("sticky z-30 -mx-1 min-w-0", className)} style={{ top }}>
-      <div className="border-border bg-background/85 flex gap-1 overflow-x-auto rounded-[var(--radius-card)] border p-1 backdrop-blur [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="border-glass flex gap-1 overflow-x-auto rounded-[var(--radius-card)] border bg-[var(--bar-glass)] p-1 shadow-[var(--shadow-panel)] backdrop-blur-[40px] backdrop-saturate-[1.3] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {jumps.map((jump) => (
           <a
             key={jump.anchor}
             href={`#${jump.anchor}`}
             aria-current={current === jump.anchor ? "location" : undefined}
             className={cn(
-              "focus-visible:ring-ring/50 shrink-0 rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-[3px]",
-              current === jump.anchor ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"
+              "focus-visible:outline-ring shrink-0 rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap outline-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2",
+              current === jump.anchor ? "bg-fill-emphasis text-foreground shadow-[inset_0_0_0_1px_var(--border-glass)]" : "text-muted-foreground hover:bg-fill-control hover:text-foreground"
             )}
           >
             {jump.label}

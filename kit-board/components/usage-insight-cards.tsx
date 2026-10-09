@@ -142,7 +142,7 @@ export function CostBreakdown({ cost }: { cost: UsageQueryResult['cost'] }) {
   return (
     <div className="grid gap-3" data-testid="cost-breakdown">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">What the estimate is made of</span>
+        <span className="text-muted-foreground text-[10px] font-medium tracking-[.09em] uppercase">What the estimate is made of</span>
         {cost.priced_tokens ? <span className="text-muted-foreground font-mono text-[10.5px] tabular-nums">{formatUsd(cost.estimated_cost_usd / cost.priced_tokens * 1_000_000)} per 1M priced tokens, blended</span> : null}
       </div>
       <div className="bg-muted flex h-2.5 overflow-hidden rounded-full" role="img" aria-label={parts.filter(p => p.usd > 0).map(p => `${p.label} ${percent(p.usdShare)} of the estimate`).join(', ')}>
@@ -150,7 +150,7 @@ export function CostBreakdown({ cost }: { cost: UsageQueryResult['cost'] }) {
       </div>
       <table className="w-full text-xs">
         <thead>
-          <tr className="text-muted-foreground text-[10px] tracking-wider uppercase">
+          <tr className="text-muted-foreground text-[10px] tracking-[.09em] uppercase">
             <th scope="col" className="py-1 text-left font-semibold">Component</th>
             <th scope="col" className="py-1 text-right font-semibold">Estimate</th>
             <th scope="col" className="py-1 text-right font-semibold">Of estimate</th>
@@ -315,7 +315,7 @@ export function ModelRanking({ rows, colors }: { rows: RankedModel[]; colors: Ma
   const columns = '@min-[38rem]/ranking:grid-cols-[minmax(0,15rem)_minmax(3rem,1fr)_4.5rem_3.5rem_5rem_7rem]';
   return (
     <div className="@container/ranking grid" data-testid="model-ranking">
-      <div aria-hidden="true" className={`text-muted-foreground hidden gap-x-4 px-4 pb-2 text-[10px] font-semibold tracking-wider uppercase @min-[38rem]/ranking:grid ${columns}`}>
+      <div aria-hidden="true" className={`text-muted-foreground hidden gap-x-4 px-4 pb-2 text-[10px] font-medium tracking-[.09em] uppercase @min-[38rem]/ranking:grid ${columns}`}>
         <span>Model</span><span>Relative volume</span><span className="text-right">Tokens</span><span className="text-right">Share</span><span className="text-right">Calls</span><span className="text-right">Estimate</span>
       </div>
       <ol className="border-border divide-border divide-y border-t">

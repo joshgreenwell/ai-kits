@@ -75,7 +75,7 @@ export function ResetFeedHealth() {
               <ListRow
                 key={f.source}
                 tone={stale(f) ? 'destructive' : 'default'}
-                title={<a href={f.url} target="_blank" rel="noreferrer" className="hover:text-primary underline-offset-4 hover:underline">{f.label}</a>}
+                title={<a href={f.url} target="_blank" rel="noreferrer" className="hover:text-link underline-offset-4 hover:underline">{f.label}</a>}
                 detail={`Last successful check ${when(f.succeeded_at)} · ${f.revisions} saved revisions${f.error ? ` · ${resetFeedFailureLabel(f.error)}` : ''}${f.payload?.coverage ? ` · archive checked ${when(f.payload.coverage.checked_at)} · posts/replies checked ${when(f.payload.coverage.direct_checked_at)}` : ''}`}
                 aside={<Badge variant={stale(f) || resetFeedCoverageNotes(f.payload).length ? 'soft-warning' : 'soft'}>{stale(f) ? 'stale / retry pending' : 'available'}</Badge>}
               />

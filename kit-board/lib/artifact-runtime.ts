@@ -20,7 +20,7 @@ export const artifactRuntime = String.raw`
   // Unwrapped evidence tables need a local horizontal scroller, rather than
   // increasing the width of the entire report. Preserve the table semantics.
   document.querySelectorAll('table').forEach((table) => {
-    if (table.parentElement?.matches('.table-scroll, .observatory-table-scroll')) return;
+    if (table.parentElement?.matches('.table-scroll, .observatory-table-scroll, .table-wrap')) return;
     const wrapper = document.createElement('div');
     wrapper.className = 'observatory-table-scroll';
     wrapper.tabIndex = 0;
@@ -29,7 +29,8 @@ export const artifactRuntime = String.raw`
     table.before(wrapper);
     wrapper.append(table);
   });
-  const nav = document.querySelector('.tabs-shell');
+  // Older reports pin a tab strip; Carbon reports, and older audits laid out as Carbon's, pin a top bar.
+  const nav = document.querySelector('.tabs-shell, .topbar');
   window.addEventListener('message', (event) => {
     if (event.source !== window.parent || event.data?.type !== 'observatory:viewport') return;
     const {top, height} = event.data;
@@ -48,7 +49,10 @@ export const artifactRuntime = String.raw`
       measure();
       // Keep the selected report section in view when a shorter tab replaces a
       // long one, including when its navigation was pinned during page scroll.
-      if (nav && viewportTop > nav.offsetTop) send({type:'observatory:scroll', top:nav.offsetTop});
+      // Capability tabs keep their own list in view, below the pinned bar.
+      const list = tab.matches('[data-cap-tab]') ? tab.closest('.capability-workbench') : null;
+      const top = list ? list.getBoundingClientRect().top + window.scrollY - (nav?.offsetHeight ?? 0) - 16 : nav?.offsetTop;
+      if (top !== undefined && viewportTop > top) send({type:'observatory:scroll', top:Math.max(0, top)});
     });
     const link = event.target.closest('a[href^="#"]');
     if (link) requestAnimationFrame(() => requestAnimationFrame(() => {

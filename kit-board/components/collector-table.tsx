@@ -33,7 +33,7 @@ export function CollectorTable({ id, collectors }: { id?: string; collectors: re
             return (
               <TableRow key={source.id} className="even:bg-foreground/[0.03] border-b-0">
                 <TableCell className="py-2">
-                  <Link href="/settings" className="hover:text-primary font-semibold underline-offset-4 hover:underline">{source.label}</Link>
+                  <Link href="/settings" className="hover:text-link font-semibold underline-offset-4 hover:underline">{source.label}</Link>
                   <span className="text-muted-foreground mt-0.5 block font-mono text-[11px]">{source.machine_label}</span>
                 </TableCell>
                 <TableCell className="text-muted-foreground py-2 whitespace-normal">
@@ -56,12 +56,12 @@ export function CollectorTable({ id, collectors }: { id?: string; collectors: re
           })}
           <TableRow className="even:bg-foreground/[0.03] border-b-0">
             <TableCell className="py-2">
-              <Link href="/usage/allowances#reset-calendar" className="hover:text-primary font-semibold underline-offset-4 hover:underline">Public reset feeds</Link>
+              <Link href="/usage/allowances#reset-calendar" className="hover:text-link font-semibold underline-offset-4 hover:underline">Public reset feeds</Link>
               <span className="text-muted-foreground mt-0.5 block font-mono text-[11px]">Codex Reset &amp; Reset Radar</span>
             </TableCell>
             <TableCell className="text-muted-foreground py-2 whitespace-normal">Daily · 13:15 UTC; hourly local checks</TableCell>
             <TableCell className="py-2">
-              <Link href="/settings/feeds" className="text-primary text-xs underline-offset-4 hover:underline">View feed health</Link>
+              <Link href="/settings/feeds" className="text-link text-xs underline-offset-4 hover:underline">View feed health</Link>
             </TableCell>
             <TableCell className="py-2"><Badge variant="outline">Script only</Badge></TableCell>
           </TableRow>

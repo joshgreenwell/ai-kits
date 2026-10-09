@@ -11,7 +11,7 @@ import * as React from "react"
 export const inlineStyles = {
   strong: "text-foreground font-semibold",
   code: "bg-muted text-foreground rounded-[var(--radius-sm)] px-1.5 py-0.5 font-mono text-[0.85em]",
-  link: "text-primary! underline! decoration-primary/40! underline-offset-4 hover:decoration-primary!",
+  link: "text-link! underline! decoration-link/40! underline-offset-4 hover:decoration-link!",
 } as const
 
 export function httpsHref(url: string): string | null {

@@ -118,26 +118,29 @@ export default function DesignSystemPage() {
   return (
     <main className="mx-auto grid max-w-[1200px] gap-10 px-6 py-10">
       <header className="grid gap-2">
-        <h1 className="text-2xl font-bold tracking-tight">kit-board design system</h1>
-        <p className="text-muted-foreground max-w-[72ch] text-sm leading-relaxed">
-          shadcn primitives on a near-black ground with a green accent. Every corner derives from a
-          single <code className="font-mono text-xs">--radius</code> of 0.5rem, so nothing drifts out
-          of the scale. Primitives live in <code className="font-mono text-xs">components/ui</code>;
+        <h1 className="text-[30px] leading-[1.15] font-semibold tracking-[-.03em]">kit-board design system</h1>
+        <p className="text-content-secondary max-w-[72ch] text-[14.5px] leading-[1.65]">
+          shadcn primitives dressed in Carbon, laid as glass on the observatory&apos;s own
+          #070807 ground. Hue carries meaning only; the chart and provider colours are unchanged. Every
+          corner derives from a single <code className="font-mono text-xs">--radius</code> of 0.625rem,
+          so nothing drifts out of the scale. Primitives live in <code className="font-mono text-xs">components/ui</code>;
           the product-specific composites built on top of them live in{" "}
           <code className="font-mono text-xs">components/kit</code>.
         </p>
       </header>
 
       {/* ---------------------------------------------------------- foundations */}
-      <Section title="Foundations" description="Surfaces run one hue, separated by lightness only.">
+      <Section title="Foundations" description="Glass over the ground: lines and fills are translucent white, so they hold on any surface.">
         <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-px overflow-hidden rounded-[var(--radius-card)] border">
           {[
-            ["background", "#070807"], ["sidebar", "#0a0b0a"], ["card", "#0d0e0d"], ["muted", "#121413"],
-            ["secondary", "#161817"], ["accent", "#1d1f1e"], ["border", "#1f2120"], ["input", "#2a2d2b"],
-            ["primary", "#63bc93"], ["destructive", "#d66a5b"], ["warning", "#cfa24f"], ["info", "#7e90cc"],
+            ["background", "#070807"], ["panel", "canvas 74%"], ["card", "#0c0c0e"], ["popover", "#131316"],
+            ["surface-raised", "#1f1f23"], ["surface-inset", "#080809"], ["border-glass", "white 8%"], ["border-interactive", "grey 24%"],
+            ["fill-control", "white 4.5%"], ["fill-emphasis", "white 8%"], ["content-secondary", "#d4d4d8"], ["content-muted", "#8b8b96"],
+            ["foreground", "#ededef"], ["primary", "#5ee9b5"], ["destructive", "#ff8a8d"], ["warning", "#ffba00"],
+            ["info", "#8ec5ff"], ["link", "#8ec5ff"], ["brand", "#fecc34"], ["focus-border", "#8b8b96"],
           ].map(([name, hex]) => (
             <div key={name} className="bg-card">
-              <div className="h-12" style={{ background: hex }} />
+              <div className="h-12" style={{ background: `var(--${name})` }} />
               <div className="p-2">
                 <p className="text-xs font-semibold">{name}</p>
                 <p className="text-muted-foreground font-mono text-[11px]">{hex}</p>
@@ -148,7 +151,7 @@ export default function DesignSystemPage() {
         <div className="flex flex-wrap items-end gap-4">
           {["sm", "md", "lg", "xl"].map((r) => (
             <figure key={r} className="grid justify-items-center gap-2">
-              <div className="bg-secondary border-primary h-10 w-16 border-2" style={{ borderRadius: `var(--radius-${r})` }} />
+              <div className="bg-raised border-interactive h-10 w-16 border" style={{ borderRadius: `var(--radius-${r})` }} />
               <figcaption className="text-muted-foreground font-mono text-[11px]">{r}</figcaption>
             </figure>
           ))}
@@ -156,7 +159,7 @@ export default function DesignSystemPage() {
       </Section>
 
       {/* ---------------------------------------------------------- primitives */}
-      <Section title="Primitives" description="Vendored shadcn components, unmodified except for the badge tones this product needs.">
+      <Section title="Primitives" description="Vendored shadcn components, recoloured to Carbon; their shapes and the badge tones this product needs are kept.">
         <Card>
           <CardHeader><CardTitle className="text-base">Button</CardTitle></CardHeader>
           <CardContent className="grid gap-4">
@@ -555,7 +558,7 @@ function Section({ title, description, children }: { title: string; description?
   return (
     <section className="grid gap-4">
       <div className="grid gap-1">
-        <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+        <h2 className="text-[19px] font-semibold tracking-[-.02em]">{title}</h2>
         {description ? <p className="text-muted-foreground text-sm">{description}</p> : null}
       </div>
       {children}

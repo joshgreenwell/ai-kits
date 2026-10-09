@@ -93,7 +93,7 @@ function blocks(markdown: string): Block[] {
 const headingClass = {
   2: "text-foreground mt-2 text-lg font-semibold tracking-tight first:mt-0",
   3: "text-foreground mt-1 text-base font-semibold tracking-tight first:mt-0",
-  4: "text-muted-foreground mt-1 font-mono text-xs font-medium tracking-wide uppercase first:mt-0",
+  4: "text-muted-foreground mt-1 text-[10px] font-medium tracking-[.09em] uppercase first:mt-0",
 } as const;
 
 export function Prose({ markdown, className, ...props }: React.ComponentProps<"div"> & { markdown: string }) {
@@ -114,8 +114,8 @@ export function Prose({ markdown, className, ...props }: React.ComponentProps<"d
             return (
               <Tag key={key} className="grid gap-2 ps-1">
                 {block.items.map((item, itemIndex) => (
-                  <li key={`${key}-${itemIndex}`} className="text-muted-foreground grid grid-cols-[1.25rem_1fr] items-baseline">
-                    <span aria-hidden="true" className={cn("text-primary font-mono text-xs", block.ordered && "tabular-nums")}>
+                  <li key={`${key}-${itemIndex}`} className="text-content-secondary grid grid-cols-[1.25rem_1fr] items-baseline">
+                    <span aria-hidden="true" className={cn("text-muted-foreground font-mono text-xs", block.ordered && "tabular-nums")}>
                       {block.ordered ? `${itemIndex + 1}.` : "—"}
                     </span>
                     <span>{inline(item, `${key}-${itemIndex}`)}</span>
@@ -132,7 +132,7 @@ export function Prose({ markdown, className, ...props }: React.ComponentProps<"d
             );
           case "code":
             return (
-              <pre key={key} className="bg-muted text-foreground overflow-x-auto rounded-[var(--radius-control)] p-3 font-mono text-xs leading-relaxed">
+              <pre key={key} className="bg-inset border-glass text-content-secondary overflow-x-auto rounded-[var(--radius-control)] border p-3 font-mono text-xs leading-relaxed">
                 <code>{block.lines.join("\n")}</code>
               </pre>
             );

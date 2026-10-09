@@ -143,7 +143,7 @@ export function TokensOverview({ filters, onFiltersChange, result, vocabulary, e
               {/* The breakdown sits beside the total it divides: one reading, not two cards. */}
               <div className="@container/composition border-border grid content-start gap-3 border-t p-4 lg:border-t-0 lg:border-l">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Composition</span>
+                  <span className="text-muted-foreground text-[10px] font-medium tracking-[.09em] uppercase">Composition</span>
                   {composition.inconsistent ? <Badge variant="soft-warning">components exceed the total</Badge> : null}
                 </div>
                 {composition.inconsistent ? (

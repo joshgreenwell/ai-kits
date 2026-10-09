@@ -28,7 +28,7 @@ export function Stat({
 
   return (
     <div data-slot="stat" className={cn("grid gap-1.5 p-4", className)} {...props}>
-      <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">
+      <span className="text-muted-foreground text-[10px] font-medium tracking-[.09em] uppercase">
         {label}
       </span>
       <span

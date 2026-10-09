@@ -112,7 +112,7 @@ export function ResetCalendar({ items, selectedDay, onSelectDay, busy }: { items
         <div className="border-border text-muted-foreground grid content-start gap-4 border-t pt-4 text-xs @min-[32rem]/calendar:border-t-0 @min-[32rem]/calendar:border-l @min-[32rem]/calendar:pt-1 @min-[32rem]/calendar:pl-6" data-testid="reset-legend">
           <dl className="grid gap-4">
             <div className="grid gap-2">
-              <dt className="text-[10px] font-semibold tracking-wider uppercase">What happened</dt>
+              <dt className="text-[10px] font-medium tracking-[.09em] uppercase">What happened</dt>
               {groups.map((group, index) => (
                 <dd key={group.provider} className={cn('flex flex-wrap gap-x-4 gap-y-2 @min-[32rem]/calendar:grid @min-[32rem]/calendar:gap-2', index > 0 && 'mt-1')}>
                   {group.pairs.map(pair => (
@@ -125,7 +125,7 @@ export function ResetCalendar({ items, selectedDay, onSelectDay, busy }: { items
               ))}
             </div>
             <div className="grid gap-2">
-              <dt className="text-[10px] font-semibold tracking-wider uppercase">How certain</dt>
+              <dt className="text-[10px] font-medium tracking-[.09em] uppercase">How certain</dt>
               <dd className="flex flex-wrap gap-x-4 gap-y-2 @min-[32rem]/calendar:grid @min-[32rem]/calendar:gap-2">
                 <span className="text-foreground flex items-center gap-2"><i aria-hidden="true" className="bg-muted-foreground border-muted-foreground inline-block size-2.5 shrink-0 rounded-full border-[1.5px]" />Reported</span>
                 <span className="text-foreground flex items-center gap-2"><i aria-hidden="true" className="border-muted-foreground bg-muted-foreground/20 inline-block size-2.5 shrink-0 rounded-full border-[1.5px]" />Announced or forecast</span>

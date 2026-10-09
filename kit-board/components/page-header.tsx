@@ -24,11 +24,11 @@ export function PageHeader({
     >
       <div className="grid gap-1.5">
         {eyebrow ? (
-          <p className="text-muted-foreground font-mono text-[11px] tracking-wide">{eyebrow}</p>
+          <p className="text-muted-foreground font-mono text-[11px]">{eyebrow}</p>
         ) : null}
-        <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+        <h1 className="text-[30px] leading-[1.15] font-semibold tracking-[-.03em]">{title}</h1>
         {description ? (
-          <p className="text-muted-foreground max-w-[72ch] text-sm leading-relaxed">{description}</p>
+          <p className="text-content-secondary max-w-[72ch] text-[14.5px] leading-[1.65]">{description}</p>
         ) : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}

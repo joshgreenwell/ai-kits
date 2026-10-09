@@ -100,7 +100,7 @@ function WatchRow({ watch, now, busy, onAction }: { watch: PrWatch; now: number;
       tone={live && watch.review_state === 'failed' ? 'destructive' : 'default'}
       title={
         <span className="grid gap-0.5">
-          <a href={watch.url} target="_blank" rel="noreferrer" className="hover:text-primary inline-flex items-center gap-1.5 underline-offset-4 hover:underline">
+          <a href={watch.url} target="_blank" rel="noreferrer" className="hover:text-link inline-flex items-center gap-1.5 underline-offset-4 hover:underline">
             {watch.owner}/{watch.repo}#{watch.number}
             <ExternalLinkIcon aria-hidden className="text-muted-foreground size-3" />
           </a>

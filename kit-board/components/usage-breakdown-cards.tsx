@@ -84,7 +84,7 @@ function countColumn<T>(header: string, width: string, value: (row: T) => number
 /** A small segmented switch between two readings of the same rows. */
 function ViewSwitch<V extends string>({ label, value, options, onChange }: { label: string; value: V; options: { value: V; label: string }[]; onChange: (value: V) => void }) {
   return (
-    <div role="group" aria-label={label} className="bg-muted inline-flex items-center gap-0.5 rounded-md p-0.5">
+    <div role="group" aria-label={label} className="border-input bg-panel inline-flex items-center gap-0.5 rounded-md border p-0.5">
       {options.map(option => (
         <button
           key={option.value}
@@ -92,8 +92,8 @@ function ViewSwitch<V extends string>({ label, value, options, onChange }: { lab
           aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
           className={cn(
-            'focus-visible:ring-ring/50 h-6 rounded-[5px] px-2 text-[11px] font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-2',
-            value === option.value ? 'bg-input/40 text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+            'focus-visible:ring-ring/50 h-6 rounded-[5px] border px-2 text-[11px] font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-2',
+            value === option.value ? 'border-interactive bg-raised text-foreground shadow-[0_1px_3px_var(--shadow-ink)]' : 'text-muted-foreground hover:text-content-secondary border-transparent'
           )}
         >
           {option.label}
@@ -205,7 +205,7 @@ function RoleClasses({ byClass }: { byClass: Record<string, number> }) {
         {classes.map(([cls, tokens]) => <span key={cls} className="h-full" style={{ width: `${(tokens / total) * 100}%`, background: CLASS_COLORS[cls] ?? MUTED }} />)}
       </div>
       <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-        <dt className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">Role classes</dt>
+        <dt className="text-muted-foreground text-[10px] font-medium tracking-[.09em] uppercase">Role classes</dt>
         {classes.map(([cls, tokens]) => (
           <dd key={cls} className="flex items-center gap-1.5" title={`${exactTokens(tokens)} tokens`}>
             <i aria-hidden="true" className="inline-block size-2 shrink-0 rounded-xs" style={{ background: CLASS_COLORS[cls] ?? MUTED }} />

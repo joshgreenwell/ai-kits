@@ -64,7 +64,7 @@ export function KitCard({
           <dl className="border-border flex flex-wrap gap-x-6 gap-y-2 border-t pt-3">
             {figures.map((f) => (
               <div key={f.label}>
-                <dt className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">
+                <dt className="text-muted-foreground text-[10px] font-medium tracking-[.09em] uppercase">
                   {f.label}
                 </dt>
                 <dd

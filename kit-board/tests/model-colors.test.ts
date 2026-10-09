@@ -3,8 +3,8 @@ import test from 'node:test';
 import { UNKNOWN_MODEL_COLOR, modelLineStyles } from '../lib/model-colors';
 
 test('every model in use has its own line color, whatever else is in scope', () => {
-  const models = ['claude-opus-5-5', 'claude-fable-5-1', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'claude-opus-4-8',
-    'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'codex-auto-review', 'gpt-5.3-codex-spark',
+  const models = ['claude-opus-5-5', 'claude-fable-5-1', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'claude-opus-4-8',
+    'gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'codex-auto-review', 'gpt-5.3-codex-spark',
     'cursor-grok-4.6-xhigh-fast', 'cursor-grok-4.6-high-fast', 'cursor-grok-4.5-high-fast', 'unknown'];
   const styles = modelLineStyles(models);
   const solid = models.map(model => styles.get(model)!);
@@ -12,6 +12,8 @@ test('every model in use has its own line color, whatever else is in scope', () 
   assert.equal(new Set(solid.map(style => style.color)).size, models.length, 'no two models share a color');
   assert.equal(styles.get('gpt-6-astra')!.color, '#3A83F7');
   assert.equal(styles.get('claude-opus-5-5')!.color, '#EB6834');
+  assert.equal(styles.get('claude-sonnet-5-5')!.color, '#E89A5B', 'Sonnet 5.5 draws in the Claude family, not a fallback color');
+  assert.equal(styles.get('gpt-6.1-sol')!.color, '#1D5FD1', 'GPT-6.1 Sol draws in the OpenAI family, not a fallback color');
   assert.equal(styles.get('claude-haiku-4-5-20251001')!.color, '#FBE8DB', 'a dated snapshot id takes its model color');
   assert.equal(styles.get('unknown')!.color, UNKNOWN_MODEL_COLOR);
   assert.deepEqual(modelLineStyles(['gpt-6-sol']).get('gpt-6-sol'), styles.get('gpt-6-sol'), 'a color does not depend on the other models in scope');

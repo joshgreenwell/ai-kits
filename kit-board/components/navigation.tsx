@@ -6,24 +6,32 @@ import { Button } from './ui/button';
 import { cn } from 'cn';
 import { pageFrame } from './workspace';
 
+// Carbon's section links: muted until hovered, and the current one lifted onto a glass chip.
+const linkClass = (current: boolean) => cn(
+  'focus-visible:outline-ring rounded-md px-2.5 py-1.5 text-[12.5px] font-medium outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2',
+  current
+    ? 'bg-fill-emphasis text-foreground shadow-[inset_0_0_0_1px_var(--border-glass)]'
+    : 'text-muted-foreground hover:bg-fill-control hover:text-foreground'
+);
+
 export function Navigation() {
   const pathname = usePathname();
   const startSection = () => window.scrollTo(0, 0);
   const isCurrent = (path: string) => pathname === path || pathname.startsWith(path + '/');
 
   return (
-    <header data-app-header className="bg-background/85 border-border sticky top-0 z-40 border-b backdrop-blur">
+    <header data-app-header className="sticky top-0 z-40 border-b border-glass bg-[var(--bar-glass)] shadow-[0_8px_24px_-18px_var(--shadow-flyout)] backdrop-blur-[40px] backdrop-saturate-[1.3]">
       {/* The header spans the dashboard frame on every view, so it holds still when a section changes width. */}
       <div className={cn(pageFrame('dashboard'), 'flex flex-wrap items-center gap-x-6 gap-y-3 py-3')}>
         <Link
           href="/usage"
           scroll={false}
           onNavigate={startSection}
-          className="focus-visible:ring-ring/50 flex items-center gap-2 rounded-md text-sm font-bold tracking-tight outline-none focus-visible:ring-[3px]"
+          className="focus-visible:outline-ring flex items-center gap-2 rounded-md text-sm font-semibold tracking-[-.01em] outline-none focus-visible:outline-2 focus-visible:outline-offset-2"
         >
           <span
             aria-hidden="true"
-            className="bg-primary text-primary-foreground grid size-6 place-items-center rounded-md font-mono text-xs"
+            className="bg-foreground grid size-6 place-items-center rounded-md font-mono text-xs font-medium text-[#131316]"
           >
             j
           </span>
@@ -40,12 +48,7 @@ export function Navigation() {
               scroll={false}
               onNavigate={startSection}
               aria-current={isCurrent(kit.page.path) ? 'page' : undefined}
-              className={cn(
-                'focus-visible:ring-ring/50 rounded-md px-2.5 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-[3px]',
-                isCurrent(kit.page.path)
-                  ? 'bg-secondary text-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-              )}
+              className={linkClass(isCurrent(kit.page.path))}
             >
               {kit.title}
             </Link>
@@ -58,12 +61,7 @@ export function Navigation() {
             scroll={false}
             onNavigate={startSection}
             aria-current={isCurrent('/settings') ? 'page' : undefined}
-            className={cn(
-              'focus-visible:ring-ring/50 rounded-md px-2.5 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-[3px]',
-              isCurrent('/settings')
-                ? 'bg-secondary text-foreground'
-                : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-            )}
+            className={linkClass(isCurrent('/settings'))}
           >
             Settings
           </Link>
@@ -72,12 +70,7 @@ export function Navigation() {
             scroll={false}
             onNavigate={startSection}
             aria-current={isCurrent('/kits') ? 'page' : undefined}
-            className={cn(
-              'focus-visible:ring-ring/50 rounded-md px-2.5 py-1.5 text-sm font-medium outline-none transition-colors focus-visible:ring-[3px]',
-              isCurrent('/kits')
-                ? 'bg-secondary text-foreground'
-                : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-            )}
+            className={linkClass(isCurrent('/kits'))}
           >
             Kits
           </Link>

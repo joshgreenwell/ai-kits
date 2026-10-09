@@ -22,7 +22,7 @@ export const carbon = (value: number) => value < 1 && value > 0 ? `${quantity(va
 function ImpactSummary({ label, value, range, comparison }: { label: string; value: string; range: string; comparison: React.ReactNode }) {
   return (
     <div className="border-border grid content-start gap-2 border-t p-4 first:border-t-0 @xl/impact:border-t-0 @xl/impact:border-l @xl/impact:first:border-l-0">
-      <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">{label} · planning</span>
+      <span className="text-muted-foreground text-[10px] font-medium tracking-[.09em] uppercase">{label} · planning</span>
       <span className="font-mono text-2xl leading-none font-medium tracking-tight tabular-nums">{value}</span>
       <p className="text-muted-foreground text-sm leading-relaxed">{comparison}</p>
       <span className="text-muted-foreground font-mono text-[10.5px] leading-snug">{range} scenario comparison</span>
@@ -41,7 +41,7 @@ function ActionCell({ action }: { action: (typeof ENVIRONMENTAL_ACTIONS)[number]
   return (
     <div className="border-border grid content-start gap-3 border-t p-4 text-xs first:border-t-0 @3xl/impact:border-t-0 @3xl/impact:border-l @3xl/impact:first:border-l-0">
       <div className="grid gap-1.5">
-        <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">{action.category}</span>
+        <span className="text-muted-foreground text-[10px] font-medium tracking-[.09em] uppercase">{action.category}</span>
         <h4 className="text-sm leading-snug font-semibold">{action.title}</h4>
       </div>
       <p className="text-muted-foreground leading-relaxed">{action.purpose}</p>
