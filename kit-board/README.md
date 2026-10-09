@@ -1,6 +1,6 @@
 # Personal Observatory
 
-Private personal dashboard at https://personal-observatory-jg.vercel.app, hosted on Vercel with Aurora PostgreSQL ([move from Supabase](docs/aurora-cutover.md)). It combines AI usage, daily tasks (the briefing with that day's standup), Claude readings, and AI audits while retaining each report's internal navigation. Palette and fonts match Token Observatory.
+Private personal dashboard at https://personal-observatory-jg.vercel.app, hosted on Vercel with Aurora PostgreSQL, which replaced Supabase on September 30, 2026 ([cutover](docs/aurora-cutover.md)). It combines AI usage, daily tasks (the briefing with that day's standup), Claude readings, and AI audits while retaining each report's internal navigation. Palette and fonts match Token Observatory.
 
 - **[Startup, recovery, external scripts, and Obsidian locations](docs/startup-and-recovery.md)**
 - [Migration provenance and exclusions](docs/repository-migration.md)
@@ -14,7 +14,7 @@ Private personal dashboard at https://personal-observatory-jg.vercel.app, hosted
 
 Run commands from `ai-kits/kit-board` (the runtime package name and `personal_hub` schema intentionally remain unchanged). Use `npm ci`, configure `.env.local`, then run `npm run dev`. Validate with `npm test`, `npm run typecheck`, and `npm run build`. Node 22 is the deployed runtime. Schema migrations are in `supabase/migrations/` (the folder keeps the Supabase CLI's name; the CLI is still the runner, as `supabase db push --db-url "$DATABASE_URL"`, see [the Aurora runbook](docs/aurora-cutover.md)). Apply them with an administrative connection; the app's database identity deliberately cannot change schema or update/delete report history. Set its database password through a protected administrative channel rather than a tracked migration.
 
-The login uses a salted password hash, signed seven-day HttpOnly cookie, same-origin login/logout checks, and shared database rate limits. Each publisher has a separate report-kind credential. Database connections verify the AWS RDS certificate bundle (`DATABASE_CA_CERT`). No database or publisher credential reaches browser code.
+The login uses a salted password hash, signed seven-day HttpOnly cookie, same-origin login/logout checks, and shared database rate limits. Each publisher has a separate report-kind credential. Database connections verify the AWS RDS certificate bundle (`DATABASE_CA_CERT`), and the server refuses a database URL on the retired Supabase host. No database or publisher credential reaches browser code.
 
 Private imports, credentials, publisher receipts, and the generated login handoff remain under `.local/`, excluded from Git and Vercel uploads. Never place report content in `public/`. Reports and supporting files are stored in an unexposed schema with RLS and a restricted application role. HTML artifacts use a separate sandboxed document with embedded fonts, so report navigation and evidence remain usable without sharing the portal's origin privileges.
 

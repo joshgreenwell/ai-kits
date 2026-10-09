@@ -14,6 +14,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import postgres from 'postgres';
 import { createUsageReconciliation } from '../lib/usage-reconciliation.ts';
+import { isRetiredDatabaseHost } from '../lib/database-host.ts';
 
 const [command, ...rest] = process.argv.slice(2);
 const flags = new Map(rest.filter(arg => arg.startsWith('--')).map(arg => { const [key, value = 'true'] = arg.slice(2).split('='); return [key, value]; }));
@@ -22,6 +23,7 @@ const json = flags.get('json') === 'true';
 const usage = () => { console.error('Usage: reconcile-usage-history.mjs report [--since=YYYY-MM-DD] [--json] | outbox <source-id> <file>... [--apply] [--json]'); process.exit(2); };
 if (!['report', 'outbox'].includes(command ?? '')) usage();
 if (!process.env.DATABASE_URL) { console.error('DATABASE_URL is not set; run with `node --env-file=.env.local ...` or export it.'); process.exit(2); }
+if (isRetiredDatabaseHost(process.env.DATABASE_URL)) { console.error('DATABASE_URL names the retired Supabase host; point it at Aurora (docs/aurora-cutover.md).'); process.exit(2); }
 
 const sql = postgres(process.env.DATABASE_URL, {
   prepare: false, max: 1, idle_timeout: 5, connect_timeout: 25,

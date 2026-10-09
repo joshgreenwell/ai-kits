@@ -8,6 +8,7 @@ Started September 29, 2026. The site's Postgres moves from Supabase to an Aurora
 - **Open question: sleep.** The cluster paused overnight, and the first connection then took 17 s. In the afternoon it stayed up through two idle windows of 18 and 22 minutes, with no user sessions open. Confirm the minimum capacity and the auto-pause delay with the administrator.
 - **September 29, evening: production dumped.** 39 tables and 737,774 rows, taken with `pg_dump` 17 at 02:41 UTC on September 30. The column, constraint, sequence and trigger signatures of the two databases matched line for line. The load ran as one transaction in 2 min 22 s. Afterwards every table's row count matched the dump, both as `ai_kits` and as `personal_hub_app`, the check was back `NOT VALID`, and the schema was analyzed. The dump files were then deleted.
 - **September 30, 03:48 UTC: cut over.** Production reads and writes Aurora. The window fell between the hourly uploads, which land at about :17 and :31. On Vercel, `DATABASE_URL` and `DATABASE_CA_CERT` changed at 03:41. A fresh dump started at 03:42:47 and loaded 739,214 rows by 03:46:52. Commit `e581704` (region `iad1`, 25 s connect timeout) deployed from `main` and was serving by 03:48:41. Afterwards, per-table checksums of Supabase matched Aurora's post-load state on 38 of 39 tables. The only difference was the PR-watch runner's `last_seen_at` heartbeat: Supabase held 03:44:00, and Aurora already held 03:49:00, written through the new deployment. So no row was lost. Supabase is untouched and stays available for rollback.
+- **October 2, 16:30 UTC: Supabase is a stale subset of Aurora.** Nothing has written to Supabase since the cutover; its newest row is still the 03:44 UTC heartbeat. Both companions reach Aurora through production: the Mac (`2cf53a04…`) was last seen at 16:09 and `pc-workstation` (`2b0898b0…`) at 16:26, with 45 and 60 runs since the cutover. Every row in Supabase was hashed over the columns both databases share and matched by primary key in Aurora. Of 739,214 rows, 739,178 were identical and 36 were older versions of mutable rows that Aurora has since advanced: heartbeats, `last_seen` times, the reset-feed state, one tool result that arrived later, and two v1 sources disabled after the cutover. None was missing from Aurora, so nothing needs copying. Aurora held 770,731 rows. See [Clearing Supabase](#clearing-supabase).
 
 ## The target
 
@@ -78,3 +79,38 @@ This step comes after validation.
 - **Resume.** `lib/db.ts` waits up to 25 s for a connection so the first request after a pause succeeds; it used 3 s against Supabase's pooler. On September 29, after 19 idle minutes, a client with the old 3 s limit failed with `CONNECT_TIMEOUT` and a client with 25 s connected and answered in 17 s. The job budget in `lib/database-budget.ts` includes that wait, so the waking request has about 15 s left for its query. A Tokens read that needs more returns 504 once, and a route with `maxDuration = 15` can time out on the waking request. The next request succeeds. The companion and the publishers wait 45 s.
 - **No pooler.** Each Vercel instance holds at most one connection, and `lib/db.ts` closes it after 5 s idle and 60 s total. Prepared statements stay disabled.
 - **Capacity.** One ACU is the ceiling. If Tokens reads regress against Supabase, ask the administrator for more.
+
+## Clearing Supabase
+
+Supabase is retired. Clearing it ends the rollback path. The October 2 comparison found every Supabase row in Aurora, so nothing is lost. `scripts/clear-supabase.sql` empties every `personal_hub` table in one transaction and keeps the schema and `supabase_migrations`. Before it deletes anything, it refuses to run if:
+
+- the database is not Supabase (it checks for the `postgres` database and the `supabase_admin` role, which Aurora lacks);
+- the tables no longer total 739,214 rows;
+- any write-time column is later than the 03:48 UTC cutover.
+
+A refusal deletes nothing and means something reached Supabase after the comparison: compare again before clearing. `personal_hub_app` is refused `DELETE` on report history, so the script runs in the Supabase dashboard's SQL editor, which connects as `postgres`. From `kit-board/`, copy it:
+
+```bash
+pbcopy < scripts/clear-supabase.sql
+```
+
+Open the project in the Supabase dashboard, then open **SQL Editor** and start a new query. Paste the script, run it, and confirm the warning about destructive statements. The editor shows one row: 39 `personal_hub_tables` and 0 `rows_left`. On October 2, before the run, the same query read 39 tables and 739,214 rows.
+
+Afterwards, any row that appears in Supabase marks a writer still aimed at it. Retiring the project itself (pause or delete) is a separate step in the dashboard. The script truncates `personal_hub` only, so the `personal_hub_archive` undo copies survive it; copy them first, as step 5 of the cutover says.
+
+### Keep every writer on Aurora
+
+The site and `scripts/reconcile-usage-history.mjs` refuse a `DATABASE_URL` on a Supabase host (`lib/database-host.ts`). The site answers 503 and the script exits, so no environment, including a local `npm run dev`, can write there once that code is deployed. Neither the CLI nor the repository is linked to the Supabase project any more: `supabase unlink` cleared both `.temp` directories, and the root one is no longer tracked. Apply migrations with `supabase db push --db-url` and Doppler's `DATABASE_URL` (see [PR watch](pr-watch.md)), never `--linked`.
+
+Companions, the browser collector and the publishers hold no database URL. They upload to the site over HTTPS, so they write wherever production's `DATABASE_URL` points. Check these:
+
+- **A companion aimed at another site.** `companion.json` must name `https://personal-observatory-jg.vercel.app`, not a preview URL or a local server. On the PC, in PowerShell:
+  ```powershell
+  $companionExe = Join-Path $env:LOCALAPPDATA 'Programs\observatory\observatory.exe'
+  $companionDir = Join-Path $env:USERPROFILE '.config\personal-hub\companion'
+  (Get-Content (Join-Path $companionDir 'companion.json') -Raw | ConvertFrom-Json) | Select-Object url, install_id
+  & $companionExe --config-dir $companionDir doctor
+  ```
+  Expect that URL and install `2b0898b0-b501-4d97-8b1b-21d4d20b27dc`. The install key is not printed. Do not run `connect` or re-pair to change it; see [usage collection](usage-collection.md#windows-commands). The Mac's install `2cf53a04-3680-473f-8726-f98618f5899a` names the same URL, which was checked October 2.
+- **A local `.env.local`.** On October 2 the Mac's `kit-board/.env.local` was switched to Doppler's `APP_DATABASE_URL` (`personal_hub_app` on Aurora) and the RDS CA bundle. On any other machine with a `kit-board` checkout, including the PC (`Select-String -Path C:\path\to\ai-kits\kit-board\.env.local -Pattern 'supabase.com' -List`), do the same or remove `DATABASE_URL`. Until it changes, the guard refuses to connect. Integration tests use `TEST_DATABASE_URL` and are unaffected.
+- **A Vercel environment other than Production.** The cutover record does not say which Vercel environments changed `DATABASE_URL` and `DATABASE_CA_CERT`. Confirm that Preview and Development no longer name Supabase. A deployment built after the guard refuses it anyway; an older preview deployment does not.

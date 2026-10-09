@@ -4,9 +4,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { RequestError, stableJson, type ReportInput, type ReportKind, type StoredReport } from './contracts';
 import { DatabaseQueue } from './database-queue';
 import { DATABASE_JOB_BUDGET_MS, DATABASE_JOB_GRACE_MS, DATABASE_QUEUE_WAIT_MS } from './database-budget';
+import { isRetiredDatabaseHost } from './database-host';
 import { readCache } from './read-cache';
 
 function createDatabase() {
+  if (isRetiredDatabaseHost(process.env.DATABASE_URL!)) throw new RequestError('The report database points at the retired Supabase host', 503);
   let client: ReturnType<typeof postgres> | undefined;
   // Aurora Serverless v2 pauses after 15 idle minutes; the first connection waits while it resumes
   // (17 s measured). The connect timeout outlasts that, and the job budget below includes it.

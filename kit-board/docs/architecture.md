@@ -6,7 +6,7 @@ The new Vercel project is `the-mindful-pug/personal-hub`. Its source is an indep
 
 ## Data ownership
 
-Postgres owns the site's durable report history. It was Supabase from 2026-09-08 and has been Aurora PostgreSQL Serverless v2 in `us-east-1` since September 30 (see [aurora-cutover.md](aurora-cutover.md)). The site connects directly, one connection per Vercel instance, with no pooler and prepared statements disabled. Its tables live in the unexposed `personal_hub` schema with row-level security enabled and public grants revoked; browsers never receive database credentials.
+Postgres owns the site's durable report history. It was Supabase from 2026-09-08 and has been Aurora PostgreSQL Serverless v2 in `us-east-1` since September 30 (see [aurora-cutover.md](aurora-cutover.md)); Supabase is retired, and `lib/database-host.ts` refuses its hosts. The site connects directly, one connection per Vercel instance, with no pooler and prepared statements disabled. Its tables live in the unexposed `personal_hub` schema with row-level security enabled and public grants revoked; browsers never receive database credentials.
 
 Obsidian remains local shared working memory. Do not sync the entire vault to the website. The site receives deliberately published reports, source references, coverage, and timestamps. Linear and Jira remain the task-status authorities. Report imports do not create, resolve, or modify tasks.
 
@@ -57,6 +57,7 @@ The current merged AI audit artifact is about 3 MB. The generic HTTP limit is 4 
 - [Vercel storage](https://vercel.com/docs/storage)
 - [Aurora Serverless v2](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2.html)
 - [postgres.js](https://github.com/porsager/postgres)
+- [RDS TLS certificates](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/UsingWithRDS.SSL.html)
 - [Next.js authentication](https://nextjs.org/docs/app/guides/authentication)
 
 Checked 2026-09-08. This document describes the intended architecture; deployment and producer status belong in `schedules.md` and must be updated from verified receipts.
