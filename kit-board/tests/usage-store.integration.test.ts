@@ -8,6 +8,7 @@ import postgres from 'postgres';
 import { RequestError, stableJson } from '../lib/contracts';
 import { telemetrySchema } from '../lib/telemetry-contract';
 import { usageEnvelopeSchema, type UsageEnvelope } from '../lib/usage-contract';
+import { fixtureDay } from './fixture-days';
 
 const url = process.env.TEST_DATABASE_URL;
 const maybe = (name: string, fn: () => Promise<void>) => test(name, { skip: !url }, fn);
@@ -15,8 +16,8 @@ const options = { prepare: false, ...(process.env.TEST_DATABASE_HOST ? { host: p
 const sha = (seed: string) => createHash('sha256').update(seed).digest('hex');
 const bearer = (key: string) => new Request('http://localhost/api/v1/usage', { headers: { authorization: `Bearer ${key}` } });
 
-const run = () => ({ run_id: randomUUID(), started_at: '2026-09-02T04:00:00.000Z', finished_at: '2026-09-02T04:00:02.500Z', companion_version: '2.0.0', platform: 'darwin', arch: 'arm64', settings_version: 1 });
-const header = (adapter: string, channel: string, binding_id: string, observed_at = '2026-09-02T03:20:00.000Z') =>
+const run = () => ({ run_id: randomUUID(), started_at: fixtureDay('2026-09-02T04:00:00.000Z'), finished_at: fixtureDay('2026-09-02T04:00:02.500Z'), companion_version: '2.0.0', platform: 'darwin', arch: 'arm64', settings_version: 1 });
+const header = (adapter: string, channel: string, binding_id: string, observed_at = fixtureDay('2026-09-02T03:20:00.000Z')) =>
   ({ record_id: randomUUID(), binding_id, adapter, channel, observed_at, basis: 'exact', parser_version: '2.0.0' });
 const request = (binding_id: string, adapter = 'claude_execution', seed = 'msg', channel = 'local_file') => ({ ...header(adapter, channel, binding_id), record_type: 'activity.request',
   semantic_key: sha(seed), product: 'claude_code', surface: 'cli', execution_host: 'local', session_hash: sha('sess'), session_identity: 'provider', parent_session_hash: null,
@@ -37,18 +38,18 @@ const resourceAccess = (binding_id: string, seed: string, resource_key = 'obsidi
   record_type: 'resource.access', semantic_key: sha(`resource:${seed}`), invocation_key: sha('tool:read'), resource_key,
   configuration_version: 'resources.v1', access_kind: 'read', evidence_basis: 'explicit_argument', outcome: 'succeeded' });
 const providerBucket = (binding_id: string, pricing?: Record<string, unknown>) => ({ ...header('claude_account', 'provider_api', binding_id), basis: 'reported',
-  record_type: 'account.usage_bucket', report_source: 'claude_usage', bucket_start: '2026-09-02T03:00:00.000Z', bucket_end: '2026-09-02T04:00:00.000Z',
+  record_type: 'account.usage_bucket', report_source: 'claude_usage', bucket_start: fixtureDay('2026-09-02T03:00:00.000Z'), bucket_end: fixtureDay('2026-09-02T04:00:00.000Z'),
   provider_timezone: null, dimensions: { model: 'claude-sonnet-4', product: 'claude_code', client: null, user_ref: null, workspace_ref: null, api_key_ref: null,
     ...(pricing === undefined ? {} : { pricing }) },
   measures: { requests: 1, input_tokens: 100, cached_tokens: 0, cache_write_tokens: 0, output_tokens: 50, reasoning_tokens: null, total_tokens: 150 },
   token_accounting: { reported_total: 150, unclassified: 0, composition_state: 'complete' },
-  provider_event_id: 'synthetic-provider-event', provider_refreshed_at: '2026-09-02T04:01:00.000Z' });
-const reading = (binding_id: string, adapter: string, channel: string, reader: string, observed_at = '2026-09-02T03:20:00.000Z', value = 30) => ({ ...header(adapter, channel, binding_id, observed_at), basis: 'reported',
+  provider_event_id: 'synthetic-provider-event', provider_refreshed_at: fixtureDay('2026-09-02T04:01:00.000Z') });
+const reading = (binding_id: string, adapter: string, channel: string, reader: string, observed_at = fixtureDay('2026-09-02T03:20:00.000Z'), value = 30) => ({ ...header(adapter, channel, binding_id, observed_at), basis: 'reported',
   record_type: 'allowance.reading', meter_key: 'five_hour', label: 'Claude · 5h', kind: 'percent_used', value, unit: 'percent', capacity: null, window_minutes: 300,
-  window_started_at: null, resets_at: '2026-09-02T05:00:00.000Z', reader, raw_window_id: 'five_hour' });
+  window_started_at: null, resets_at: fixtureDay('2026-09-02T05:00:00.000Z'), reader, raw_window_id: 'five_hour' });
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 const inHours = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
-const bucket = { session_hash: sha('sess'), hour: '2026-09-02T02:00:00.000Z', model: 'claude-opus-4-1', input_tokens: 5, cached_tokens: 20, cache_write_tokens: 8, output_tokens: 24, total_tokens: 57, calls: 2 };
+const bucket = { session_hash: sha('sess'), hour: fixtureDay('2026-09-02T02:00:00.000Z'), model: 'claude-opus-4-1', input_tokens: 5, cached_tokens: 20, cache_write_tokens: 8, output_tokens: 24, total_tokens: 57, calls: 2 };
 const coverage = (adapter: string, state = 'ok', detail_code: string | null = null) => ({ adapter, state, detail_code, stores_discovered: 1, files: 1, bytes_read: 10, records_emitted: 1,
   malformed: 0, rejected_by_server: 0, duration_ms: 5, cursor_state: 'complete', probe_requests: 0, parser_version: '2.0.0' });
 const envelope = (parts: Record<string, unknown>) => usageEnvelopeSchema.parse({ schema_version: 2, run: run(), buckets: [], records: [], coverage: [], ...parts }) as UsageEnvelope;
@@ -117,7 +118,7 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     // For the Claude adapter a revision that moves only ended_at is information (first seen running, then seen
     // finished): it is stored through the revision key, as before. Only the run-clock Cursor producer is different (below).
     const firstRequest = one.records[0] as Extract<UsageEnvelope['records'][number], { record_type: 'activity.request' }>;
-    const finished = envelope({ records: [{ ...firstRequest, observed_at: '2026-09-02T04:20:00.000Z', ended_at: '2026-09-02T04:20:00.000Z' }] });
+    const finished = envelope({ records: [{ ...firstRequest, observed_at: fixtureDay('2026-09-02T04:20:00.000Z'), ended_at: fixtureDay('2026-09-02T04:20:00.000Z') }] });
     const r3 = await store.ingestUsage(current, finished);
     assert.deepEqual([r3.accepted.records, r3.duplicates], [1, 0], 'a claude request replayed with only ended_at changed is a new revision');
     assert.equal(Number((await sql`SELECT count(*) FROM personal_hub.activity_requests WHERE record_id = ${firstRequest.record_id}`)[0].count), 2);
@@ -172,7 +173,7 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
       ] }] });
     // A run under an earlier resource configuration arrives first; the next configuration supersedes it.
     const staleAccess = { ...resourceAccess(bindingId, 'vault-a-stale'), invocation_key: sha('tool:stale-read'),
-      configuration_version: 'resources.v0', observed_at: '2026-09-02T03:10:00.000Z' };
+      configuration_version: 'resources.v0', observed_at: fixtureDay('2026-09-02T03:10:00.000Z') };
     assert.equal((await store.ingestUsage(current, envelope({ records: [staleAccess] }))).accepted.records, 1);
     const invalidRecordId = randomUUID();
     const detailFirst = await store.ingestUsage(current, details, [{ record_id: invalidRecordId, reason: 'invalid' }]);
@@ -214,17 +215,17 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     // clock, so its re-read of the same facts moves the content hash: that, and only that, counts as a duplicate sighting.
     const cursorAccount = `cursor-${randomUUID().slice(0, 8)}`;
     const cursorId = (await store.createBinding(secondInstall, { account_id: cursorAccount, provider: 'cursor', account_label: 'Cursor test', identity_hash: null })).binding.binding_id;
-    const bubble = { ...request(cursorId, 'cursor_execution', 'cursor-bubble', 'local_db'), parser_version: '2.0.0+cursor-local1', ended_at: '2026-09-02T03:20:00.000Z' };
+    const bubble = { ...request(cursorId, 'cursor_execution', 'cursor-bubble', 'local_db'), parser_version: '2.0.0+cursor-local1', ended_at: fixtureDay('2026-09-02T03:20:00.000Z') };
     assert.equal((await store.ingestUsage(secondInstall, envelope({ records: [bubble] }))).accepted.records, 1);
-    const bubbleAgain = envelope({ records: [{ ...bubble, observed_at: '2026-09-02T04:20:00.000Z', ended_at: '2026-09-02T04:20:00.000Z' }] });
+    const bubbleAgain = envelope({ records: [{ ...bubble, observed_at: fixtureDay('2026-09-02T04:20:00.000Z'), ended_at: fixtureDay('2026-09-02T04:20:00.000Z') }] });
     const cursorReplay = await store.ingestUsage(secondInstall, bubbleAgain);
     assert.deepEqual([cursorReplay.accepted.records, cursorReplay.duplicates], [0, 1], 'the run-clock replay of a Cursor bubble is a duplicate, not a revision');
     assert.deepEqual((await sql`SELECT accepted_by_type FROM personal_hub.companion_runs WHERE run_id = ${bubbleAgain.run.run_id}`)[0].accepted_by_type,
       { 'activity.request': { accepted: 0, duplicate: 1, rejected: 0 } });
     assert.equal(Number((await sql`SELECT count(*) FROM personal_hub.activity_requests WHERE record_id = ${bubble.record_id}`)[0].count), 1, 'the earliest sighting stays');
-    assert.equal((await store.ingestUsage(secondInstall, envelope({ records: [{ ...bubble, ended_at: '2026-09-02T04:20:00.000Z', outcome: 'failed' }] }))).accepted.records, 1,
+    assert.equal((await store.ingestUsage(secondInstall, envelope({ records: [{ ...bubble, ended_at: fixtureDay('2026-09-02T04:20:00.000Z'), outcome: 'failed' }] }))).accepted.records, 1,
       'changed facts from that producer are still a revision');
-    assert.equal((await store.ingestUsage(secondInstall, envelope({ records: [{ ...bubble, parser_version: '2.0.0+cursor-local2', ended_at: '2026-09-02T05:20:00.000Z' }] }))).accepted.records, 1,
+    assert.equal((await store.ingestUsage(secondInstall, envelope({ records: [{ ...bubble, parser_version: '2.0.0+cursor-local2', ended_at: fixtureDay('2026-09-02T05:20:00.000Z') }] }))).accepted.records, 1,
       'the fixed reader inserts through the revision key alone');
 
     // Ingest still records scoped project identities (the evidence manual mapping used to read), but
@@ -274,7 +275,7 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.deepEqual([firstPrimary.machine_label, secondPrimary.machine_label], ['test-mac', 'second-mac']);
     assert.deepEqual([firstPrimary.configuration_version, secondPrimary.configuration_version], ['resources.v1', 'cfg:second'],
       'an identity names the configuration the install most recently applied');
-    assert.deepEqual([firstPrimary.first_seen, firstPrimary.last_seen], ['2026-09-02T03:10:00.000Z', '2026-09-02T03:20:00.000Z'],
+    assert.deepEqual([firstPrimary.first_seen, firstPrimary.last_seen], [fixtureDay('2026-09-02T03:10:00.000Z'), fixtureDay('2026-09-02T03:20:00.000Z')],
       'sighting bounds span every configuration');
     assert.deepEqual([firstPrimary.accesses, firstPrimary.distinct_invocations, firstPrimary.earlier_configuration_accesses], [1, 1, 1],
       'earlier-configuration rows are disclosed, never counted as current');
@@ -325,7 +326,7 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.deepEqual(primaryVault.by_evidence_basis, { explicit_argument: 2, connector: 0, indirect_shell: 0, unknown: 0 });
     assert.deepEqual(primaryVault.by_outcome, { succeeded: 2, failed: 0, denied: 0, cancelled: 0, unknown: 0 });
     assert.deepEqual(primaryVault.top_tools, [{ tool_name: 'Grep', tool_class: 'builtin', invocations: 1 }, { tool_name: 'Read', tool_class: 'builtin', invocations: 1 }]);
-    assert.deepEqual([primaryVault.first_observed, primaryVault.last_observed], ['2026-09-02T03:20:00.000Z', '2026-09-02T03:20:00.000Z']);
+    assert.deepEqual([primaryVault.first_observed, primaryVault.last_observed], [fixtureDay('2026-09-02T03:20:00.000Z'), fixtureDay('2026-09-02T03:20:00.000Z')]);
     const referenceBucket = knowledgeMapped.per_source.find(entry => entry.identity_ids.includes(firstReference.id))!;
     assert.deepEqual([referenceBucket.source_id, referenceBucket.label, referenceBucket.resource_key, referenceBucket.machine_label, referenceBucket.accesses, referenceBucket.distinct_sessions],
       [null, null, 'obsidian.reference', 'test-mac', 1, 1]);
@@ -364,7 +365,7 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     const rules = await store.ingestUsage(current, envelope({ records: [foreign, browserAdapter, mismatch] }));
     assert.deepEqual(reasons(rules, [foreign, browserAdapter, mismatch]), ['binding_not_owned', 'adapter_not_allowed_for_install', 'adapter_provider_mismatch']);
     await store.updateInstall({ id: install.id, action: 'binding_disable', binding_id: codexId });
-    const disabledReading = reading(codexId, 'codex_execution', 'local_file', 'embedded', '2026-09-02T03:30:00.000Z');
+    const disabledReading = reading(codexId, 'codex_execution', 'local_file', 'embedded', fixtureDay('2026-09-02T03:30:00.000Z'));
     assert.deepEqual(reasons(await store.ingestUsage(current, envelope({ records: [disabledReading] })), [disabledReading]), ['binding_not_enabled']);
     await store.updateInstall({ id: install.id, action: 'binding_enable', binding_id: codexId });
 
@@ -385,7 +386,7 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     const browserRequest = request(browserBinding, 'claude_browser', 'msg-web', 'browser_session');
     const browserTool = { ...toolEvent(browserBinding, 'browser-tool', 'browser-tool'), adapter: 'claude_browser', channel: 'browser_session' };
     const browserReading = reading(browserBinding, 'claude_browser', 'browser_session', 'web_backend');
-    const companionAdapter = reading(browserBinding, 'claude_execution', 'hook_snapshot', 'statusline', '2026-09-02T03:21:00.000Z');
+    const companionAdapter = reading(browserBinding, 'claude_execution', 'hook_snapshot', 'statusline', fixtureDay('2026-09-02T03:21:00.000Z'));
     const browserResult = await store.ingestUsage(browser, envelope({ buckets: [{ binding_id: browserBinding, bucket }], records: [browserRequest, browserTool, browserReading, companionAdapter] }));
     assert.equal(browserResult.accepted.buckets, 0, 'a browser install cannot submit buckets');
     assert.equal(browserResult.accepted.records, 1);
@@ -395,7 +396,7 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     // v1 and v2 buckets for the same session deduplicate; a more complete revision from either wins.
     const v1Source = randomUUID();
     await sql`INSERT INTO personal_hub.telemetry_sources (id, account_id, machine_label, mode, key_hash) VALUES (${v1Source}, ${account}, 'v1 mac', 'local', ${sha(randomUUID())})`;
-    const v1Row = (b: typeof bucket) => ({ id: randomUUID(), account_id: account, source_id: v1Source, observed_at: '2026-09-02T04:10:00Z', content_hash: sha(stableJson(b)), ...b });
+    const v1Row = (b: typeof bucket) => ({ id: randomUUID(), account_id: account, source_id: v1Source, observed_at: fixtureDay('2026-09-02T04:10:00Z'), content_hash: sha(stableJson(b)), ...b });
     assert.equal((await sql`INSERT INTO personal_hub.token_bucket_revisions ${sql(v1Row(bucket))} ON CONFLICT DO NOTHING RETURNING id`).length, 0, 'identical v1 bucket is a duplicate');
     const fuller = { ...bucket, output_tokens: 30, total_tokens: 63, calls: 3 };
     assert.equal((await sql`INSERT INTO personal_hub.token_bucket_revisions ${sql(v1Row(fuller))} ON CONFLICT DO NOTHING RETURNING id`).length, 1);
@@ -408,7 +409,7 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     // The compatibility view unions both ledgers, keeps every producer's history, and flags rows whose
     // source, binding, or install is disabled as history_only instead of hiding them (USG-011).
     await sql`INSERT INTO personal_hub.quota_samples (id, account_id, source_id, content_hash, window_key, label, observed_at, used_percent, resets_at, window_minutes)
-      VALUES (${randomUUID()}, ${account}, ${v1Source}, ${sha('q1')}, 'five_hour', 'Claude · 5h', '2026-09-02T03:00:00Z', 10, '2026-09-02T05:00:00Z', 300)`;
+      VALUES (${randomUUID()}, ${account}, ${v1Source}, ${sha('q1')}, 'five_hour', 'Claude · 5h', ${fixtureDay('2026-09-02T03:00:00Z')}, 10, ${fixtureDay('2026-09-02T05:00:00Z')}, 300)`;
     const view = async (id: string) => sql`SELECT origin, reader, used_percent, source_id, history_only FROM personal_hub.allowance_percent_view WHERE account_id = ${id} ORDER BY observed_at`;
     assert.deepEqual((await view(account)).map(r => [r.origin, r.reader, r.history_only]), [['quota_samples', 'v1', false], ['allowance_readings', 'web_backend', false]]);
     assert.deepEqual((await view(codexAccount)).map(r => [r.reader, r.history_only]), [['embedded', false]]);
@@ -432,16 +433,16 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.equal(mine.bindings.find(b => b.id === bindingId)?.identity_state, 'confirmed');
     // Eleven canonical requests reached this account through enabled bindings: msg, detail, zero, worktree, same-folder,
     // native, legacy, one project-revision pair, the two second-machine requests, and msg-2; nothing rejected counts.
-    const reconciled = await store.reconcile(account, '2026-09-01T00:00:00Z', '2026-09-03T00:00:00Z');
+    const reconciled = await store.reconcile(account, fixtureDay('2026-09-01T00:00:00Z'), fixtureDay('2026-09-03T00:00:00Z'));
     assert.equal(reconciled.covered_requests.requests, 11, 'revisions of one request are one covered request');
     assert.equal(reconciled.unattributed.total, 150 - (155 + 0 + 9 * 150), 'reported account usage stays independent from covered request revisions');
 
     // Each binding reports the newest evidence in its ledgers separately from collector contact.
     const claudeBinding = mine.bindings.find(b => b.id === bindingId)!, codexBinding = mine.bindings.find(b => b.id === codexId)!;
     // The newest request observation is the finished revision of the first request, ingested above.
-    assert.deepEqual(claudeBinding.last_observation, { allowance: null, requests: '2026-09-02T04:20:00.000Z' });
+    assert.deepEqual(claudeBinding.last_observation, { allowance: null, requests: fixtureDay('2026-09-02T04:20:00.000Z') });
     assert.deepEqual(claudeBinding.last_received, { allowance: null });
-    assert.deepEqual(codexBinding.last_observation, { allowance: { observed_at: '2026-09-02T03:20:00.000Z', resets_at: '2026-09-02T05:00:00.000Z', reader: 'embedded' }, requests: null });
+    assert.deepEqual(codexBinding.last_observation, { allowance: { observed_at: fixtureDay('2026-09-02T03:20:00.000Z'), resets_at: fixtureDay('2026-09-02T05:00:00.000Z'), reader: 'embedded' }, requests: null });
     assert.ok(codexBinding.last_received.allowance, 'the newest receipt of a reading is reported beside its observation');
     assert.equal(mine.cadence_minutes, 60);
     assert.equal(mine.last_run_at, mine.latest_run!.finished_at);
@@ -450,8 +451,8 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
 
     // The bodies of one run merge their per-type counts key-wise, including records that failed to parse.
     const sharedRun = run();
-    const laterReading = reading(codexId, 'codex_execution', 'local_file', 'embedded', '2026-09-02T03:40:00.000Z', 35);
-    const foreignReading = reading(randomUUID(), 'codex_execution', 'local_file', 'embedded', '2026-09-02T03:41:00.000Z');
+    const laterReading = reading(codexId, 'codex_execution', 'local_file', 'embedded', fixtureDay('2026-09-02T03:40:00.000Z'), 35);
+    const foreignReading = reading(randomUUID(), 'codex_execution', 'local_file', 'embedded', fixtureDay('2026-09-02T03:41:00.000Z'));
     const bodyOne = await store.ingestUsage(current, envelope({ run: sharedRun, records: [laterReading, foreignReading] }), [{ record_id: randomUUID(), reason: 'invalid' }]);
     assert.deepEqual([bodyOne.accepted.records, bodyOne.rejected.length], [1, 2]);
     const bodyTwo = await store.ingestUsage(current, envelope({ run: sharedRun, records: [laterReading, request(bindingId, 'claude_execution', 'run-two')] }));
@@ -465,8 +466,8 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.deepEqual([Number(mergedRun.accepted_records), Number(mergedRun.rejected_records)], [2, 2]);
 
     // A coverage-only receipt advances collector contact and nothing else: ledgers and observations stay put.
-    await sql`UPDATE personal_hub.telemetry_sources SET last_seen_at = '2026-09-02T04:00:00Z' WHERE id = ${codexBinding.source_id}`;
-    await sql`UPDATE personal_hub.companion_installs SET last_seen_at = '2026-09-02T04:00:00Z' WHERE id = ${install.id}`;
+    await sql`UPDATE personal_hub.telemetry_sources SET last_seen_at = ${fixtureDay('2026-09-02T04:00:00Z')} WHERE id = ${codexBinding.source_id}`;
+    await sql`UPDATE personal_hub.companion_installs SET last_seen_at = ${fixtureDay('2026-09-02T04:00:00Z')} WHERE id = ${install.id}`;
     const ledgerCount = async () => Number((await sql`SELECT
         (SELECT count(*) FROM personal_hub.allowance_readings WHERE account_id IN (${account}, ${codexAccount}))
         + (SELECT count(*) FROM personal_hub.activity_requests WHERE account_id = ${account}) AS rows`)[0].rows);
@@ -476,10 +477,10 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     assert.equal(await ledgerCount(), ledgerBefore, 'a coverage-only envelope writes no ledger rows');
     const afterCoverage = (await store.listInstalls()).installs.find(i => i.id === install.id)!;
     const codexAfter = afterCoverage.bindings.find(b => b.id === codexId)!;
-    assert.deepEqual(codexAfter.last_observation.allowance, { observed_at: '2026-09-02T03:40:00.000Z', resets_at: '2026-09-02T05:00:00.000Z', reader: 'embedded' },
+    assert.deepEqual(codexAfter.last_observation.allowance, { observed_at: fixtureDay('2026-09-02T03:40:00.000Z'), resets_at: fixtureDay('2026-09-02T05:00:00.000Z'), reader: 'embedded' },
       'the newest observation is the reading accepted before the coverage-only receipt');
-    assert.ok(Date.parse(codexAfter.last_seen_at!) > Date.parse('2026-09-02T04:00:00Z'), 'collector contact still advances');
-    assert.ok(Date.parse(afterCoverage.last_seen_at!) > Date.parse('2026-09-02T04:00:00Z'));
+    assert.ok(Date.parse(codexAfter.last_seen_at!) > Date.parse(fixtureDay('2026-09-02T04:00:00Z')), 'collector contact still advances');
+    assert.ok(Date.parse(afterCoverage.last_seen_at!) > Date.parse(fixtureDay('2026-09-02T04:00:00Z')));
 
     // The current reading per meter: newest observation among supported readers, ties by reader rank, unknown readers never winning.
     const weekly = (reader: string, observed_at: string, value: number, basis = 'reported') => ({ ...reading(bindingId, 'claude_execution', 'hook_snapshot', reader, observed_at, value),
@@ -590,18 +591,18 @@ maybe('pairing, bindings, settings, config, ingestion rules, v1 dedupe, and the 
     await sql`INSERT INTO personal_hub.telemetry_sources (id, account_id, machine_label, mode, key_hash) VALUES (${browserSourceId}, ${account}, 'Chrome · test', 'browser', ${sha(browserKey)})`;
     const browserSource = await telemetry.telemetrySource(bearer(browserKey));
     assert.deepEqual([browserSource.id, browserSource.mode, browserSource.provider], [browserSourceId, 'browser', 'claude']);
-    const post = (quotas: unknown[]) => telemetrySchema.parse({ schema_version: 1, observed_at: '2026-09-02T06:00:00Z', buckets: [], quotas, coverage: { collector_version: 'browser-1.0.0' } });
-    const sample = { window_key: 'five_hour', label: '5-hour allowance', observed_at: '2026-09-02T06:00:00Z', used_percent: 12, resets_at: '2026-09-02T08:00:00Z', window_minutes: 300 };
+    const post = (quotas: unknown[]) => telemetrySchema.parse({ schema_version: 1, observed_at: fixtureDay('2026-09-02T06:00:00Z'), buckets: [], quotas, coverage: { collector_version: 'browser-1.0.0' } });
+    const sample = { window_key: 'five_hour', label: '5-hour allowance', observed_at: fixtureDay('2026-09-02T06:00:00Z'), used_percent: 12, resets_at: fixtureDay('2026-09-02T08:00:00Z'), window_minutes: 300 };
     assert.equal((await telemetry.ingestBrowserQuotas(browserSource, post([sample]))).quotas, 1);
     await assert.rejects(telemetry.ingestBrowserQuotas(browserSource, telemetrySchema.parse({ ...post([]), buckets: [bucket] })), /quota readings only/);
     const browserConnection = async () => (await telemetry.browserConnections()).sources.find(s => s.id === browserSourceId)!;
     const withReading = await browserConnection();
-    assert.equal(withReading.last_observation, '2026-09-02T06:00:00.000Z');
+    assert.equal(withReading.last_observation, fixtureDay('2026-09-02T06:00:00.000Z'));
     assert.ok(withReading.last_received && withReading.last_seen_at);
-    await sql`UPDATE personal_hub.telemetry_sources SET last_seen_at = '2026-09-02T06:30:00Z' WHERE id = ${browserSourceId}`;
+    await sql`UPDATE personal_hub.telemetry_sources SET last_seen_at = ${fixtureDay('2026-09-02T06:30:00Z')} WHERE id = ${browserSourceId}`;
     assert.deepEqual((await telemetry.ingestBrowserQuotas(browserSource, post([]))).quotas, 0);
     const afterEmpty = await browserConnection();
-    assert.ok(Date.parse(afterEmpty.last_seen_at!) > Date.parse('2026-09-02T06:30:00Z'), 'an empty post advances last contact');
+    assert.ok(Date.parse(afterEmpty.last_seen_at!) > Date.parse(fixtureDay('2026-09-02T06:30:00Z')), 'an empty post advances last contact');
     assert.deepEqual([afterEmpty.last_observation, afterEmpty.last_received], [withReading.last_observation, withReading.last_received], 'but never the reading');
     assert.equal((await telemetry.browserConnections()).cadence_minutes, 60, 'the extension reads hourly');
 
@@ -689,7 +690,7 @@ maybe('the application role can append to every ledger but never update or delet
     await app`INSERT INTO personal_hub.usage_project_identities
       (id, basis, evidence_key, install_id, first_seen, last_seen)
       VALUES (${writableIdentity}, 'working_directory', ${sha(writableIdentity)}, '00000000-0000-4000-8000-000000000302',
-        '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
+        ${fixtureDay('2026-09-01T00:00:00Z')}, ${fixtureDay('2026-09-01T00:00:00Z')})`;
     // Manual mapping is retired (20260923090300): the application role can no longer append a mapping revision.
     await assert.rejects(app`INSERT INTO personal_hub.usage_project_mapping_revisions (id, identity_id, project_id)
       VALUES (${randomUUID()}, ${writableIdentity}, ${writableProject})`, /permission denied/, 'mapping revisions are closed to the app');
@@ -698,8 +699,8 @@ maybe('the application role can append to every ledger but never update or delet
     await app`INSERT INTO personal_hub.usage_knowledge_source_identities
       (id, install_id, resource_key, configuration_version, first_seen, last_seen)
       VALUES (${writableResource}, '00000000-0000-4000-8000-000000000302', ${`app.${writableResource.slice(0, 8)}`}, 'cfg:0123456789abcdef',
-        '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
-    await app`UPDATE personal_hub.usage_knowledge_source_identities SET configuration_version = 'cfg:fedcba9876543210', last_seen = '2026-09-01T00:01:00Z'
+        ${fixtureDay('2026-09-01T00:00:00Z')}, ${fixtureDay('2026-09-01T00:00:00Z')})`;
+    await app`UPDATE personal_hub.usage_knowledge_source_identities SET configuration_version = 'cfg:fedcba9876543210', last_seen = ${fixtureDay('2026-09-01T00:01:00Z')}
       WHERE id = ${writableResource}`;
     const [appendedSourceMapping] = await app`INSERT INTO personal_hub.usage_knowledge_source_mapping_revisions (id, identity_id, source_id)
       VALUES (${randomUUID()}, ${writableResource}, ${writableSource}) RETURNING revision_order`;
@@ -901,21 +902,21 @@ maybe('tool projection maintenance converges under every arrival order an upload
 
     // 1. A result arrives BEFORE its invocation. The row holds a result register and an empty invocation
     //    register, and the tools read leaves it out until the invocation lands.
-    await ingest([at(toolEvent(binding, `${early}-r1`, early, 'result', 'failed'), '2026-09-02T03:21:00.000Z'),
-      at(toolEvent(binding, late, late), '2026-09-02T03:20:00.000Z')]);
+    await ingest([at(toolEvent(binding, `${early}-r1`, early, 'result', 'failed'), fixtureDay('2026-09-02T03:21:00.000Z')),
+      at(toolEvent(binding, late, late), fixtureDay('2026-09-02T03:20:00.000Z'))]);
     assert.deepEqual(shape(await state(earlyKey)), [false, 'failed', 'failed'], 'a result can arrive before its invocation');
 
     // 2. The invocation arrives in a later envelope. Writing its register must not erase the stored result.
-    const earlyInvocation = at(toolEvent(binding, early, early), '2026-09-02T03:20:00.000Z');
+    const earlyInvocation = at(toolEvent(binding, early, early), fixtureDay('2026-09-02T03:20:00.000Z'));
     await ingest([earlyInvocation]);
     assert.deepEqual(shape(await state(earlyKey)), [true, 'failed', 'failed'], 'the late invocation keeps the result already stored');
 
     // 3. A newer result displaces the stored one.
-    await ingest([at(toolEvent(binding, `${early}-r2`, early, 'result', 'succeeded'), '2026-09-02T03:25:00.000Z')]);
+    await ingest([at(toolEvent(binding, `${early}-r2`, early, 'result', 'succeeded'), fixtureDay('2026-09-02T03:25:00.000Z'))]);
     assert.deepEqual(shape(await state(earlyKey)), [true, 'succeeded', 'succeeded'], 'a newer result wins');
 
     // 4. An OLDER result that arrives later does not.
-    await ingest([at(toolEvent(binding, `${early}-r0`, early, 'result', 'failed'), '2026-09-02T03:19:00.000Z')]);
+    await ingest([at(toolEvent(binding, `${early}-r0`, early, 'result', 'failed'), fixtureDay('2026-09-02T03:19:00.000Z'))]);
     assert.deepEqual(shape(await state(earlyKey)), [true, 'succeeded', 'succeeded'], 'an older result arriving later does not win');
 
     // 5. A replay inserts no ledger row and writes nothing: both guards see what is already stored.

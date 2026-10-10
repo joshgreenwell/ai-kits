@@ -8,13 +8,14 @@ import { stableJson } from '../lib/contracts';
 import { parseUsageEnvelope } from '../lib/usage-contract';
 import { normalizeQuota } from '../browser/claude-quota/normalize.js';
 import { bindingRequest, buildEnvelope, detectPlatform, failureEnvelope, identityHash, pairRequest, parsePairResponse, settingsGate, uploadDisposition } from '../browser/claude-quota/collector.js';
+import { fixtureDay, shiftFixtureDates } from './fixture-days';
 
 const url = process.env.TEST_DATABASE_URL;
 const maybe = (name: string, fn: () => Promise<void>) => test(name, { skip: !url }, fn);
 const options = { prepare: false, ...(process.env.TEST_DATABASE_HOST ? { host: process.env.TEST_DATABASE_HOST, port: Number(process.env.TEST_DATABASE_PORT) } : {}) };
 const bearer = (key: string) => new Request('http://localhost/api/v1/usage', { headers: { authorization: `Bearer ${key}` } });
-const fixture = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'browser', 'claude-web-usage.json'), 'utf8')) as Record<string, unknown>;
-const OBSERVED_AT = '2026-09-02T03:20:00.000Z';
+const fixture = shiftFixtureDates(JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'browser', 'claude-web-usage.json'), 'utf8'))) as Record<string, unknown>;
+const OBSERVED_AT = fixtureDay('2026-09-02T03:20:00.000Z');
 
 /**
  * The v2 browser path end to end against the store: a browser pairing code, the collector's pair
@@ -49,7 +50,7 @@ maybe('browser collector v2: pair, bind, upload allowance readings, and read the
 
     // Upload: every recognized window from the fixture, one reading each, accepted once and duplicated on retry.
     const quotas = normalizeQuota(fixture, OBSERVED_AT);
-    const envelope = await buildEnvelope({ bindingId, quotas, startedAt: OBSERVED_AT, finishedAt: '2026-09-02T03:20:01.000Z', platform: 'windows', settingsVersion: config.settings_version });
+    const envelope = await buildEnvelope({ bindingId, quotas, startedAt: OBSERVED_AT, finishedAt: fixtureDay('2026-09-02T03:20:01.000Z'), platform: 'windows', settingsVersion: config.settings_version });
     const { envelope: parsed, invalid } = parseUsageEnvelope(envelope);
     assert.equal(invalid.length, 0);
     const receipt = await store.ingestUsage(install, parsed, invalid);
@@ -73,7 +74,7 @@ maybe('browser collector v2: pair, bind, upload allowance readings, and read the
     assert.equal(summary.kind, 'browser'); assert.equal(summary.companion_version, 'browser-2.0.0');
     assert.deepEqual([summary.health.pairing, summary.health.binding, summary.health.identity, summary.health.execution, summary.health.coverage_only], ['paired', 'complete', 'confirmed', 'ok', false]);
     assert.equal(summary.bindings[0].identity_state, 'confirmed');
-    assert.deepEqual(summary.bindings[0].last_observation.allowance, { observed_at: new Date(OBSERVED_AT).toISOString(), resets_at: '2026-09-02T05:00:00.000Z', reader: 'web_backend' });
+    assert.deepEqual(summary.bindings[0].last_observation.allowance, { observed_at: new Date(OBSERVED_AT).toISOString(), resets_at: fixtureDay('2026-09-02T05:00:00.000Z'), reader: 'web_backend' });
     assert.equal(summary.accepted_by_type['allowance.reading'].accepted, 4);
     assert.equal(summary.latest_run?.coverage[0].adapter, 'claude_browser');
 
@@ -87,7 +88,7 @@ maybe('browser collector v2: pair, bind, upload allowance readings, and read the
     assert.deepEqual(fiveHour.map(r => [r.origin, r.reader]), [['allowance_readings', 'web_backend']]);
     // An older v1-only observation stays visible as v1 history.
     await sql`INSERT INTO personal_hub.quota_samples (id, account_id, source_id, content_hash, window_key, label, observed_at, used_percent, resets_at, window_minutes)
-      VALUES (${randomUUID()}, ${account}, ${v1Source}, ${createHash('sha256').update('v1-older').digest('hex')}, 'five_hour', ${five.label}, '2026-09-02T02:20:00.000Z', 9, ${five.resets_at}, 300)`;
+      VALUES (${randomUUID()}, ${account}, ${v1Source}, ${createHash('sha256').update('v1-older').digest('hex')}, 'five_hour', ${five.label}, ${fixtureDay('2026-09-02T02:20:00.000Z')}, 9, ${five.resets_at}, 300)`;
     const history = await sql`SELECT origin, used_percent FROM personal_hub.allowance_percent_view WHERE account_id = ${account} AND window_key = 'five_hour' ORDER BY observed_at`;
     assert.deepEqual(history.map(r => [r.origin, Number(r.used_percent)]), [['quota_samples', 9], ['allowance_readings', 12.5]]);
     // After the cutover the disabled v1 source keeps its history as history only.
@@ -96,7 +97,7 @@ maybe('browser collector v2: pair, bind, upload allowance readings, and read the
     assert.deepEqual(afterCutover.map(r => [r.origin, r.history_only]), [['quota_samples', true], ['allowance_readings', false]]);
 
     // A coverage-only failure body is contact, not a reading: the run states the missing tab and the ledger is untouched.
-    const failed = failureEnvelope({ startedAt: '2026-09-02T04:20:00.000Z', finishedAt: '2026-09-02T04:20:01.000Z', platform: 'windows', settingsVersion: config.settings_version, code: 'no_tab' });
+    const failed = failureEnvelope({ startedAt: fixtureDay('2026-09-02T04:20:00.000Z'), finishedAt: fixtureDay('2026-09-02T04:20:01.000Z'), platform: 'windows', settingsVersion: config.settings_version, code: 'no_tab' });
     const failedReceipt = await store.ingestUsage(install, parseUsageEnvelope(failed).envelope);
     assert.deepEqual([failedReceipt.accepted.records, failedReceipt.rejected.length], [0, 0]);
     const afterFailure = (await store.listInstalls()).installs.find(i => i.id === install.id)!;
@@ -110,7 +111,7 @@ maybe('browser collector v2: pair, bind, upload allowance readings, and read the
     await store.updateInstall({ id: install.id, action: 'resume' });
     await store.updateInstall({ id: install.id, action: 'binding_disable', binding_id: bindingId });
     assert.equal(settingsGate((await store.companionConfig(await store.companionInstall(bearer(paired.key)))).document, bindingId).reason, 'binding_disabled');
-    const disabledReading = await store.ingestUsage(install, parseUsageEnvelope(await buildEnvelope({ bindingId, quotas: normalizeQuota(fixture, '2026-09-02T03:40:00.000Z'), startedAt: '2026-09-02T03:40:00.000Z', finishedAt: '2026-09-02T03:40:01.000Z', platform: 'windows' })).envelope);
+    const disabledReading = await store.ingestUsage(install, parseUsageEnvelope(await buildEnvelope({ bindingId, quotas: normalizeQuota(fixture, fixtureDay('2026-09-02T03:40:00.000Z')), startedAt: fixtureDay('2026-09-02T03:40:00.000Z'), finishedAt: fixtureDay('2026-09-02T03:40:01.000Z'), platform: 'windows' })).envelope);
     assert.equal(disabledReading.rejected.every(r => r.reason === 'binding_not_enabled'), true);
     await store.updateInstall({ id: install.id, action: 'disable' });
     await assert.rejects(store.companionInstall(bearer(paired.key)), /Unauthorized/);
